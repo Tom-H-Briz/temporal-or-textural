@@ -1,0 +1,25 @@
+# Data and models
+data/
+models/
+outputs/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Hugging Face cache
+.cache/
+
+# Checkpoints and results
+*.pt
+*.parquet
+
+# Environment
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Mac
+.DS_Store
