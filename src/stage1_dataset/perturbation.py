@@ -28,8 +28,8 @@ def get_clip_properties(clip_path: Path) -> dict:
         s = container.streams.video[0]
         return {
             "frame_rate": Fraction(s.average_rate),
-            "width": s.width,
-            "height": s.height,
+            "width": s.width & ~1,    # yuv420p requires even dimensions
+            "height": s.height & ~1,
             "n_frames": s.frames or 0,  # WebM headers often omit frame count; updated by process_clip
             "codec": s.codec_context.name,
             "clip_id": clip_path.stem,
@@ -40,7 +40,9 @@ def read_frames(clip_path: Path) -> list[np.ndarray]:
     frames = []
     with av.open(str(clip_path)) as container:
         for frame in container.decode(video=0):
-            frames.append(frame.to_ndarray(format=PIXEL_FMT))
+            w = frame.width & ~1
+            h = frame.height & ~1
+            frames.append(frame.reformat(width=w, height=h, format=PIXEL_FMT).to_ndarray())
     return frames
 
 
