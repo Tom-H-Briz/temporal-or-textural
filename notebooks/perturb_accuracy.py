@@ -15,10 +15,8 @@ Output:
 import sys
 from pathlib import Path
 
-import av
 import pandas as pd
-import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
@@ -31,6 +29,7 @@ from class_selection import (
     run_inference,
     save_charts,
 )
+from ToT_utils import SSv2ClipDataset
 
 TARGET_CLASSES = {
     "Pushing something from right to left",
@@ -44,33 +43,8 @@ PERTURB_META = ROOT / "data" / "perturbation_metadata.parquet"
 OUTPUT_DIR = ROOT / "outputs" / "stage1_perturb_accuracy"
 
 
-class PerturbedDataset(Dataset):
-    """Loads pre-built perturbed clips from explicit paths."""
-
-    def __init__(self, items: list[tuple[Path, int]], processor, num_frames: int) -> None:
-        self.items = items
-        self.processor = processor
-        self.num_frames = num_frames
-
-    def __len__(self) -> int:
-        return len(self.items)
-
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
-        path, label = self.items[idx]
-        container = av.open(str(path))
-        frames = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
-        container.close()
-
-        n = len(frames)
-        indices = torch.linspace(0, n - 1, self.num_frames).long().tolist()
-        sampled = [frames[i] for i in indices]
-
-        pixel_values = self.processor(sampled, return_tensors="pt")["pixel_values"].squeeze(0)
-        return pixel_values, label
-
-
-def build_loader(items: list[tuple[Path, int]], processor) -> DataLoader:
-    dataset = PerturbedDataset(items, processor, CFG["num_frames"])
+def build_loader(paths: list[Path], labels: list[int], processor) -> DataLoader:
+    dataset = SSv2ClipDataset(paths, processor, CFG["num_frames"], labels=labels)
     return DataLoader(
         dataset,
         batch_size=CFG["batch_size"],
@@ -85,7 +59,6 @@ def main() -> None:
     print("Loading metadata...")
     label_map, clips, id2template = load_metadata(CFG["labels_path"], CFG["validation_path"])
 
-    # clip_id (str) → label_id for our 5 target classes only
     clip_label: dict[str, int] = {
         str(c["id"]): label_map[_strip_brackets(c["template"])]
         for c in clips
@@ -99,9 +72,12 @@ def main() -> None:
     print(f"  {len(meta):,} clips in perturbation metadata")
 
     video_dir = Path(CFG["video_dir"])
-    items_A = [(video_dir / f"{r.clip_id}.webm",  clip_label[r.clip_id]) for r in meta.itertuples()]
-    items_B = [(Path(r.path_B), clip_label[r.clip_id]) for r in meta.itertuples()]
-    items_C = [(Path(r.path_C), clip_label[r.clip_id]) for r in meta.itertuples()]
+    rows = list(meta.itertuples())
+
+    paths_A = [video_dir / f"{r.clip_id}.webm" for r in rows]
+    paths_B = [Path(r.path_B) for r in rows]
+    paths_C = [Path(r.path_C) for r in rows]
+    labels  = [clip_label[r.clip_id] for r in rows]
 
     print(f"Loading model: {CFG['model_id']}")
     from transformers import VideoMAEForVideoClassification, VideoMAEImageProcessor
@@ -110,17 +86,16 @@ def main() -> None:
 
     acc_dfs: dict[str, pd.DataFrame] = {}
 
-    TAGS = [("A", "original"), ("B", "first/last"), ("C", "shuffle")]
-    for tag, items in [("A", items_A), ("B", items_B), ("C", items_C)]:
-        label = dict(TAGS)[tag]
-        print(f"\n{tag} ({label}) — {len(items):,} clips")
+    for tag, paths in [("A", paths_A), ("B", paths_B), ("C", paths_C)]:
+        tag_label = {"A": "original", "B": "first/last", "C": "shuffle"}[tag]
+        print(f"\n{tag} ({tag_label}) — {len(paths):,} clips")
 
-        preds, labels = run_inference(model, build_loader(items, processor))
+        preds, true_labels = run_inference(model, build_loader(paths, labels, processor))
 
-        overall = sum(p == l for p, l in zip(preds, labels)) / len(preds)
+        overall = sum(p == l for p, l in zip(preds, true_labels)) / len(preds)
         print(f"  Overall accuracy: {overall:.4f}")
 
-        df = compute_accuracy_df(preds, labels, id2template)
+        df = compute_accuracy_df(preds, true_labels, id2template)
         df = df[df["total"] > 0].reset_index(drop=True)
 
         csv_path = OUTPUT_DIR / f"per_class_accuracy_{tag}.csv"
@@ -133,7 +108,6 @@ def main() -> None:
 
         acc_dfs[tag] = df
 
-    # side-by-side comparison: A (original) vs B vs C
     merged = (
         acc_dfs["A"][["class_id", "template", "total", "accuracy"]].rename(columns={"accuracy": "accuracy_A"})
         .merge(acc_dfs["B"][["class_id", "accuracy"]].rename(columns={"accuracy": "accuracy_B"}), on="class_id")

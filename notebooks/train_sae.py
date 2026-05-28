@@ -11,11 +11,10 @@ import random
 import sys
 from pathlib import Path
 
-import av
 import torch
 import wandb
 from torch.optim import Adam
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from transformers import VideoMAEForVideoClassification, VideoMAEImageProcessor
 
 ROOT = Path(__file__).parent.parent
@@ -26,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from sae import BatchTopKSAE
 from sae.losses import top_k_auxiliary_loss
 from class_selection import load_metadata
+from ToT_utils import SSv2ClipDataset
 
 CFG = {
     "model_id": "MCG-NJU/videomae-base-finetuned-ssv2",
@@ -54,28 +54,6 @@ CFG = {
     "wandb_project": "temporal-or-textural",
     "wandb_run": "sae_layer7_batchtopk",
 }
-
-
-class SSv2ClipDataset(Dataset):
-    def __init__(self, clip_paths: list[Path], processor, num_frames: int) -> None:
-        self.clip_paths = clip_paths
-        self.processor = processor
-        self.num_frames = num_frames
-
-    def __len__(self) -> int:
-        return len(self.clip_paths)
-
-    def __getitem__(self, idx: int) -> torch.Tensor:
-        path = self.clip_paths[idx]
-        container = av.open(str(path))
-        frames = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
-        container.close()
-
-        n = len(frames)
-        indices = torch.linspace(0, n - 1, self.num_frames).long().tolist()
-        sampled = [frames[i] for i in indices]
-
-        return self.processor(sampled, return_tensors="pt")["pixel_values"].squeeze(0)
 
 
 def build_split(cfg: dict) -> tuple[list[Path], list[Path]]:
