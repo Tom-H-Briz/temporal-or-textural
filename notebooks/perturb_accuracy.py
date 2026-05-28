@@ -37,7 +37,7 @@ TARGET_CLASSES = {
     "Pushing something from left to right",
     "Tearing something just a little bit",
     "Tearing something into two pieces",
-    "Pushing something so that it spins around",
+    "Pushing something so it spins",
 }
 
 PERTURB_META = ROOT / "data" / "perturbation_metadata.parquet"
