@@ -7,16 +7,18 @@
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 
-module load cuda/12.6
-
-cd $HOME/temporal-or-textural
-
-uv venv
-source .venv/bin/activate
-uv sync
-
 export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
 
-uv run python notebooks/train_sae_smoketest.py
+SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
+
+apptainer exec --nv \
+    --bind $HOME:$HOME \
+    --bind $SCRATCHDIR:$SCRATCHDIR \
+    $SIF \
+    bash -c "
+        pip install --quiet av einops wandb pandas pyarrow matplotlib transformers huggingface-hub tqdm &&
+        cd $HOME/temporal-or-textural &&
+        python notebooks/train_sae_smoketest.py
+    "
