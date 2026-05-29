@@ -7,6 +7,7 @@ Output: outputs/sae/sae_layer_7.pt  (overwritten each epoch)
 REMEMBER!!!! set WANDB_API_KEY env var in job script before running!
 """
 
+import os
 import random
 import sys
 from pathlib import Path
@@ -31,7 +32,7 @@ CFG = {
     "model_id": "MCG-NJU/videomae-base-finetuned-ssv2",
     "labels_path": str(ROOT / "data" / "ssv2" / "something-something-v2-labels.json"),
     "validation_path": str(ROOT / "data" / "ssv2" / "something-something-v2-validation.json"),
-    "video_dir": str(ROOT / "data" / "ssv2" / "20bn-something-something-v2"),
+    "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data" / "ssv2_val_set")),
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     # VideoMAE
     "num_frames": 16,
