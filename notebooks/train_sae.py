@@ -30,8 +30,8 @@ from ToT_utils import SSv2ClipDataset
 
 CFG = {
     "model_id": "MCG-NJU/videomae-base-finetuned-ssv2",
-    "labels_path": str(ROOT / "data" / "ssv2" / "something-something-v2-labels.json"),
-    "validation_path": str(ROOT / "data" / "ssv2" / "something-something-v2-validation.json"),
+    "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data" / "ssv2" / "labels" / "labels.json")),
+    "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data" / "ssv2" / "labels" / "validation.json")),
     "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data" / "ssv2_val_set")),
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     # VideoMAE

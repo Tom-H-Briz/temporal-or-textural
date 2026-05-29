@@ -14,5 +14,7 @@ source .venv/bin/activate
 uv sync
 
 export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/ssv2_val_set"
+export LABELS_PATH="$HOME/labels/labels.json"
+export VALIDATION_PATH="$HOME/labels/validation.json"
 
 uv run python notebooks/train_sae.py
