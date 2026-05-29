@@ -1,0 +1,18 @@
+#!/bin/bash
+#SBATCH --job-name=tot_train_sae
+#SBATCH --output=train_sae_%j.out
+#SBATCH --nodes=1
+#SBATCH --gpus=1
+#SBATCH --time=12:00:00
+
+source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
+
+cd $HOME/temporal-or-textural
+
+uv venv
+source .venv/bin/activate
+uv sync
+
+export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/ssv2_val_set"
+
+uv run python notebooks/train_sae.py
