@@ -7,6 +7,8 @@
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 
+module load cuda/12.6
+
 cd $HOME/temporal-or-textural
 
 uv venv
