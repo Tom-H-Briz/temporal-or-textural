@@ -12,6 +12,7 @@ WandB: runs online if WANDB_API_KEY is set (verifies connectivity), disabled oth
 
 import os
 import sys
+import traceback
 from pathlib import Path
 
 import torch
@@ -56,6 +57,7 @@ def main() -> bool:
         def log(msg: str = "") -> None:
             print(msg)
             out_file.write(msg + "\n")
+            out_file.flush()
 
         log(f"Device: {SMOKE_CFG['device']}")
         log(f"Model:  {SMOKE_CFG['model_id']}")
@@ -70,89 +72,95 @@ def main() -> bool:
             mode=wandb_mode,
         )
 
-        # --- setup ---
-        log("\nLoading model and data split...")
-        videomae, processor, hook_storage = setup_videomae(SMOKE_CFG)
-        train_paths, val_paths = build_split(SMOKE_CFG)
+        try:
+            # --- setup ---
+            log("\nLoading model and data split...")
+            videomae, processor, hook_storage = setup_videomae(SMOKE_CFG)
+            train_paths, val_paths = build_split(SMOKE_CFG)
 
-        if not train_paths:
-            log("[FAIL] No training clips found on disk")
-            return False
+            if not train_paths:
+                log("[FAIL] No training clips found on disk")
+                return False
 
-        train_loader, val_loader = build_loaders(train_paths, val_paths, processor, SMOKE_CFG)
-        sae, optimizer = setup_sae(SMOKE_CFG)
-        log(f"  {len(train_paths)} train clips  /  {len(val_paths)} val clips")
+            train_loader, val_loader = build_loaders(train_paths, val_paths, processor, SMOKE_CFG)
+            sae, optimizer = setup_sae(SMOKE_CFG)
+            log(f"  {len(train_paths)} train clips  /  {len(val_paths)} val clips")
 
-        # --- shape checks: one forward pass before training ---
-        log("\nShape checks...")
-        device = SMOKE_CFG["device"]
+            # --- shape checks: one forward pass before training ---
+            log("\nShape checks...")
+            device = SMOKE_CFG["device"]
 
-        sample = next(iter(train_loader)).to(device)
-        with torch.no_grad():
-            with torch.autocast(device_type="cuda", enabled=(device == "cuda")):
-                videomae(pixel_values=sample)
+            sample = next(iter(train_loader)).to(device)
+            with torch.no_grad():
+                with torch.autocast(device_type="cuda", enabled=(device == "cuda")):
+                    videomae(pixel_values=sample)
 
-        activations = hook_storage["activations"].detach()
-        expected_act = (SMOKE_CFG["batch_size"], 1568, SMOKE_CFG["input_dim"])
-        act_ok = tuple(activations.shape) == expected_act
-        log(f"  [{'PASS' if act_ok else 'FAIL'}] hook activations: {tuple(activations.shape)}  (expected {expected_act})")
-        all_pass = all_pass and act_ok
+            activations = hook_storage["activations"].detach()
+            expected_act = (SMOKE_CFG["batch_size"], 1568, SMOKE_CFG["input_dim"])
+            act_ok = tuple(activations.shape) == expected_act
+            log(f"  [{'PASS' if act_ok else 'FAIL'}] hook activations: {tuple(activations.shape)}  (expected {expected_act})")
+            all_pass = all_pass and act_ok
 
-        tokens = activations[0].float()
-        sae.train()
-        pre_codes, codes, x_hat = sae(tokens)
+            tokens = activations[0].float()
+            sae.train()
+            pre_codes, codes, x_hat = sae(tokens)
 
-        codes_shape_ok = tuple(codes.shape) == (1568, SMOKE_CFG["nb_concepts"])
-        log(f"  [{'PASS' if codes_shape_ok else 'FAIL'}] codes shape:       {tuple(codes.shape)}")
-        all_pass = all_pass and codes_shape_ok
+            codes_shape_ok = tuple(codes.shape) == (1568, SMOKE_CFG["nb_concepts"])
+            log(f"  [{'PASS' if codes_shape_ok else 'FAIL'}] codes shape:       {tuple(codes.shape)}")
+            all_pass = all_pass and codes_shape_ok
 
-        xhat_shape_ok = tuple(x_hat.shape) == (1568, SMOKE_CFG["input_dim"])
-        log(f"  [{'PASS' if xhat_shape_ok else 'FAIL'}] x_hat shape:        {tuple(x_hat.shape)}")
-        all_pass = all_pass and xhat_shape_ok
+            xhat_shape_ok = tuple(x_hat.shape) == (1568, SMOKE_CFG["input_dim"])
+            log(f"  [{'PASS' if xhat_shape_ok else 'FAIL'}] x_hat shape:        {tuple(x_hat.shape)}")
+            all_pass = all_pass and xhat_shape_ok
 
-        nnz = int(codes.bool().sum().item())
-        expected_nnz = SMOKE_CFG["top_k"]
-        sparsity_ok = nnz == expected_nnz
-        log(f"  [{'PASS' if sparsity_ok else 'FAIL'}] codes sparsity:     nnz={nnz}  (expected {expected_nnz})")
-        all_pass = all_pass and sparsity_ok
+            nnz = int(codes.bool().sum().item())
+            expected_nnz = SMOKE_CFG["top_k"]
+            sparsity_ok = nnz == expected_nnz
+            log(f"  [{'PASS' if sparsity_ok else 'FAIL'}] codes sparsity:     nnz={nnz}  (expected {expected_nnz})")
+            all_pass = all_pass and sparsity_ok
 
-        loss = top_k_auxiliary_loss(
-            tokens, x_hat, pre_codes, codes, sae.get_dictionary(),
-            penalty=SMOKE_CFG["aux_loss_coeff"],
-        )
-        loss_ok = torch.isfinite(loss)
-        log(f"  [{'PASS' if loss_ok else 'FAIL'}] loss finite:        {loss.item():.4f}")
-        all_pass = all_pass and bool(loss_ok)
+            loss = top_k_auxiliary_loss(
+                tokens, x_hat, pre_codes, codes, sae.get_dictionary(),
+                penalty=SMOKE_CFG["aux_loss_coeff"],
+            )
+            loss_ok = torch.isfinite(loss)
+            log(f"  [{'PASS' if loss_ok else 'FAIL'}] loss finite:        {loss.item():.4f}")
+            all_pass = all_pass and bool(loss_ok)
 
-        # --- training epoch ---
-        log("\nRunning 1 training epoch...")
-        avg_loss, _ = train_epoch(sae, train_loader, videomae, hook_storage, optimizer, SMOKE_CFG, 0, 0)
-        epoch_ok = torch.isfinite(torch.tensor(avg_loss))
-        log(f"  [{'PASS' if epoch_ok else 'FAIL'}] epoch loss finite:  {avg_loss:.4f}")
-        all_pass = all_pass and bool(epoch_ok)
+            # --- training epoch ---
+            log("\nRunning 1 training epoch...")
+            avg_loss, _ = train_epoch(sae, train_loader, videomae, hook_storage, optimizer, SMOKE_CFG, 0, 0)
+            epoch_ok = torch.isfinite(torch.tensor(avg_loss))
+            log(f"  [{'PASS' if epoch_ok else 'FAIL'}] epoch loss finite:  {avg_loss:.4f}")
+            all_pass = all_pass and bool(epoch_ok)
 
-        # --- validation ---
-        log("\nRunning validation...")
-        if val_paths:
-            metrics = validate(sae, val_loader, videomae, hook_storage, SMOKE_CFG)
-            metrics.pop("_feature_counts")
+            # --- validation ---
+            log("\nRunning validation...")
+            if val_paths:
+                metrics = validate(sae, val_loader, videomae, hook_storage, SMOKE_CFG)
+                metrics.pop("_feature_counts")
 
-            r2_ok = torch.isfinite(torch.tensor(metrics["val/r2"]))
-            l0_ok = 50 <= metrics["val/l0"] <= 80    # expect ~64
-            dead_ok = metrics["val/dead_features"] < SMOKE_CFG["nb_concepts"]
+                r2_ok = torch.isfinite(torch.tensor(metrics["val/r2"]))
+                l0_ok = 50 <= metrics["val/l0"] <= 80
+                dead_ok = metrics["val/dead_features"] < SMOKE_CFG["nb_concepts"]
 
-            log(f"  [{'PASS' if r2_ok else 'FAIL'}]  R²={metrics['val/r2']:.4f}")
-            log(f"  [{'PASS' if l0_ok else 'FAIL'}]  L0={metrics['val/l0']:.1f}  (expect ~64)")
-            log(f"  [{'PASS' if dead_ok else 'FAIL'}]  dead features={metrics['val/dead_features']}  (expect < {SMOKE_CFG['nb_concepts']})")
-            all_pass = all_pass and bool(r2_ok) and l0_ok and dead_ok
-        else:
-            log("  [SKIP] no val clips available")
+                log(f"  [{'PASS' if r2_ok else 'FAIL'}]  R²={metrics['val/r2']:.4f}")
+                log(f"  [{'PASS' if l0_ok else 'FAIL'}]  L0={metrics['val/l0']:.1f}  (expect ~64)")
+                log(f"  [{'PASS' if dead_ok else 'FAIL'}]  dead features={metrics['val/dead_features']}  (expect < {SMOKE_CFG['nb_concepts']})")
+                all_pass = all_pass and bool(r2_ok) and l0_ok and dead_ok
+            else:
+                log("  [SKIP] no val clips available")
 
-        # --- checkpoint ---
-        torch.save(sae.state_dict(), SMOKE_CFG["checkpoint"])
-        ckpt_ok = Path(SMOKE_CFG["checkpoint"]).exists()
-        log(f"\n  [{'PASS' if ckpt_ok else 'FAIL'}] checkpoint written: {SMOKE_CFG['checkpoint']}")
-        all_pass = all_pass and ckpt_ok
+            # --- checkpoint ---
+            torch.save(sae.state_dict(), SMOKE_CFG["checkpoint"])
+            ckpt_ok = Path(SMOKE_CFG["checkpoint"]).exists()
+            log(f"\n  [{'PASS' if ckpt_ok else 'FAIL'}] checkpoint written: {SMOKE_CFG['checkpoint']}")
+            all_pass = all_pass and ckpt_ok
+
+        except Exception:
+            log("\n[CRASH] Unhandled exception:")
+            log(traceback.format_exc())
+            all_pass = False
 
         log(f"\nResult: {'ALL CHECKS PASSED' if all_pass else 'SOME CHECKS FAILED'}")
 
