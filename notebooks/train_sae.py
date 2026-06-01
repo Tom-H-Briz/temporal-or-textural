@@ -317,10 +317,12 @@ def main() -> None:
         print(f"  Saved: {CFG['checkpoint']}")
 
     # How many features fire at each frequency
+    val_tokens = len(val_paths) * 1568
+    firing_rate = feature_counts.float() / val_tokens
     fig, ax = plt.subplots()
-    ax.hist(feature_counts.numpy(), bins=50)
-    ax.set_xlabel("Times fired (val set)")
-    ax.set_ylabel("Number of features")
+    ax.hist(firing_rate.numpy(), bins=50, log=True)
+    ax.set_xlabel("Fraction of val tokens")
+    ax.set_ylabel("Number of features (log scale)")
     wandb.log({"feature_firing_freq": wandb.Image(fig)}, step=global_step)
     plt.close(fig)
 
