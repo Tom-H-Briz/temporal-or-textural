@@ -5,6 +5,7 @@ Run locally to understand the distribution before SAE training.
 Usage: uv run python notebooks/profile_activations.py
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -21,14 +22,15 @@ from ToT_utils import SSv2ClipDataset
 
 CFG = {
     "model_id": "MCG-NJU/videomae-base-finetuned-ssv2",
-    "labels_path": str(ROOT / "data" / "ssv2" / "labels" / "labels.json"),
-    "validation_path": str(ROOT / "data" / "ssv2" / "labels" / "validation.json"),
-    "video_dir": str(ROOT / "data" / "ssv2_val_set"),
+    "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data" / "ssv2" / "labels" / "labels.json")),
+    "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data" / "ssv2" / "labels" / "validation.json")),
+    "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data" / "ssv2_val_set")),
     "num_frames": 16,
     "layer": 7,
     "n_clips": 2000,
     "batch_size": 8,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
+    "dim_mean_out": str(ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"),
 }
 
 
@@ -92,6 +94,11 @@ def main():
 
     ratio = per_dim_mean.abs().mean() / per_dim_std.mean()
     print(f"\nRatio |mean| / std:  {ratio:.4f}  (>0.3 suggests mean-subtraction is worthwhile)")
+
+    out_path = Path(CFG["dim_mean_out"])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(per_dim_mean.float(), out_path)
+    print(f"\nSaved per-dim mean → {out_path}")
 
     # Token-level: how much does the mean vary across token positions?
     per_token_mean = acts.mean(0)   # (1568, 768) — mean over clips
