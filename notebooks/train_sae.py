@@ -265,6 +265,7 @@ def validate(
 
 def main() -> None:
     Path(CFG["output_dir"]).mkdir(parents=True, exist_ok=True)
+    CFG["checkpoint"] = str(Path(CFG["output_dir"]) / f"sae_layer7_job{CFG['job_label']}.pt")
 
     dim_mean = torch.load(CFG["dim_mean_path"], weights_only=True).to(CFG["device"])
     print(f"  Loaded dim_mean from {CFG['dim_mean_path']}  shape={tuple(dim_mean.shape)}")

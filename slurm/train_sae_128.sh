@@ -15,6 +15,7 @@ export SAE_K=128
 export SAE_ALPHA=0.03
 export SAE_LOSS_FN=aux
 export SAE_EPOCHS=5
+export SAE_JOB_LABEL=128
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 
