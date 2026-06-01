@@ -94,6 +94,16 @@ def main() -> None:
         num_workers=CFG["num_workers"], pin_memory=True,
     )
 
+    # running_threshold is not persisted in the state dict — warm up with one batch
+    sae.train()
+    with torch.no_grad():
+        warmup = next(iter(val_loader)).to(device)
+        with torch.autocast(device_type="cuda", enabled=(device == "cuda")):
+            model(pixel_values=warmup)
+        warmup_acts = hook_storage["activations"].detach() - dim_mean
+        sae.encode(warmup_acts[0].float())
+    sae.eval()
+
     feature_counts = torch.zeros(CFG["nb_concepts"], device=device)
 
     print("Running validation pass...")
