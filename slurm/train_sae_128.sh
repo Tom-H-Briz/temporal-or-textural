@@ -11,7 +11,7 @@ export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
 
-export SAE_K=64
+export SAE_K=128
 export SAE_ALPHA=0.03
 export SAE_LOSS_FN=aux
 export SAE_EPOCHS=5
