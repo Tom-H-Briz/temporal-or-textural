@@ -13,6 +13,9 @@ import sys
 from functools import partial
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import torch
 import wandb
 from torch.optim import Adam
@@ -313,7 +316,12 @@ def main() -> None:
         print(f"  Saved: {CFG['checkpoint']}")
 
     # How many features fire at each frequency
-    wandb.log({"feature_firing_freq": wandb.Histogram(feature_counts.numpy())}, step=global_step)
+    fig, ax = plt.subplots()
+    ax.hist(feature_counts.numpy(), bins=50)
+    ax.set_xlabel("Times fired (val set)")
+    ax.set_ylabel("Number of features")
+    wandb.log({"feature_firing_freq": wandb.Image(fig)}, step=global_step)
+    plt.close(fig)
 
     wandb.finish()
     print("\nDone.")
