@@ -10,6 +10,7 @@ REMEMBER!!!! set WANDB_API_KEY env var in job script before running!
 import os
 import random
 import sys
+from functools import partial
 from pathlib import Path
 
 import torch
@@ -24,7 +25,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from sae import BatchTopKSAE
-from sae.losses import top_k_auxiliary_loss
+from sae.losses import top_k_auxiliary_loss, reanimation_regularizer
 from class_selection import load_metadata
 from ToT_utils import SSv2ClipDataset
 
@@ -40,21 +41,49 @@ CFG = {
     # SAE architecture
     "input_dim": 768,
     "nb_concepts": 768 * 8,    # 6144
-    "top_k": 64 * 1568,        # 100_352 — one clip's token budget
+    "k": 64,                   # active features per token; top_k = k × 1568 passed to BatchTopKSAE
     "aux_loss_coeff": 0.03,
+    "loss_fn": "aux",          # "aux" (top-50% rescue) | "reanimation" (full dead-feature mask)
     # Training
     "epochs": 5,
-    "batch_size": 64,           # clips per gradient step
+    "batch_size": 64,          # clips per gradient step
     "lr": 1e-4,
     "train_clips": 20_000,
     "split_seed": 42,
     "num_workers": 4,
-    # Output
+    # Preprocessing
+    "dim_mean_path": str(ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"),
+    # Output / tracking
+    "job_label": "A",
     "output_dir": str(ROOT / "outputs" / "sae"),
     "checkpoint": str(ROOT / "outputs" / "sae" / "sae_layer_7.pt"),
     "wandb_project": "temporal-or-textural",
     "wandb_run": "sae_layer7_batchtopk",
+    "wandb_group": "dead_feature_sweep_010626",
 }
+
+
+# Per-job overrides injected by SLURM array script via env vars
+for _key, _env, _cast in [
+    ("k",              "SAE_K",         int),
+    ("aux_loss_coeff", "SAE_ALPHA",     float),
+    ("loss_fn",        "SAE_LOSS_FN",   str),
+    ("job_label",      "SAE_JOB_LABEL", str),
+    ("epochs",         "SAE_EPOCHS",    int),
+]:
+    if _env in os.environ:
+        CFG[_key] = _cast(os.environ[_env])
+
+
+def build_loss_fn(cfg: dict):
+    """Return a loss function (x, x_hat, pre_codes, codes, dictionary) -> scalar."""
+    if cfg["loss_fn"] == "reanimation":
+        penalty = cfg["aux_loss_coeff"]
+        def _reanimation_loss(x, x_hat, pre_codes, codes, dictionary):
+            mse = (x - x_hat).pow(2).mean()
+            return mse + reanimation_regularizer(x, x_hat, pre_codes, codes, dictionary, penalty=penalty)
+        return _reanimation_loss
+    return partial(top_k_auxiliary_loss, penalty=cfg["aux_loss_coeff"])
 
 
 def build_split(cfg: dict) -> tuple[list[Path], list[Path]]:
@@ -113,10 +142,11 @@ def setup_videomae(cfg: dict) -> tuple:
 
 
 def setup_sae(cfg: dict) -> tuple[BatchTopKSAE, Adam]:
+    top_k = cfg["k"] * 1568
     sae = BatchTopKSAE(
         input_shape=cfg["input_dim"],
         nb_concepts=cfg["nb_concepts"],
-        top_k=cfg["top_k"],
+        top_k=top_k,
         device=cfg["device"],
     )
     sae.train()
@@ -133,6 +163,8 @@ def train_epoch(
     cfg: dict,
     epoch: int,
     global_step: int,
+    dim_mean: torch.Tensor,
+    loss_fn,
 ) -> tuple[float, int]:
     sae.train()
     device = cfg["device"]
@@ -145,8 +177,8 @@ def train_epoch(
             with torch.autocast(device_type="cuda", enabled=(device == "cuda")):
                 videomae(pixel_values=pixel_values)
 
-        # (B, 1568, 768) — detached, float16 on GPU
-        activations = hook_storage["activations"].detach()
+        # (B, 1568, 768) — detached, float16 on GPU; subtract per-dim mean
+        activations = hook_storage["activations"].detach() - dim_mean
         n_clips = activations.shape[0]
 
         optimizer.zero_grad()
@@ -156,10 +188,7 @@ def train_epoch(
         for i in range(n_clips):
             tokens = activations[i].float()  # (1568, 768) float32
             pre_codes, codes, x_hat = sae(tokens)
-            loss = top_k_auxiliary_loss(
-                tokens, x_hat, pre_codes, codes,
-                sae.get_dictionary(), penalty=cfg["aux_loss_coeff"],
-            )
+            loss = loss_fn(tokens, x_hat, pre_codes, codes, sae.get_dictionary())
             (loss / n_clips).backward()
             batch_loss += loss.item()
 
@@ -179,6 +208,7 @@ def validate(
     videomae,
     hook_storage: dict,
     cfg: dict,
+    dim_mean: torch.Tensor,
 ) -> dict:
     sae.eval()  # triggers DictionaryLayer to fuse weights for inference
     device = cfg["device"]
@@ -197,7 +227,7 @@ def validate(
             with torch.autocast(device_type="cuda", enabled=(device == "cuda")):
                 videomae(pixel_values=pixel_values)
 
-            activations = hook_storage["activations"].detach()
+            activations = hook_storage["activations"].detach() - dim_mean
 
             for i in range(activations.shape[0]):
                 tokens = activations[i].float()  # (1568, 768)
@@ -226,13 +256,25 @@ def validate(
         "val/mse": mse,
         "val/l0": l0,
         "val/dead_features": dead_features,
-        "_feature_counts": feature_counts.cpu(),  # for density histogram, stripped before wandb.log
+        "_feature_counts": feature_counts.cpu(),  # for firing histogram, stripped before wandb.log
     }
 
 
 def main() -> None:
     Path(CFG["output_dir"]).mkdir(parents=True, exist_ok=True)
-    wandb.init(project=CFG["wandb_project"], name=CFG["wandb_run"], config=CFG)
+
+    dim_mean = torch.load(CFG["dim_mean_path"], weights_only=True).to(CFG["device"])
+    print(f"  Loaded dim_mean from {CFG['dim_mean_path']}  shape={tuple(dim_mean.shape)}")
+
+    loss_fn = build_loss_fn(CFG)
+
+    wandb.init(
+        project=CFG["wandb_project"],
+        name=f"{CFG['wandb_run']}_job{CFG['job_label']}",
+        group=CFG["wandb_group"],
+        config=CFG,
+        tags=[f"job_{CFG['job_label']}"],
+    )
 
     print("Building data split...")
     train_paths, val_paths = build_split(CFG)
@@ -244,18 +286,21 @@ def main() -> None:
 
     print("Setting up SAE...")
     sae, optimizer = setup_sae(CFG)
-    print(f"  BatchTopKSAE: {CFG['input_dim']}d → {CFG['nb_concepts']} features, top_k={CFG['top_k']:,}")
+    top_k = CFG["k"] * 1568
+    print(f"  BatchTopKSAE: {CFG['input_dim']}d → {CFG['nb_concepts']} features, k={CFG['k']} (top_k={top_k:,})")
+    print(f"  Loss: {CFG['loss_fn']}  α={CFG['aux_loss_coeff']}  Job: {CFG['job_label']}")
 
     global_step = 0
     for epoch in range(CFG["epochs"]):
         print(f"\nEpoch {epoch + 1}/{CFG['epochs']}")
 
         avg_loss, global_step = train_epoch(
-            sae, train_loader, videomae, hook_storage, optimizer, CFG, epoch, global_step
+            sae, train_loader, videomae, hook_storage, optimizer, CFG, epoch, global_step,
+            dim_mean, loss_fn,
         )
         print(f"  Train loss: {avg_loss:.4f}")
 
-        metrics = validate(sae, val_loader, videomae, hook_storage, CFG)
+        metrics = validate(sae, val_loader, videomae, hook_storage, CFG, dim_mean)
         feature_counts = metrics.pop("_feature_counts")
 
         wandb.log({**metrics, "epoch": epoch + 1}, step=global_step)
@@ -267,9 +312,8 @@ def main() -> None:
         torch.save(sae.state_dict(), CFG["checkpoint"])
         print(f"  Saved: {CFG['checkpoint']}")
 
-    # Feature density histogram at end of training
-    density = (feature_counts / feature_counts.sum()).numpy()
-    wandb.log({"feature_density": wandb.Histogram(density)}, step=global_step)
+    # How many features fire at each frequency
+    wandb.log({"feature_firing_freq": wandb.Histogram(feature_counts.numpy())}, step=global_step)
 
     wandb.finish()
     print("\nDone.")
