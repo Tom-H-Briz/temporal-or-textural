@@ -21,15 +21,8 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 
-from class_selection import (
-    CFG,
-    _strip_brackets,
-    compute_accuracy_df,
-    load_metadata,
-    run_inference,
-    save_charts,
-)
-from ToT_utils import SSv2ClipDataset
+from class_selection import CFG, compute_accuracy_df, save_charts
+from ToT_utils import SSv2ClipDataset, _strip_brackets, load_metadata, run_inference
 
 TARGET_CLASSES = {
     "Pushing something from right to left",
@@ -90,7 +83,7 @@ def main() -> None:
         tag_label = {"A": "original", "B": "first/last", "C": "shuffle"}[tag]
         print(f"\n{tag} ({tag_label}) — {len(paths):,} clips")
 
-        preds, true_labels = run_inference(model, build_loader(paths, labels, processor))
+        preds, true_labels = run_inference(model, build_loader(paths, labels, processor), CFG["device"])
 
         overall = sum(p == l for p, l in zip(preds, true_labels)) / len(preds)
         print(f"  Overall accuracy: {overall:.4f}")
