@@ -26,8 +26,7 @@ from ToT_utils import (
 
 # SAEs to compare — add or remove entries here to extend the sweep
 SAE_CONFIGS = [
-    {"label": "64",  "k": 64},
-    {"label": "128", "k": 128},
+    {"label": "e7k128",  "k": 128},
 ]
 
 LAYER = 7
@@ -121,10 +120,10 @@ def main() -> None:
             preds, true_labels = run_inference(model, loader, device)
 
             overall = sum(p == l for p, l in zip(preds, true_labels)) / len(preds)
-            print(f"    Overall accuracy: {overall:.4f}")
 
             df = compute_accuracy_df(preds, true_labels, id2template)
             df = df[df["total"] > 0].reset_index(drop=True)
+            print(f"    Clip-weighted: {overall:.4f}  |  Mean per-class: {df['accuracy'].mean():.4f}")
 
             csv_path = OUTPUT_DIR / f"per_class_accuracy_sae{label}_{tag}.csv"
             df.to_csv(csv_path, index=False)
@@ -151,7 +150,7 @@ def main() -> None:
     comp.columns = [f"sae{s}_{c}" for s, c in comp.columns]
     comp = comp.reset_index().sort_values("class_id")
     comp.to_csv(OUTPUT_DIR / "comparison.csv", index=False)
-    print(f"\nComparison saved → {OUTPUT_DIR / 'comparison_sae.csv'}")
+    print(f"\nComparison saved → {OUTPUT_DIR / 'comparison_sae_ep7.csv'}")
 
 
 if __name__ == "__main__":
