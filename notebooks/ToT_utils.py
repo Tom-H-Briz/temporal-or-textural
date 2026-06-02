@@ -45,6 +45,25 @@ def load_metadata(
     return label_map, clips, id2template
 
 
+def make_sae_splice_hook(sae: torch.nn.Module, dim_mean: torch.Tensor):
+    """
+    Returns a forward hook that replaces a layer's output with its SAE reconstruction.
+    Register on the target encoder layer; remove the handle when done.
+    SAE must be in eval mode with running_threshold initialised before use.
+    """
+    def _hook(module, input, output):
+        hidden = output[0] if isinstance(output, tuple) else output
+        B, T, D = hidden.shape
+        tokens = (hidden.reshape(B * T, D) - dim_mean).float()
+        with torch.no_grad():
+            _, _, x_hat = sae(tokens)
+        reconstructed = (x_hat + dim_mean).reshape(B, T, D).to(hidden.dtype)
+        if isinstance(output, tuple):
+            return (reconstructed,) + output[1:]
+        return reconstructed
+    return _hook
+
+
 def run_inference(
     model: VideoMAEForVideoClassification, dataloader: DataLoader, device: str
 ) -> tuple[list[int], list[int]]:
