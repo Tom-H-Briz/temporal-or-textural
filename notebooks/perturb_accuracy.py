@@ -1,15 +1,15 @@
 """
-Evaluates VideoMAE per-class accuracy on perturbed clips (B = first/last, C = shuffle).
-
-Reuses: CFG, _strip_brackets, load_metadata, run_inference,
-        compute_accuracy_df, save_charts  from class_selection.py.
+Evaluates VideoMAE per-class accuracy across four conditions:
+  R — real clips
+  A — single midpoint frame (still)
+  B — first/last frame freeze
+  C — frame shuffle
 
 Output:
-  outputs/stage1_perturb_accuracy/per_class_accuracy_B.csv
-  outputs/stage1_perturb_accuracy/per_class_accuracy_C.csv
-  outputs/stage1_perturb_accuracy/comparison.csv   (B vs C side-by-side)
-  outputs/stage1_perturb_accuracy/{B,C}/top10_accuracy.png
-  outputs/stage1_perturb_accuracy/{B,C}/bottom10_accuracy.png
+  outputs/stage1_perturb_accuracy/per_class_accuracy_{R,A,B,C}.csv
+  outputs/stage1_perturb_accuracy/comparison.csv   (all four, R as baseline)
+  outputs/stage1_perturb_accuracy/{R,A,B,C}/top10_accuracy.png
+  outputs/stage1_perturb_accuracy/{R,A,B,C}/bottom10_accuracy.png
 """
 
 import sys
@@ -34,6 +34,8 @@ TARGET_CLASSES = {
 
 PERTURB_META = ROOT / "data" / "perturbation_metadata.parquet"
 OUTPUT_DIR = ROOT / "outputs" / "stage1_perturb_accuracy"
+
+TAG_LABEL = {"R": "real", "A": "still", "B": "first/last", "C": "shuffle"}
 
 
 def build_loader(paths: list[Path], labels: list[int], processor) -> DataLoader:
@@ -64,10 +66,14 @@ def main() -> None:
     meta = meta[meta["clip_id"].isin(clip_label)]
     print(f"  {len(meta):,} clips in perturbation metadata")
 
+    if "path_A" not in meta.columns:
+        raise RuntimeError("path_A column missing — run perturbationA.py first")
+
     video_dir = Path(CFG["video_dir"])
     rows = list(meta.itertuples())
 
-    paths_A = [video_dir / f"{r.clip_id}.webm" for r in rows]
+    paths_R = [video_dir / f"{r.clip_id}.webm" for r in rows]
+    paths_A = [Path(r.path_A) for r in rows]
     paths_B = [Path(r.path_B) for r in rows]
     paths_C = [Path(r.path_C) for r in rows]
     labels  = [clip_label[r.clip_id] for r in rows]
@@ -79,9 +85,8 @@ def main() -> None:
 
     acc_dfs: dict[str, pd.DataFrame] = {}
 
-    for tag, paths in [("A", paths_A), ("B", paths_B), ("C", paths_C)]:
-        tag_label = {"A": "original", "B": "first/last", "C": "shuffle"}[tag]
-        print(f"\n{tag} ({tag_label}) — {len(paths):,} clips")
+    for tag, paths in [("R", paths_R), ("A", paths_A), ("B", paths_B), ("C", paths_C)]:
+        print(f"\n{tag} ({TAG_LABEL[tag]}) — {len(paths):,} clips")
 
         preds, true_labels = run_inference(model, build_loader(paths, labels, processor), CFG["device"])
 
@@ -102,13 +107,15 @@ def main() -> None:
         acc_dfs[tag] = df
 
     merged = (
-        acc_dfs["A"][["class_id", "template", "total", "accuracy"]].rename(columns={"accuracy": "accuracy_A"})
+        acc_dfs["R"][["class_id", "template", "total", "accuracy"]].rename(columns={"accuracy": "accuracy_R"})
+        .merge(acc_dfs["A"][["class_id", "accuracy"]].rename(columns={"accuracy": "accuracy_A"}), on="class_id")
         .merge(acc_dfs["B"][["class_id", "accuracy"]].rename(columns={"accuracy": "accuracy_B"}), on="class_id")
         .merge(acc_dfs["C"][["class_id", "accuracy"]].rename(columns={"accuracy": "accuracy_C"}), on="class_id")
     )
-    merged["delta_B_minus_A"] = merged["accuracy_B"] - merged["accuracy_A"]
-    merged["delta_C_minus_A"] = merged["accuracy_C"] - merged["accuracy_A"]
-    merged = merged.sort_values("accuracy_A", ascending=False).reset_index(drop=True)
+    merged["delta_A_minus_R"] = merged["accuracy_A"] - merged["accuracy_R"]
+    merged["delta_B_minus_R"] = merged["accuracy_B"] - merged["accuracy_R"]
+    merged["delta_C_minus_R"] = merged["accuracy_C"] - merged["accuracy_R"]
+    merged = merged.sort_values("accuracy_R", ascending=False).reset_index(drop=True)
 
     comp_path = OUTPUT_DIR / "comparison.csv"
     merged.to_csv(comp_path, index=False)
