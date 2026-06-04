@@ -212,6 +212,23 @@ class DFAEngine:
             predicted_class=predicted_class,
         )
 
+    def get_z(self, clip: Path) -> torch.Tensor:
+        """Forward pass in no_grad — returns z (num_tokens, dict_size) without backward."""
+        cfg = MODEL_CONFIGS[self.model_flag]
+        pixel_values = cfg["preprocessor"](
+            clip, cfg["num_frames"], self._processor, self.device
+        )
+        self._z = None
+        with torch.no_grad():
+            self._model(pixel_values=pixel_values)
+        if self._z is None:
+            raise RuntimeError(
+                f"DFA hook did not fire — check layer={self._layer} for {self.model_flag}"
+            )
+        z = self._z.detach().clone()
+        self._z = None
+        return z
+
     def __exit__(self, *args) -> None:
         if self._hook_handle is not None:
             self._hook_handle.remove()
