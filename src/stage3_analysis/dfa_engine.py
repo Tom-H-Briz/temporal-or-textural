@@ -100,6 +100,7 @@ class DFAEngine:
         self._processor = None
         self._hook_handle = None
         self._z: torch.Tensor | None = None
+        self._z_override: torch.Tensor | None = None  # set externally for ablation passes
 
     def __enter__(self) -> "DFAEngine":
         cfg = MODEL_CONFIGS[self.model_flag]
@@ -148,17 +149,22 @@ class DFAEngine:
         Captures layer output, encodes to z (no_grad), detaches z, sets
         requires_grad_(True), decodes (tracked), adds mean back, returns
         reconstruction — splice is inside the hook.
+
+        If _z_override is set the encode step is skipped and the provided z is
+        decoded directly (used by ablation passes in no_grad context).
         """
+        assert self._sae is not None and self._dim_mean is not None
         hidden = output[0] if isinstance(output, tuple) else output  # (1, T, D)
         B, T, D = hidden.shape
 
-        tokens = (hidden.reshape(B * T, D) - self._dim_mean).float()
-
-        with torch.no_grad():
-            _, z_raw = self._sae.encode(tokens)          # (T, dict_size)
-
-        z = z_raw.detach().requires_grad_(True)           # leaf — accumulates grad
-        self._z = z
+        if self._z_override is not None:
+            z = self._z_override                          # (T, dict_size), caller-provided
+        else:
+            tokens = (hidden.reshape(B * T, D) - self._dim_mean).float()
+            with torch.no_grad():
+                _, z_raw = self._sae.encode(tokens)       # (T, dict_size)
+            z = z_raw.detach().requires_grad_(True)        # leaf — accumulates grad
+            self._z = z
 
         recon = self._sae.decode(z)                       # (T, hidden_dim), tracked through z
         recon = (recon + self._dim_mean).to(hidden.dtype).reshape(B, T, D)
