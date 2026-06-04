@@ -130,9 +130,13 @@ class DFAEngine:
         dummy = torch.zeros(cfg["num_tokens"], cfg["hidden_dim"], device=device)
         with torch.no_grad():
             self._sae.encode((dummy - self._dim_mean).float())
-        self._sae.eval()
+        # Freeze before eval() so _fused_dictionary is computed with requires_grad=False
+        # weights, giving it no grad_fn. Without this, backward() frees _fused_dictionary's
+        # saved tensors on the first clip and the second clip raises "backward through graph
+        # a second time".
         for p in self._sae.parameters():
             p.requires_grad_(False)
+        self._sae.eval()
 
         target_layer = self._model.videomae.encoder.layer[self._layer]
         self._hook_handle = target_layer.register_forward_hook(self._splice_hook)
