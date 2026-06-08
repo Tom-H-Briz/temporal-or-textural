@@ -279,7 +279,7 @@ def main() -> None:
     wandb.init(
         project=CFG["wandb_project"],
         name=f"{CFG['wandb_run']}_job{CFG['job_label']}",
-        group=CFG["wandb_group"],
+        group=CFG.get("wandb_group"),
         config=CFG,
         tags=[f"job_{CFG['job_label']}"],
     )
