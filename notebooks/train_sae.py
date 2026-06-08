@@ -43,7 +43,7 @@ CFG = {
     "layer": 7,
     # SAE architecture
     "input_dim": 768,
-    "nb_concepts": 768 * 8,    # 6144
+    "expansion_factor": 8,     # nb_concepts = input_dim × expansion_factor
     "k": 64,                   # active features per token; top_k = k × 1568 passed to BatchTopKSAE
     "aux_loss_coeff": 0.03,
     "loss_fn": "aux",          # "aux" (top-50% rescue) | "reanimation" (full dead-feature mask)
@@ -59,24 +59,27 @@ CFG = {
     # Output / tracking
     "job_label": "A",
     "output_dir": str(ROOT / "outputs" / "sae"),
-    "checkpoint": str(ROOT / "outputs" / "sae" / "sae_layer_7.pt"),
+    "checkpoint": str(ROOT / "outputs" / "sae" / "sae_layer_7_16x.pt"),
     "wandb_project": "temporal-or-textural",
-    "wandb_run": "sae_layer7_batchtopk",
-    "wandb_group": "dead_feature_sweep_010626",
+    "wandb_run": "sae_layer7_batchtopk_16x",
+    #"wandb_group": "dead_feature_sweep_010626",
     "resume_from": None,  # path to checkpoint to resume from, or None for fresh start
 }
 
 
 # Per-job overrides injected by SLURM array script via env vars
 for _key, _env, _cast in [
-    ("k",              "SAE_K",         int),
-    ("aux_loss_coeff", "SAE_ALPHA",     float),
-    ("loss_fn",        "SAE_LOSS_FN",   str),
-    ("job_label",      "SAE_JOB_LABEL", str),
-    ("epochs",         "SAE_EPOCHS",    int),
+    ("k",                "SAE_K",         int),
+    ("aux_loss_coeff",   "SAE_ALPHA",     float),
+    ("loss_fn",          "SAE_LOSS_FN",   str),
+    ("job_label",        "SAE_JOB_LABEL", str),
+    ("epochs",           "SAE_EPOCHS",    int),
+    ("expansion_factor", "SAE_EXPANSION", int),
 ]:
     if _env in os.environ:
         CFG[_key] = _cast(os.environ[_env])
+
+CFG["nb_concepts"] = CFG["input_dim"] * CFG["expansion_factor"]
 
 
 def build_loss_fn(cfg: dict):
