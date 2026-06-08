@@ -43,7 +43,7 @@ CFG = {
     "layer": 7,
     # SAE architecture
     "input_dim": 768,
-    "expansion_factor": 8,     # nb_concepts = input_dim × expansion_factor
+    "expansion_factor": 16,     # nb_concepts = input_dim × expansion_factor
     "k": 64,                   # active features per token; top_k = k × 1568 passed to BatchTopKSAE
     "aux_loss_coeff": 0.03,
     "loss_fn": "aux",          # "aux" (top-50% rescue) | "reanimation" (full dead-feature mask)
