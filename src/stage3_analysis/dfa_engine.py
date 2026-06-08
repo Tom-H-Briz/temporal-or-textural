@@ -146,15 +146,17 @@ class DFAEngine:
 
         self._dim_mean = torch.load(self.dim_mean_path, weights_only=True).to(device)
 
-        self._sae = BatchTopKSAE(
-            input_shape=cfg["hidden_dim"],
-            nb_concepts=cfg["nb_concepts"],
-            top_k=cfg["sae_k"] * cfg["num_tokens"],
-            device=device,
-        )
         _ckpt = torch.load(self.sae_path, weights_only=True, map_location=device)
         if isinstance(_ckpt, dict) and "sae_state_dict" in _ckpt:
             _ckpt = _ckpt["sae_state_dict"]
+        nb_concepts = _ckpt["dictionary._weights"].shape[0]
+
+        self._sae = BatchTopKSAE(
+            input_shape=cfg["hidden_dim"],
+            nb_concepts=nb_concepts,
+            top_k=cfg["sae_k"] * cfg["num_tokens"],
+            device=device,
+        )
         self._sae.load_state_dict(_ckpt)
         # running_threshold is not persisted in the checkpoint — initialise with a
         # dummy train-mode pass so eval() asserts do not fire (same approach as
