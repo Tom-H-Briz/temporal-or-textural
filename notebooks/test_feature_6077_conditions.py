@@ -68,6 +68,7 @@ def main() -> None:
                 f"Condition {label} | "
                 f"correct={str(result.correct):<5} | "
                 f"logit={result.correct_class_logit:>6.2f} | "
+                f"H_norm={result.entropy_normalised:.4f} | "
                 f"feat_{TARGET_FEATURE} DFA={feat_score:.4f} | "
                 f"rank={rank}"
             )

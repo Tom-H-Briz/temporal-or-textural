@@ -63,6 +63,7 @@ CFG = {
     "wandb_project": "temporal-or-textural",
     "wandb_run": "sae_layer7_batchtopk",
     "wandb_group": "dead_feature_sweep_010626",
+    "resume_from": None,  # path to checkpoint to resume from, or None for fresh start
 }
 
 
@@ -294,8 +295,16 @@ def main() -> None:
     print(f"  BatchTopKSAE: {CFG['input_dim']}d → {CFG['nb_concepts']} features, k={CFG['k']} (top_k={top_k:,})")
     print(f"  Loss: {CFG['loss_fn']}  α={CFG['aux_loss_coeff']}  Job: {CFG['job_label']}")
 
+    start_epoch = 0
+    if CFG["resume_from"] is not None:
+        ckpt = torch.load(CFG["resume_from"], map_location=CFG["device"])
+        sae.load_state_dict(ckpt["sae_state_dict"])
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        start_epoch = ckpt["epoch"] + 1
+        print(f"  Resumed from {CFG['resume_from']} — starting at epoch {start_epoch}")
+
     global_step = 0
-    for epoch in range(CFG["epochs"]):
+    for epoch in range(start_epoch, CFG["epochs"]):
         print(f"\nEpoch {epoch + 1}/{CFG['epochs']}")
 
         avg_loss, global_step = train_epoch(
@@ -313,7 +322,14 @@ def main() -> None:
             f"  L0={metrics['val/l0']:.1f}  Dead={metrics['val/dead_features']}"
         )
 
-        torch.save(sae.state_dict(), CFG["checkpoint"])
+        torch.save(
+        {
+            "epoch": epoch,
+            "sae_state_dict": sae.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+        },
+        CFG["checkpoint"],
+    )
         print(f"  Saved: {CFG['checkpoint']}")
 
     # How many features fire at each frequency
