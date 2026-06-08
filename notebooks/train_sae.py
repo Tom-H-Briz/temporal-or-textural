@@ -76,7 +76,7 @@ for _key, _env, _cast in [
     ("epochs",           "SAE_EPOCHS",    int),
     ("expansion_factor", "SAE_EXPANSION", int),
 ]:
-    if _env in os.environ:
+    if os.environ.get(_env):
         CFG[_key] = _cast(os.environ[_env])
 
 CFG["nb_concepts"] = CFG["input_dim"] * CFG["expansion_factor"]

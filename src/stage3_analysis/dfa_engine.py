@@ -222,7 +222,7 @@ class DFAEngine:
 
         predicted_class = int(logits.argmax().item())
         correct = predicted_class == correct_class_idx
-        correct_class_logit_val = float(logits[correct_class_idx].item())
+        correct_class_logit_val = float(logits[correct_class_idx].detach().item())
         entropy_norm = compute_entropy_normalised(logits)
 
         all_logits = logits.detach().cpu().float()
@@ -237,7 +237,7 @@ class DFAEngine:
         z_detached = self._z.detach()
         dfa_tensor = grad_z * z_detached                   # (T, dict_size), signed
         per_feature_summary = (
-            dfa_tensor.abs().sum(dim=0).detach().float()   # (dict_size,), float32
+            dfa_tensor.abs().sum(dim=0).detach().float().cpu()   # (dict_size,), float32
         )
         signed_feature_summary = dfa_tensor.sum(dim=0).detach().float().cpu()
         token_fire_counts = (z_detached > 0).sum(dim=0).cpu().to(torch.int32)
