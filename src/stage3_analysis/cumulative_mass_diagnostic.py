@@ -12,6 +12,7 @@ Outputs:
 
 import logging
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -39,11 +40,11 @@ CFG = {
     "activity_threshold_frac": 0.01,
     "mass_thresholds": [0.50, 0.80, 0.90, 0.95],
     "dev_class_ids": [93, 94, 97, 149, 150],
-    "labels_path": str(ROOT / "data/ssv2/labels/labels.json"),
-    "validation_path": str(ROOT / "data/ssv2/labels/validation.json"),
-    "video_dir": str(ROOT / "data/ssv2/20bn-something-something-v2"),
+    "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
+    "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
+    "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "output_dir": str(ROOT / "outputs/analysis"),
-    "max_clips": 100   # set to e.g. 20 to do a quick smoke-test run
+    "max_clips": None   # set to e.g. 20 to do a quick smoke-test run
 }
 
 N_TOKENS = 1568
