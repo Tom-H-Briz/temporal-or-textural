@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 CFG = {
     "model_flag": "videomae",
-    "sae_path": str(ROOT / "outputs/sae/sae_layer7_job128.pt"),
+    "sae_path": str(ROOT / "outputs/sae/sae_layer7_job128_16x.pt"),
     "dim_mean_path": str(ROOT / "outputs/sae/layer7_dim_mean.pt"),
     "layer": 7,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -44,7 +44,8 @@ CFG = {
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "output_dir": str(ROOT / "outputs/analysis"),
-    "max_clips": None   # set to e.g. 20 to do a quick smoke-test run
+    "output_suffix": "_16x",        # e.g. "_16x" → cumulative_mass_diagnostic_16x.parquet
+    "max_clips": None           # set to e.g. 20 to do a quick smoke-test run
 }
 
 N_TOKENS = 1568
@@ -206,12 +207,13 @@ def main() -> None:
     out_dir = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    parquet_path = out_dir / "cumulative_mass_diagnostic.parquet"
+    suffix = cfg["output_suffix"]
+    parquet_path = out_dir / f"cumulative_mass_diagnostic{suffix}.parquet"
     df.to_parquet(parquet_path, index=False)
     log.info(f"Saved → {parquet_path}")
 
     dev_df = df[df["class_id"].isin(cfg["dev_class_ids"])]
-    csv_path = out_dir / "cumulative_mass_diagnostic_dev5.csv"
+    csv_path = out_dir / f"cumulative_mass_diagnostic{suffix}_dev5.csv"
     dev_df.to_csv(csv_path, index=False)
     log.info(f"Saved dev5 → {csv_path}  ({len(dev_df)} rows)")
 
