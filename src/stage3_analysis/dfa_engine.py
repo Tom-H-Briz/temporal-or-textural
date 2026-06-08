@@ -12,6 +12,7 @@ Usage:
 """
 
 import collections
+import math
 import sys
 from pathlib import Path
 
@@ -30,7 +31,17 @@ from sae import BatchTopKSAE
 
 DFAResult = collections.namedtuple(
     "DFAResult",
-    ["per_feature_summary", "correct_class_logit", "correct", "predicted_class"],
+    [
+        "per_feature_summary",
+        "correct_class_logit",
+        "correct",
+        "predicted_class",
+        "entropy_normalised",
+        "logit_margin",
+        "all_logits",
+        "signed_feature_summary",
+        "token_fire_counts",
+    ],
 )
 
 # ---------------------------------------------------------------------------
@@ -68,6 +79,26 @@ MODEL_CONFIGS: dict[str, dict] = {
         "preprocessor": _preprocess_videomae,
     },
 }
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+
+def compute_entropy_normalised(logits: torch.Tensor) -> float:
+    """
+    Shannon entropy of the softmax distribution, normalised to [0, 1].
+
+    H = -Σ p_i * log(p_i),  H_normalised = H / log(num_classes)
+
+    0 * log(0) = 0 by convention (clamped before log).
+    Returns a Python float.
+    """
+    with torch.no_grad():
+        probs = torch.softmax(logits.detach(), dim=0)
+        entropy = -(probs * probs.clamp(min=1e-10).log()).sum().item()
+        return entropy / math.log(probs.shape[0])
+
 
 # ---------------------------------------------------------------------------
 # Engine
@@ -192,15 +223,24 @@ class DFAEngine:
         predicted_class = int(logits.argmax().item())
         correct = predicted_class == correct_class_idx
         correct_class_logit_val = float(logits[correct_class_idx].item())
+        entropy_norm = compute_entropy_normalised(logits)
+
+        all_logits = logits.detach().cpu().float()
+        top2_vals = all_logits.topk(2).values
+        second_highest = top2_vals[1].item()
+        logit_margin = correct_class_logit_val - second_highest
 
         self._z.grad = None
         logits[correct_class_idx].backward()
 
         grad_z = self._z.grad                              # (T, dict_size), signed
-        dfa_tensor = grad_z * self._z.detach()             # (T, dict_size), signed
+        z_detached = self._z.detach()
+        dfa_tensor = grad_z * z_detached                   # (T, dict_size), signed
         per_feature_summary = (
             dfa_tensor.abs().sum(dim=0).detach().float()   # (dict_size,), float32
         )
+        signed_feature_summary = dfa_tensor.sum(dim=0).detach().float().cpu()
+        token_fire_counts = (z_detached > 0).sum(dim=0).cpu().to(torch.int32)
 
         self._z.grad = None
         self._z = None
@@ -210,6 +250,11 @@ class DFAEngine:
             correct_class_logit=correct_class_logit_val,
             correct=correct,
             predicted_class=predicted_class,
+            entropy_normalised=entropy_norm,
+            logit_margin=logit_margin,
+            all_logits=all_logits,
+            signed_feature_summary=signed_feature_summary,
+            token_fire_counts=token_fire_counts,
         )
 
     def get_z(self, clip: Path) -> torch.Tensor:
