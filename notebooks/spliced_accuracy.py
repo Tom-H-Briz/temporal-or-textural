@@ -26,7 +26,7 @@ from ToT_utils import (
 
 # SAEs to compare — add or remove entries here to extend the sweep
 SAE_CONFIGS = [
-    {"label": "e7k128",  "k": 128},
+    {"label": "128_16x",  "k": 128},
 ]
 
 LAYER = 7
@@ -38,13 +38,17 @@ DIM_MEAN_PATH = SAE_DIR / "layer7_dim_mean.pt"
 def load_sae(cfg: dict, dim_mean: torch.Tensor, device: str) -> BatchTopKSAE:
     """Load a checkpoint, warm up running_threshold, return in eval mode."""
     checkpoint = SAE_DIR / f"sae_layer7_job{cfg['label']}.pt"
+    _ckpt = torch.load(checkpoint, weights_only=True, map_location=device)
+    if isinstance(_ckpt, dict) and "sae_state_dict" in _ckpt:
+        _ckpt = _ckpt["sae_state_dict"]
+    nb_concepts = _ckpt["dictionary._weights"].shape[0]
     sae = BatchTopKSAE(
         input_shape=768,
-        nb_concepts=768 * 8,
+        nb_concepts=nb_concepts,
         top_k=cfg["k"] * 1568,
         device=device,
     )
-    sae.load_state_dict(torch.load(checkpoint, weights_only=True, map_location=device))
+    sae.load_state_dict(_ckpt)
 
     # running_threshold is not persisted — initialise with one dummy forward pass
     sae.train()
@@ -149,7 +153,7 @@ def main() -> None:
     )
     comp.columns = [f"sae{s}_{c}" for s, c in comp.columns]
     comp = comp.reset_index().sort_values("class_id")
-    comp.to_csv(OUTPUT_DIR / "comparison.csv", index=False)
+    comp.to_csv(OUTPUT_DIR / "comparison_16x.csv", index=False)
     print(f"\nComparison saved → {OUTPUT_DIR / 'comparison_sae_ep7.csv'}")
 
 
