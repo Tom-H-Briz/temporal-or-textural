@@ -19,10 +19,10 @@ Full survivor set requires:
 where all_active_r_dfa is mean_dfa_R computed over R-active clips, for every
 feature that fires in R at least once.
 
-Outputs (outputs/analysis/chiral/):
-  chiral_features_L2R.csv      — top_n survivors for class 93
-  chiral_features_R2L.csv      — top_n survivors for class 94
-  chiral_features_contrast.csv — full survivor sets, direction-exclusive features only
+Outputs (outputs/analysis/tearing/):
+  tearing_features_two_pieces.csv — top_n survivors for class 149
+  tearing_features_little_bit.csv — top_n survivors for class 150
+  tearing_features_contrast.csv   — full survivor sets, direction-exclusive features only
 """
 
 import logging
@@ -130,11 +130,11 @@ def save_csvs(
     out.mkdir(parents=True, exist_ok=True)
     top_n = cfg["top_n_features"]
 
-    l2r.head(top_n).to_csv(out / "chiral_features_L2R.csv", index=False)
-    log.info(f"Saved → {out / 'chiral_features_L2R.csv'}  ({min(len(l2r), top_n)} rows)")
+    l2r.head(top_n).to_csv(out / "tearing_features_two_pieces.csv", index=False)
+    log.info(f"Saved → {out / 'tearing_features_two_pieces.csv'}  ({min(len(l2r), top_n)} rows)")
 
-    r2l.head(top_n).to_csv(out / "chiral_features_R2L.csv", index=False)
-    log.info(f"Saved → {out / 'chiral_features_R2L.csv'}  ({min(len(r2l), top_n)} rows)")
+    r2l.head(top_n).to_csv(out / "tearing_features_little_bit.csv", index=False)
+    log.info(f"Saved → {out / 'tearing_features_little_bit.csv'}  ({min(len(r2l), top_n)} rows)")
 
     l2r_ids = set(l2r["feature_id"])
     r2l_ids = set(r2l["feature_id"])
@@ -146,9 +146,9 @@ def save_csvs(
     r2l_only["direction"] = "little_bit_only"
 
     contrast = pd.concat([l2r_only, r2l_only], ignore_index=True)
-    contrast.to_csv(out / "chiral_features_contrast.csv", index=False)
+    contrast.to_csv(out / "tearing_features_contrast.csv", index=False)
     log.info(
-        f"Saved → {out / 'chiral_features_contrast.csv'}  "
+        f"Saved → {out / 'tearing_features_contrast.csv'}  "
         f"({len(l2r_only)} L2R_only, {len(r2l_only)} R2L_only)"
     )
 
