@@ -35,7 +35,7 @@ CFG = {
     "output_dir": str(ROOT / "outputs/analysis/visualiser/"),
     "pairs": [
         # (feature_id, clip_id)
-        (3130, "153539"),
+        (5854, "144528"),
     ],
     "positive_only": True,
     "overlay_alpha": 0.5,

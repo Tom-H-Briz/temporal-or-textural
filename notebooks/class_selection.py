@@ -12,22 +12,26 @@ ROOT = Path(__file__).parent.parent
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
-from transformers import VideoMAEImageProcessor
+# from transformers import VideoMAEImageProcessor  # VideoMAE-specific — kept for easy swap-back
+from transformers import AutoImageProcessor, AutoModelForVideoClassification
 
-from ToT_utils import MODEL_ID, NUM_CLASSES, NUM_FRAMES, _strip_brackets, load_metadata, run_inference
+from ToT_utils import NUM_CLASSES, NUM_FRAMES, SSv2ClipDataset, _strip_brackets, load_metadata, run_inference
+from torch.utils.data import DataLoader
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+
+MODEL_ID="facebook/timesformer-base-finetuned-ssv2"
 CFG = {
     "model_id": MODEL_ID,
     "labels_path": ROOT / "data/ssv2/labels/labels.json",
     "validation_path": ROOT / "data/ssv2/labels/validation.json",
     "video_dir": ROOT / "data/ssv2/20bn-something-something-v2",
-    "output_dir": ROOT / "outputs/stage1_class_selection",
+    "output_dir": ROOT / "outputs/stage1_class_selection_TF",
     "batch_size": 4,
     "num_workers": 0,
-    "num_frames": NUM_FRAMES,
+    "num_frames": 8,  # TimeSformer; VideoMAE uses NUM_FRAMES (16)
     "device": (
         "cuda" if torch.cuda.is_available()
         else "mps" if torch.backends.mps.is_available()
@@ -37,14 +41,15 @@ CFG = {
 
 
 def build_dataloader(
-    clips: list[dict], label_map: dict[str, int], processor: VideoMAEImageProcessor
+    clips: list[dict], label_map: dict[str, int], processor
 ) -> DataLoader:
-    dataset = SSv2Dataset(
-        clips=clips,
-        video_dir=Path(CFG["video_dir"]),
-        label_map=label_map,
+    clip_paths = [Path(CFG["video_dir"]) / f"{c['id']}.webm" for c in clips]
+    labels = [label_map[_strip_brackets(c["template"])] for c in clips]
+    dataset = SSv2ClipDataset(
+        clip_paths=clip_paths,
         processor=processor,
         num_frames=CFG["num_frames"],
+        labels=labels,
     )
     return DataLoader(
         dataset,
@@ -103,8 +108,10 @@ def main() -> None:
     print(f"  {len(clips):,} validation clips, {len(label_map)} classes")
 
     print(f"Loading model: {CFG['model_id']}")
-    processor = VideoMAEImageProcessor.from_pretrained(CFG["model_id"])
-    model = VideoMAEForVideoClassification.from_pretrained(CFG["model_id"]).to(CFG["device"])
+    #processor = VideoMAEImageProcessor.from_pretrained(CFG["model_id"])
+    #model = VideoMAEForVideoClassification.from_pretrained(CFG["model_id"]).to(CFG["device"])
+    processor = AutoImageProcessor.from_pretrained(CFG["model_id"])
+    model = AutoModelForVideoClassification.from_pretrained(CFG["model_id"]).to(CFG["device"])
 
     dataloader = build_dataloader(clips, label_map, processor)
     preds, labels = run_inference(model, dataloader, CFG["device"])
@@ -114,7 +121,7 @@ def main() -> None:
 
     df = compute_accuracy_df(preds, labels, id2template)
 
-    csv_path = output_dir / "per_class_accuracy.csv"
+    csv_path = output_dir / "per_class_accuracy_TF.csv"
     df.to_csv(csv_path, index=False)
     print(f"Saved: {csv_path}")
 

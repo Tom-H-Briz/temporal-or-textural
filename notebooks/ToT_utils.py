@@ -65,7 +65,7 @@ def make_sae_splice_hook(sae: torch.nn.Module, dim_mean: torch.Tensor):
 
 
 def run_inference(
-    model: VideoMAEForVideoClassification, dataloader: DataLoader, device: str
+    model, dataloader: DataLoader, device: str  # model: any HF video classifier with .logits
 ) -> tuple[list[int], list[int]]:
     all_preds: list[int] = []
     all_labels: list[int] = []
