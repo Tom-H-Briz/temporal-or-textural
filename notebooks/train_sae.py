@@ -44,8 +44,6 @@ CFG = {
     "train_clips":     20_000,
     "split_seed":      42,
     "num_workers":     4,
-    # Preprocessing
-    "dim_mean_path":   str(ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"),
     # Output / tracking
     "job_label":       "A",
     "output_dir":      str(ROOT / "outputs" / "sae"),
@@ -87,12 +85,16 @@ assert CFG["model_name"] in MODEL_REGISTRY, (
     f"Unknown model_name {CFG['model_name']!r}. Valid: {list(MODEL_REGISTRY)}"
 )
 _model_cfg = MODEL_REGISTRY[CFG["model_name"]]
+_abbrev                 = {"videomae": "vmae", "timesformer": "tf"}[CFG["model_name"]]
 CFG["num_frames"]       = _model_cfg["num_frames"]
 CFG["hidden_dim"]       = _model_cfg["hidden_dim"]
 CFG["num_patch_tokens"] = _model_cfg["num_patch_tokens"]
 CFG["nb_concepts"]      = SAE_CONFIG["expansion"] * _model_cfg["hidden_dim"]
 CFG["top_k"]            = SAE_CONFIG["k"] * CFG["num_patch_tokens"]
 CFG["aux_loss_coeff"]   = SAE_CONFIG["alpha"]
+CFG["dim_mean_path"]    = os.environ.get("DIM_MEAN_PATH") or str(
+    ROOT / "outputs" / "sae" / f"{_abbrev}_layer{CFG['layer']}_dim_mean.pt"
+)
 
 
 def build_loss_fn(cfg: dict):
@@ -303,8 +305,14 @@ def main() -> None:
     )
     CFG["checkpoint"] = str(Path(CFG["output_dir"]) / f"{run_name}.pt")
 
-    dim_mean = torch.load(CFG["dim_mean_path"], weights_only=True).to(CFG["device"])
-    print(f"  Loaded dim_mean from {CFG['dim_mean_path']}  shape={tuple(dim_mean.shape)}")
+    _dim_mean_path = Path(CFG["dim_mean_path"])
+    if not _dim_mean_path.exists():
+        raise FileNotFoundError(
+            f"dim_mean not found: {_dim_mean_path}\n"
+            f"Run compute_dim_mean_sweep.sh for {CFG['model_name']} layer {CFG['layer']} first."
+        )
+    dim_mean = torch.load(_dim_mean_path, weights_only=True).to(CFG["device"])
+    print(f"  Loaded dim_mean from {_dim_mean_path}  shape={tuple(dim_mean.shape)}")
 
     loss_fn = build_loss_fn(CFG)
 
