@@ -20,5 +20,8 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops wandb pandas pyarrow matplotlib transformers huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python notebooks/train_sae_smoketest.py
+        echo '=== VideoMAE ===' &&
+        python notebooks/train_sae_smoketest.py &&
+        echo '=== TimeSformer ===' &&
+        MODEL_NAME=timesformer python notebooks/train_sae_smoketest.py
     "

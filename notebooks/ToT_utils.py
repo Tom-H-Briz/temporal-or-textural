@@ -9,11 +9,41 @@ import av
 import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
-from transformers import VideoMAEForVideoClassification
+from transformers import (
+    AutoImageProcessor,
+    TimesformerForVideoClassification,
+    VideoMAEForVideoClassification,
+    VideoMAEImageProcessor,
+)
 
-MODEL_ID = "MCG-NJU/videomae-base-finetuned-ssv2"
-NUM_FRAMES = 16
+MODEL_ID = "MCG-NJU/videomae-base-finetuned-ssv2"  # legacy — prefer MODEL_REGISTRY
+NUM_FRAMES = 16   # legacy — prefer MODEL_REGISTRY["videomae"]["num_frames"]
 NUM_CLASSES = 174
+
+# Registry values for num_patch_tokens are literals; the tier-1 shape asserts in
+# setup_model() validate them against the model's actual output on every forward pass.
+MODEL_REGISTRY: dict[str, dict] = {
+    "videomae": {
+        "model_class":      VideoMAEForVideoClassification,
+        "checkpoint":       "MCG-NJU/videomae-base-finetuned-ssv2",
+        "num_frames":       16,
+        "processor_class":  VideoMAEImageProcessor,
+        "cls_offset":       0,
+        "layer_getter":     lambda model, i: model.videomae.encoder.layer[i],
+        "hidden_dim":       768,
+        "num_patch_tokens": 1568,
+    },
+    "timesformer": {
+        "model_class":      TimesformerForVideoClassification,
+        "checkpoint":       "facebook/timesformer-base-finetuned-ssv2",
+        "num_frames":       8,
+        "processor_class":  AutoImageProcessor,
+        "cls_offset":       1,
+        "layer_getter":     lambda model, i: model.timesformer.encoder.layer[i],
+        "hidden_dim":       768,
+        "num_patch_tokens": 1568,
+    },
+}
 
 
 def _strip_brackets(template: str) -> str:
@@ -45,19 +75,27 @@ def load_metadata(
     return label_map, clips, id2template
 
 
-def make_sae_splice_hook(sae: torch.nn.Module, dim_mean: torch.Tensor):
+def make_sae_splice_hook(
+    sae: torch.nn.Module, dim_mean: torch.Tensor, cls_offset: int = 0
+):
     """
     Returns a forward hook that replaces a layer's output with its SAE reconstruction.
     Register on the target encoder layer; remove the handle when done.
     SAE must be in eval mode with running_threshold initialised before use.
+
+    cls_offset: 0 for VideoMAE (no CLS token), 1 for TimeSformer. TimeSformer callers
+    must pass cls_offset=1 explicitly — the default is VideoMAE-safe only.
     """
     def _hook(module, input, output):
         hidden = output[0] if isinstance(output, tuple) else output
-        B, T, D = hidden.shape
-        tokens = (hidden.reshape(B * T, D) - dim_mean).float()
+        patch = hidden[:, cls_offset:]
+        B, T, D = patch.shape
+        tokens = (patch.reshape(B * T, D) - dim_mean).float()
         with torch.no_grad():
             _, _, x_hat = sae(tokens)
         reconstructed = (x_hat + dim_mean).reshape(B, T, D).to(hidden.dtype)
+        if cls_offset:
+            reconstructed = torch.cat([hidden[:, :cls_offset], reconstructed], dim=1)
         if isinstance(output, tuple):
             return (reconstructed,) + output[1:]
         return reconstructed
