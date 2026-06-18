@@ -83,7 +83,8 @@ def extract_layer_features(layer: int, cfg: dict, device: str) -> Path:
     from train_sae import setup_model  # local import to avoid circular at module level
 
     model_cfg = MODEL_REGISTRY[cfg["model_name"]]
-    probe_cfg = dict(cfg, layer=layer, hidden_dim=model_cfg["hidden_dim"],
+    probe_cfg = dict(cfg, layer=layer, device=device,
+                     hidden_dim=model_cfg["hidden_dim"],
                      num_patch_tokens=model_cfg["num_patch_tokens"],
                      num_frames=model_cfg["num_frames"],
                      nb_concepts=cfg["sae_expansion"] * model_cfg["hidden_dim"],
