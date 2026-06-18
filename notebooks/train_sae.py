@@ -303,7 +303,8 @@ def main() -> None:
         f"sae_{_abbrev}_k{SAE_CONFIG['k']}_x{SAE_CONFIG['expansion']}"
         f"_l{CFG['layer']}_job{CFG['job_label']}"
     )
-    CFG["checkpoint"] = str(Path(CFG["output_dir"]) / f"{run_name}.pt")
+    CFG["checkpoint"]      = str(Path(CFG["output_dir"]) / f"{run_name}.pt")
+    CFG["best_checkpoint"] = str(Path(CFG["output_dir"]) / f"{run_name}_best.pt")
 
     _dim_mean_path = Path(CFG["dim_mean_path"])
     if not _dim_mean_path.exists():
@@ -344,9 +345,11 @@ def main() -> None:
         ckpt = torch.load(CFG["resume_from"], map_location=CFG["device"])
         sae.load_state_dict(ckpt["sae_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        sae.running_threshold = ckpt.get("running_threshold")
         start_epoch = ckpt["epoch"] + 1
         print(f"  Resumed from {CFG['resume_from']} — starting at epoch {start_epoch}")
 
+    best_score  = float("-inf")
     global_step = 0
     for epoch in range(start_epoch, CFG["epochs"]):
         print(f"\nEpoch {epoch + 1}/{CFG['epochs']}")
@@ -366,15 +369,24 @@ def main() -> None:
             f"  L0={metrics['val/l0']:.1f}  Dead={metrics['val/dead_features']}"
         )
 
-        torch.save(
-            {
-                "epoch":                epoch,
-                "sae_state_dict":       sae.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-            },
-            CFG["checkpoint"],
-        )
-        print(f"  Saved: {CFG['checkpoint']}")
+        ckpt_payload = {
+            "epoch":                epoch,
+            "sae_state_dict":       sae.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "running_threshold":    sae.running_threshold,
+        }
+        epoch_ckpt = str(Path(CFG["output_dir"]) / f"{run_name}_epoch{epoch + 1}.pt")
+        torch.save(ckpt_payload, epoch_ckpt)
+        torch.save(ckpt_payload, CFG["checkpoint"])  # rolling latest for resume
+
+        score = metrics["val/r2"] - (metrics["val/dead_features"] / CFG["nb_concepts"])
+        wandb.log({"val/score": score, "epoch": epoch + 1}, step=global_step)
+        if score > best_score:
+            best_score = score
+            torch.save(ckpt_payload, CFG["best_checkpoint"])
+            print(f"  Saved epoch {epoch + 1}  ★ new best (score={score:.4f})")
+        else:
+            print(f"  Saved epoch {epoch + 1}  (best score={best_score:.4f})")
 
     val_tokens   = len(val_paths) * CFG["num_patch_tokens"]
     firing_rate  = feature_counts.float() / val_tokens
