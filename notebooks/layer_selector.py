@@ -15,6 +15,7 @@ from pathlib import Path
 
 import torch
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 
 ROOT = Path(__file__).parent.parent
@@ -123,15 +124,17 @@ def _run_extraction(sae, model, hook_storage, processor, layer, cfg, device, cac
 
 
 def run_probe(features, labels, n_train: int, sklearn_cfg: dict) -> float:
+    scaler  = StandardScaler()
+    X_train = scaler.fit_transform(features[:n_train])
+    X_test  = scaler.transform(features[n_train:])
     clf = LogisticRegression(
         C=sklearn_cfg["sklearn_C"],
         solver=sklearn_cfg["sklearn_solver"],
         max_iter=sklearn_cfg["sklearn_max_iter"],
-        multi_class="multinomial",
         n_jobs=-1,
     )
-    clf.fit(features[:n_train], labels[:n_train])
-    preds = clf.predict(features[n_train:])
+    clf.fit(X_train, labels[:n_train])
+    preds = clf.predict(X_test)
     return float((preds == labels[n_train:]).mean())
 
 
