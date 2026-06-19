@@ -29,6 +29,8 @@ log = logging.getLogger(__name__)
 CFG = {
     "model_flag":              "timesformer",
     "layer":                   int(os.environ.get("SAE_LAYER", 7)),
+    "sae_k":                   64,
+    "sae_expansion":           8,
     "device":                  "cuda" if torch.cuda.is_available() else "cpu",
     "activity_threshold_frac": 0.01,
     "mass_thresholds":         [0.50, 0.80, 0.90, 0.95],
@@ -42,29 +44,20 @@ CFG = {
 N_TOKENS = MODEL_REGISTRY["timesformer"]["num_patch_tokens"]
 
 
-def _resolve_cfg(layer: int) -> dict:
-    sae_dir = ROOT / "outputs" / "sae"
-    matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
+def _resolve_cfg(layer: int, k: int, expansion: int) -> dict:
+    sae_dir   = ROOT / "outputs" / "sae"
+    matches   = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
     if len(matches) != 1:
         raise FileNotFoundError(
             f"Expected exactly 1 TF best checkpoint for layer {layer}, found {len(matches)}: {matches}"
         )
-    ckpt_path = matches[0]
-    ckpt      = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-    state     = ckpt.get("sae_state_dict", ckpt)
-    sae_k     = ckpt.get("sae_k")
-    if sae_k is None:
-        raise ValueError(f"sae_k not saved in checkpoint {ckpt_path} — retrain or pass manually")
-    hidden_dim  = MODEL_REGISTRY["timesformer"]["hidden_dim"]
-    nb_concepts = state["dictionary._weights"].shape[0]
-    expansion   = nb_concepts // hidden_dim
-    dim_mean    = sae_dir / f"tf_layer{layer}_dim_mean.pt"
+    dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
     if not dim_mean.exists():
         raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
     return {
-        "sae_path":      str(ckpt_path),
+        "sae_path":      str(matches[0]),
         "dim_mean_path": str(dim_mean),
-        "output_suffix": f"_tf_l{layer}_k{sae_k}_x{expansion}",
+        "output_suffix": f"_tf_l{layer}_k{k}_x{expansion}",
     }
 
 
@@ -131,7 +124,7 @@ def process_clip(result, clip_id: str, class_id: int, class_name: str, cfg: dict
 
 
 def main() -> None:
-    resolved = _resolve_cfg(CFG["layer"])
+    resolved = _resolve_cfg(CFG["layer"], CFG["sae_k"], CFG["sae_expansion"])
     cfg      = {**CFG, **resolved}
     log.info(f"Layer {cfg['layer']}  checkpoint={Path(cfg['sae_path']).name}")
     log.info(f"Device: {cfg['device']}")
