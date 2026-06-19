@@ -44,7 +44,7 @@ CFG = {
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "output_dir": str(ROOT / "outputs/analysis"),
-    "output_suffix": "_16x",        # e.g. "_16x" → cumulative_mass_diagnostic_16x.parquet
+    "output_suffix": "L3_tf_8x_k64",        # e.g. "_16x" → cumulative_mass_diagnostic_16x.parquet
     "max_clips": None           # set to e.g. 20 to do a quick smoke-test run
 }
 

@@ -374,6 +374,7 @@ def main() -> None:
             "sae_state_dict":       sae.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "running_threshold":    sae.running_threshold,
+            "sae_k":                SAE_CONFIG["k"],
         }
         epoch_ckpt = str(Path(CFG["output_dir"]) / f"{run_name}_epoch{epoch + 1}.pt")
         torch.save(ckpt_payload, epoch_ckpt)

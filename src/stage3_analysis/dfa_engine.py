@@ -18,12 +18,12 @@ from pathlib import Path
 
 import av
 import torch
-from transformers import VideoMAEForVideoClassification, VideoMAEImageProcessor
 
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sae import BatchTopKSAE
+from ToT_utils import MODEL_REGISTRY
 
 # ---------------------------------------------------------------------------
 # Output type
@@ -49,36 +49,16 @@ DFAResult = collections.namedtuple(
 # ---------------------------------------------------------------------------
 
 
-def _preprocess_videomae(
+def _preprocess_clip(
     clip: Path, num_frames: int, processor, device: str
 ) -> torch.Tensor:
     container = av.open(str(clip))
     frames = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
-
-    n = len(frames)
+    n       = len(frames)
     indices = torch.linspace(0, n - 1, num_frames).long().tolist()
     sampled = [frames[i] for i in indices]
-
     return processor(sampled, return_tensors="pt")["pixel_values"].to(device)
-
-
-# ---------------------------------------------------------------------------
-# Model config block — add entries here to support new architectures
-# ---------------------------------------------------------------------------
-
-MODEL_CONFIGS: dict[str, dict] = {
-    "videomae": {
-        "model_id": "MCG-NJU/videomae-base-finetuned-ssv2",
-        "num_frames": 16,
-        "hidden_dim": 768,
-        "num_tokens": 1568,
-        "hook_layer": 7,
-        "nb_concepts": 6144,
-        "sae_k": 128,
-        "preprocessor": _preprocess_videomae,
-    },
-}
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -118,64 +98,61 @@ class DFAEngine:
         dim_mean_path: str | Path,
         layer: int | None = None,
         device: str = "cpu",
+        sae_k: int | None = None,
     ) -> None:
         self.model_flag = model_flag
-        self.sae_path = Path(sae_path)
+        self.sae_path   = Path(sae_path)
         self.dim_mean_path = Path(dim_mean_path)
-        self._layer = layer  # None → resolved from MODEL_CONFIGS in __enter__
-        self.device = device
+        self._layer  = layer
+        self.device  = device
+        self._sae_k  = sae_k   # fallback for old checkpoints without sae_k field
 
-        self._model = None
-        self._sae = None
-        self._dim_mean = None
-        self._processor = None
+        self._model       = None
+        self._sae         = None
+        self._dim_mean    = None
+        self._processor   = None
         self._hook_handle = None
-        self._z: torch.Tensor | None = None
-        self._z_override: torch.Tensor | None = None  # set externally for ablation passes
+        self._cls_offset: int            = 0
+        self._num_frames:  int           = 16
+        self._z:           torch.Tensor | None = None
+        self._z_override:  torch.Tensor | None = None
 
     def __enter__(self) -> "DFAEngine":
-        cfg = MODEL_CONFIGS[self.model_flag]
-        device = self.device
-        self._layer = self._layer if self._layer is not None else cfg["hook_layer"]
+        model_cfg        = MODEL_REGISTRY[self.model_flag]
+        device           = self.device
+        self._layer      = self._layer if self._layer is not None else 7
+        self._cls_offset = model_cfg["cls_offset"]
+        self._num_frames = model_cfg["num_frames"]
 
-        self._processor = VideoMAEImageProcessor.from_pretrained(cfg["model_id"])
-        self._model = VideoMAEForVideoClassification.from_pretrained(cfg["model_id"])
+        self._processor = model_cfg["processor_class"].from_pretrained(model_cfg["checkpoint"])
+        self._model     = model_cfg["model_class"].from_pretrained(model_cfg["checkpoint"])
         self._model.to(device).eval()
         for p in self._model.parameters():
             p.requires_grad_(False)
 
         self._dim_mean = torch.load(self.dim_mean_path, weights_only=True).to(device)
 
-        _ckpt = torch.load(self.sae_path, weights_only=True, map_location=device)
-        if isinstance(_ckpt, dict) and "sae_state_dict" in _ckpt:
-            _ckpt = _ckpt["sae_state_dict"]
-        nb_concepts = _ckpt["dictionary._weights"].shape[0]
+        ckpt       = torch.load(self.sae_path, weights_only=True, map_location=device)
+        state_dict = ckpt["sae_state_dict"] if "sae_state_dict" in ckpt else ckpt
+        nb_concepts = state_dict["dictionary._weights"].shape[0]
+        sae_k = ckpt.get("sae_k") or self._sae_k
+        if sae_k is None:
+            raise ValueError(f"sae_k not in checkpoint and not passed to constructor: {self.sae_path}")
+        top_k = sae_k * model_cfg["num_patch_tokens"]
 
-        self._sae = BatchTopKSAE(
-            input_shape=cfg["hidden_dim"],
-            nb_concepts=nb_concepts,
-            top_k=cfg["sae_k"] * cfg["num_tokens"],
-            device=device,
-        )
-        self._sae.load_state_dict(_ckpt)
-        # running_threshold is not persisted in the checkpoint — initialise with a
-        # dummy train-mode pass so eval() asserts do not fire (same approach as
-        # spliced_accuracy.py)
+        self._sae = BatchTopKSAE(input_shape=model_cfg["hidden_dim"],
+                                  nb_concepts=nb_concepts, top_k=top_k, device=device)
+        self._sae.load_state_dict(state_dict)
         self._sae.train()
-        dummy = torch.zeros(cfg["num_tokens"], cfg["hidden_dim"], device=device)
+        dummy = torch.zeros(model_cfg["num_patch_tokens"], model_cfg["hidden_dim"], device=device)
         with torch.no_grad():
             self._sae.encode((dummy - self._dim_mean).float())
-        # Freeze before eval() so _fused_dictionary is computed with requires_grad=False
-        # weights, giving it no grad_fn. Without this, backward() frees _fused_dictionary's
-        # saved tensors on the first clip and the second clip raises "backward through graph
-        # a second time".
         for p in self._sae.parameters():
             p.requires_grad_(False)
         self._sae.eval()
 
-        target_layer = self._model.videomae.encoder.layer[self._layer]
-        self._hook_handle = target_layer.register_forward_hook(self._splice_hook)
-
+        self._hook_handle = model_cfg["layer_getter"](self._model, self._layer) \
+            .register_forward_hook(self._splice_hook)
         return self
 
     def _splice_hook(self, module, input, output):
@@ -188,31 +165,29 @@ class DFAEngine:
         decoded directly (used by ablation passes in no_grad context).
         """
         assert self._sae is not None and self._dim_mean is not None
-        hidden = output[0] if isinstance(output, tuple) else output  # (1, T, D)
-        B, T, D = hidden.shape
+        hidden     = output[0] if isinstance(output, tuple) else output
+        cls_offset = self._cls_offset
+        cls        = hidden[:, :cls_offset]   # (B, 1, D) for TF; empty slice for VideoMAE
+        patches    = hidden[:, cls_offset:]   # (B, T, D)
+        B, T, D    = patches.shape
 
         if self._z_override is not None:
-            z = self._z_override                          # (T, dict_size), caller-provided
+            z = self._z_override
         else:
-            tokens = (hidden.reshape(B * T, D) - self._dim_mean).float()
+            tokens = (patches.reshape(B * T, D) - self._dim_mean).float()
             with torch.no_grad():
-                _, z_raw = self._sae.encode(tokens)       # (T, dict_size)
-            z = z_raw.detach().requires_grad_(True)        # leaf — accumulates grad
+                _, z_raw = self._sae.encode(tokens)
+            z = z_raw.detach().requires_grad_(True)
             self._z = z
 
-        recon = self._sae.decode(z)                       # (T, hidden_dim), tracked through z
+        recon = self._sae.decode(z)
         recon = (recon + self._dim_mean).to(hidden.dtype).reshape(B, T, D)
-
-        if isinstance(output, tuple):
-            return (recon,) + output[1:]
-        return recon
+        out   = torch.cat([cls, recon], dim=1) if cls_offset else recon
+        return (out,) + output[1:] if isinstance(output, tuple) else out
 
     def run(self, clip: Path, correct_class_idx: int) -> DFAResult:
         """Forward pass with SAE splice, then backward from correct-class logit."""
-        cfg = MODEL_CONFIGS[self.model_flag]
-        pixel_values = cfg["preprocessor"](
-            clip, cfg["num_frames"], self._processor, self.device
-        )
+        pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device)
 
         self._z = None
         model_output = self._model(pixel_values=pixel_values)
@@ -262,10 +237,7 @@ class DFAEngine:
 
     def get_z(self, clip: Path) -> torch.Tensor:
         """Forward pass in no_grad — returns z (num_tokens, dict_size) without backward."""
-        cfg = MODEL_CONFIGS[self.model_flag]
-        pixel_values = cfg["preprocessor"](
-            clip, cfg["num_frames"], self._processor, self.device
-        )
+        pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device)
         self._z = None
         with torch.no_grad():
             self._model(pixel_values=pixel_values)
