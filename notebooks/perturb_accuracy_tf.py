@@ -1,7 +1,7 @@
 """
 TF per-class accuracy under perturbation conditions A/B/C — full val set.
 
-  A — original clips (baseline)
+  A — single midpoint frame repeated (apply_midpoint_frame)
   B — first/last frames (apply_first_last)
   C — shuffled frames  (apply_shuffle, seed = int(clip_id) % 2**32)
 
@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from perturbation import apply_first_last, apply_shuffle
+from perturbationA import apply_midpoint_frame
 from ToT_utils import MODEL_REGISTRY, _strip_brackets, load_metadata
 
 CFG = {
@@ -66,7 +67,9 @@ class PerturbedSSv2Dataset(Dataset):
         frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
         container.close()
 
-        if self.condition == "B":
+        if self.condition == "A":
+            frames = apply_midpoint_frame(frames)
+        elif self.condition == "B":
             frames = apply_first_last(frames)
         elif self.condition == "C":
             frames = apply_shuffle(frames, int(self.clip_ids[idx]) % 2**32)
