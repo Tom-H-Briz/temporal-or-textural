@@ -3,7 +3,7 @@
 #SBATCH --output=run_perturb_accuracy_tf_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=04:00:00
+#SBATCH --time=02:30:00
 
 source $HOME/.tokens
 
