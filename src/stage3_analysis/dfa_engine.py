@@ -188,7 +188,10 @@ class DFAEngine:
     def run(self, clip: Path, correct_class_idx: int) -> DFAResult:
         """Forward pass with SAE splice, then backward from correct-class logit."""
         pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device)
+        return self.run_pixels(pixel_values, correct_class_idx)
 
+    def run_pixels(self, pixel_values: torch.Tensor, correct_class_idx: int) -> DFAResult:
+        """Same as run() but accepts pre-computed pixel_values — use for in-memory perturbations."""
         self._z = None
         model_output = self._model(pixel_values=pixel_values)
         logits = model_output.logits.squeeze(0)            # (num_classes,)
