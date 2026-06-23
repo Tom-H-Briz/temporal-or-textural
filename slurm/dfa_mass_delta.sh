@@ -8,6 +8,7 @@
 source $HOME/.tokens
 
 export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
+export PERTURB_DIR="/scratch/b5bg/tomheslin83.b5bg/perturbed"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
 

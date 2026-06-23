@@ -12,7 +12,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import av
 import numpy as np
 import pandas as pd
 import torch
@@ -23,7 +22,6 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
-from perturbation import apply_shuffle
 from ToT_utils import _strip_brackets, load_metadata
 from stage3_analysis.dfa_engine import DFAEngine
 
@@ -57,40 +55,30 @@ def _resolve_cfg(cfg: dict) -> dict:
     return {"sae_path": str(ckpt_path), "dim_mean_path": str(dim_mean), "sae_k": sae_k}
 
 
-def load_clips(cfg: dict, class_id: int) -> list[tuple[str, Path]]:
+def load_clips(cfg: dict, class_id: int) -> list[tuple[str, Path, Path]]:
     label_map, clips, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
-    video_dir = Path(cfg["video_dir"])
-    result    = []
+    video_dir   = Path(cfg["video_dir"])
+    perturb_dir = ROOT / "data" / "perturbed"
+    result      = []
     for c in clips:
         if label_map.get(_strip_brackets(c["template"])) != class_id:
             continue
-        path = video_dir / f"{c['id']}.webm"
-        if path.exists():
-            result.append((str(c["id"]), path))
+        path_r = video_dir   / f"{c['id']}.webm"
+        path_c = perturb_dir / "C" / f"{c['id']}C.webm"
+        if path_r.exists() and path_c.exists():
+            result.append((str(c["id"]), path_r, path_c))
     print(f"  Class {class_id}: {len(result)} clips on disk")
     return result
 
 
-def preprocess_c(clip_path: Path, clip_id: str, num_frames: int, processor, device: str) -> torch.Tensor:
-    container = av.open(str(clip_path))
-    frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
-    container.close()
-    frames = apply_shuffle(frames, int(clip_id) % 2**32)
-    n      = len(frames)
-    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
-    return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
-
-
-def collect_scores(engine: DFAEngine, clips: list[tuple[str, Path]],
-                   class_id: int, cfg: dict) -> list[dict]:
+def collect_scores(engine: DFAEngine, clips: list[tuple[str, Path, Path]],
+                   class_id: int) -> list[dict]:
     records = []
-    for clip_id, clip_path in clips:
-        r_result = engine.run(clip_path, class_id)
+    for clip_id, path_r, path_c in clips:
+        r_result = engine.run(path_r, class_id)
         if not r_result.correct:
             continue
-        pv_c     = preprocess_c(clip_path, clip_id, engine._num_frames,
-                                engine._processor, cfg["device"])
-        c_result = engine.run_pixels(pv_c, class_id)
+        c_result = engine.run(path_c, class_id)
         records.append({
             "clip_id": clip_id,
             "dfa":     r_result.per_feature_summary.numpy(),
@@ -151,7 +139,7 @@ def main() -> None:
     with DFAEngine(cfg["model_flag"], cfg["sae_path"], cfg["dim_mean_path"],
                    layer=cfg["layer"], device=cfg["device"],
                    sae_k=cfg["sae_k"]) as engine:
-        records = collect_scores(engine, clips, args.class_id, cfg)
+        records = collect_scores(engine, clips, args.class_id)
 
     df = aggregate(records)
     save_outputs(records, df, args.class_id, cfg)

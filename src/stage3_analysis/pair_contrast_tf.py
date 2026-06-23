@@ -13,7 +13,6 @@ Outputs: outputs/stage3_analysis/pair_contrast_tf/pair_contrast_tf_<cids>.csv
 import sys
 from pathlib import Path
 
-import av
 import numpy as np
 import pandas as pd
 import torch
@@ -24,9 +23,8 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
-from perturbation import apply_shuffle
 from ToT_utils import MODEL_REGISTRY, _strip_brackets, load_metadata
-from stage3_analysis.dfa_engine import DFAEngine, _preprocess_clip
+from stage3_analysis.dfa_engine import DFAEngine
 
 _LAYER = 7
 
@@ -59,51 +57,37 @@ def _resolve_cfg(cfg: dict) -> dict:
     return {"sae_path": str(ckpt_path), "dim_mean_path": str(dim_mean), "sae_k": sae_k}
 
 
-def load_clips(cfg: dict) -> dict[int, list[tuple[str, Path]]]:
+def load_clips(cfg: dict) -> dict[int, list[tuple[str, Path, Path]]]:
     label_map, clips, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
-    video_dir = Path(cfg["video_dir"])
-    target    = set(cfg["class_ids"])
-    result: dict[int, list[tuple[str, Path]]] = {c: [] for c in target}
+    video_dir   = Path(cfg["video_dir"])
+    perturb_dir = ROOT / "data" / "perturbed"
+    target      = set(cfg["class_ids"])
+    result: dict[int, list[tuple[str, Path, Path]]] = {c: [] for c in target}
     for c in clips:
         cid = label_map.get(_strip_brackets(c["template"]))
         if cid not in target:
             continue
-        path = video_dir / f"{c['id']}.webm"
-        if path.exists():
-            result[cid].append((str(c["id"]), path))
+        path_r = video_dir   / f"{c['id']}.webm"
+        path_c = perturb_dir / "C" / f"{c['id']}C.webm"
+        if path_r.exists() and path_c.exists():
+            result[cid].append((str(c["id"]), path_r, path_c))
     for cid, lst in result.items():
         print(f"  Class {cid}: {len(lst)} clips on disk")
     return result
 
 
-def preprocess_c(clip_path: Path, clip_id: str, num_frames: int, processor, device: str) -> torch.Tensor:
-    container = av.open(str(clip_path))
-    frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
-    container.close()
-    frames = apply_shuffle(frames, int(clip_id) % 2**32)
-    n      = len(frames)
-    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
-    return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
-
-
-def collect_scores(engine: DFAEngine, clips: list[tuple[str, Path]],
-                   class_id: int, cfg: dict) -> list[dict]:
+def collect_scores(engine: DFAEngine, clips: list[tuple[str, Path, Path]],
+                   class_id: int) -> list[dict]:
     records = []
-    for clip_id, clip_path in clips:
-        r_result = engine.run(clip_path, class_id)
+    for clip_id, path_r, path_c in clips:
+        r_result = engine.run(path_r, class_id)
         if not r_result.correct:
             continue
-
-        pv_c    = preprocess_c(clip_path, clip_id, engine._num_frames,
-                               engine._processor, cfg["device"])
-        c_result = engine.run_pixels(pv_c, class_id)
-
-        dfa = r_result.per_feature_summary.numpy()
-        s_r = r_result.signed_feature_summary.numpy()
-        s_c = c_result.signed_feature_summary.numpy()
+        c_result = engine.run(path_c, class_id)
         records.append({"clip_id": clip_id, "class_id": class_id,
-                        "dfa": dfa, "s_R": s_r, "s_C": s_c})
-
+                        "dfa": r_result.per_feature_summary.numpy(),
+                        "s_R": r_result.signed_feature_summary.numpy(),
+                        "s_C": c_result.signed_feature_summary.numpy()})
     print(f"  Class {class_id}: {len(records)} R-correct clips used")
     return records
 
@@ -173,9 +157,9 @@ def main() -> None:
                    layer=cfg["layer"], device=cfg["device"],
                    sae_k=cfg["sae_k"]) as engine:
         print("Collecting class 36 (apart)...")
-        records_36 = collect_scores(engine, clips_by_class[36], 36, cfg)
+        records_36 = collect_scores(engine, clips_by_class[36], 36)
         print("Collecting class 37 (closer)...")
-        records_37 = collect_scores(engine, clips_by_class[37], 37, cfg)
+        records_37 = collect_scores(engine, clips_by_class[37], 37)
 
     print("Aggregating and contrasting...")
     df = aggregate(records_36, records_37)
