@@ -71,18 +71,25 @@ def load_clips(cfg: dict) -> list[tuple[str, int, Path, Path, Path]]:
     label_map, clips, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
     video_dir   = Path(cfg["video_dir"])
     perturb_dir = Path(cfg["perturb_dir"])
-    target     = set(cfg["dfa_classes"])
-    result     = []
+    for subdir in ("C", "A"):
+        if not (perturb_dir / subdir).exists():
+            raise FileNotFoundError(f"Perturbed clip dir not found: {perturb_dir / subdir}")
+    print(f"  video_dir:   {video_dir}")
+    print(f"  perturb_dir: {perturb_dir}")
+    target = set(cfg["dfa_classes"])
+    result, miss_r, miss_c, miss_a = [], 0, 0, 0
     for c in clips:
         cid = label_map.get(_strip_brackets(c["template"]))
         if cid not in target:
             continue
-        path_r = video_dir  / f"{c['id']}.webm"
+        path_r = video_dir   / f"{c['id']}.webm"
         path_c = perturb_dir / "C" / f"{c['id']}C.webm"
         path_a = perturb_dir / "A" / f"{c['id']}A.webm"
-        if path_r.exists() and path_c.exists() and path_a.exists():
-            result.append((str(c["id"]), cid, path_r, path_c, path_a))
-    print(f"  {len(result)} clips across {len(target)} DFA classes")
+        if not path_r.exists(): miss_r += 1; continue
+        if not path_c.exists(): miss_c += 1; continue
+        if not path_a.exists(): miss_a += 1; continue
+        result.append((str(c["id"]), cid, path_r, path_c, path_a))
+    print(f"  found={len(result)}  miss_r={miss_r}  miss_c={miss_c}  miss_a={miss_a}")
     return result
 
 
