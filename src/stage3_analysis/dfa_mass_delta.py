@@ -103,13 +103,19 @@ def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict) 
         pv_c     = preprocess_c(clip_path, clip_id, engine._num_frames,
                                 engine._processor, cfg["device"])
         c_result = engine.run_pixels(pv_c, class_id)
+        s_r = r_result.signed_feature_summary.numpy().astype(np.float32)
+        s_c = c_result.signed_feature_summary.numpy().astype(np.float32)
         records.append({
-            "clip_id":     clip_id,
-            "class_id":    class_id,
-            "total_abs_R": float(r_result.per_feature_summary.sum()),
-            "total_abs_C": float(c_result.per_feature_summary.sum()),
-            "delta":       float(r_result.per_feature_summary.sum() - c_result.per_feature_summary.sum()),
-            "correct_C":   bool(c_result.correct),
+            "clip_id":        clip_id,
+            "class_id":       class_id,
+            "total_abs_R":    float(r_result.per_feature_summary.sum()),
+            "total_abs_C":    float(c_result.per_feature_summary.sum()),
+            "delta":          float(r_result.per_feature_summary.sum() - c_result.per_feature_summary.sum()),
+            "correct_C":      bool(c_result.correct),
+            "total_signed_R": float(s_r.sum()),
+            "total_signed_C": float(s_c.sum()),
+            "signed_vec_R":   s_r,
+            "signed_vec_C":   s_c,
         })
         if (i + 1) % 100 == 0:
             print(f"  [{i+1}/{len(clips)}] R-correct so far: {len(records)}")
@@ -120,7 +126,9 @@ def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict) 
 def save_parquet(records: list[dict], sl_map: dict[int, str], out_dir: Path) -> None:
     df = pd.DataFrame(records)
     df["sl_label"] = df["class_id"].map(sl_map).fillna("unlabelled")
-    df = df[["clip_id", "class_id", "sl_label", "total_abs_R", "total_abs_C", "delta", "correct_C"]]
+    df = df[["clip_id", "class_id", "sl_label",
+             "total_abs_R", "total_abs_C", "delta", "correct_C",
+             "total_signed_R", "total_signed_C", "signed_vec_R", "signed_vec_C"]]
     path = out_dir / "dfa_mass_delta.parquet"
     df.to_parquet(path, index=False)
     print(f"  Parquet → {path}  ({len(df)} rows)")
