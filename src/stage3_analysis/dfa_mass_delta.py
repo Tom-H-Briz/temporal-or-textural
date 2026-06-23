@@ -14,6 +14,8 @@ import os
 import sys
 from pathlib import Path
 
+import av
+import json
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -25,6 +27,8 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
+from perturbation import apply_shuffle
+from perturbationA import apply_midpoint_frame
 from ToT_utils import _strip_brackets, load_metadata
 from stage3_analysis.dfa_engine import DFAEngine
 
@@ -38,8 +42,8 @@ CFG = {
                         42, 44, 57, 59, 83, 84, 123, 126, 142, 143, 145, 164, 168, 169, 171, 173],
     "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
-    "video_dir":       os.environ.get("VIDEO_DIR",    str(ROOT / "data/ssv2/20bn-something-something-v2")),
-    "perturb_dir":     os.environ.get("PERTURB_DIR", str(ROOT / "data/perturbed")),
+    "video_dir":       os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
+    "manifest_path":   str(ROOT / "outputs/Laura_SL/manifest_SL_subset.json"),
     "sl_csv_path":     str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
     "output_dir":      str(ROOT / "outputs/analysis/dfa_mass_delta"),
 }
@@ -67,40 +71,52 @@ def build_sl_label_map(cfg: dict) -> dict[int, str]:
     return {int(row["class_id"]): row["category"] for _, row in df.iterrows()}
 
 
-def load_clips(cfg: dict) -> list[tuple[str, int, Path, Path, Path]]:
-    label_map, clips, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
-    video_dir   = Path(cfg["video_dir"])
-    perturb_dir = Path(cfg["perturb_dir"])
-    for subdir in ("C", "A"):
-        if not (perturb_dir / subdir).exists():
-            raise FileNotFoundError(f"Perturbed clip dir not found: {perturb_dir / subdir}")
-    print(f"  video_dir:   {video_dir}")
-    print(f"  perturb_dir: {perturb_dir}")
-    target = set(cfg["dfa_classes"])
-    result, miss_r, miss_c, miss_a = [], 0, 0, 0
-    for c in clips:
-        cid = label_map.get(_strip_brackets(c["template"]))
-        if cid not in target:
-            continue
-        path_r = video_dir   / f"{c['id']}.webm"
-        path_c = perturb_dir / "C" / f"{c['id']}C.webm"
-        path_a = perturb_dir / "A" / f"{c['id']}A.webm"
-        if not path_r.exists(): miss_r += 1; continue
-        if not path_c.exists(): miss_c += 1; continue
-        if not path_a.exists(): miss_a += 1; continue
-        result.append((str(c["id"]), cid, path_r, path_c, path_a))
-    print(f"  found={len(result)}  miss_r={miss_r}  miss_c={miss_c}  miss_a={miss_a}")
+def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
+    label_map, _, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
+    video_dir = Path(cfg["video_dir"])
+    with open(cfg["manifest_path"]) as f:
+        manifest = json.load(f)
+    result = []
+    for sl_label, entries in manifest.items():
+        for entry in entries:
+            cid = label_map.get(_strip_brackets(entry["template"]))
+            path_r = video_dir / f"{entry['id']}.webm"
+            if cid is not None and path_r.exists():
+                result.append((str(entry["id"]), cid, path_r))
+    print(f"  {len(result)} clips from SL manifest")
     return result
 
 
-def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path, Path, Path]]) -> list[dict]:
+def preprocess_c(clip_path: Path, clip_id: str, num_frames: int, processor, device: str) -> torch.Tensor:
+    container = av.open(str(clip_path))
+    frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
+    container.close()
+    frames = apply_shuffle(frames, int(clip_id) % 2**32)
+    n      = len(frames)
+    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
+    return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
+
+
+def preprocess_a(clip_path: Path, num_frames: int, processor, device: str) -> torch.Tensor:
+    container = av.open(str(clip_path))
+    frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
+    container.close()
+    frames = apply_midpoint_frame(frames)
+    n      = len(frames)
+    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
+    return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
+
+
+def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict) -> list[dict]:
     records = []
-    for i, (clip_id, class_id, path_r, path_c, path_a) in enumerate(clips):
+    for i, (clip_id, class_id, path_r) in enumerate(clips):
         r_result = engine.run(path_r, class_id)
         if not r_result.correct:
             continue
-        c_result = engine.run(path_c, class_id)
-        a_result = engine.run(path_a, class_id)
+        pv_c     = preprocess_c(path_r, clip_id, engine._num_frames, engine._processor, cfg["device"])
+        pv_a     = preprocess_a(path_r, engine._num_frames, engine._processor, cfg["device"])
+        c_result = engine.run_pixels(pv_c, class_id)
+        a_result = engine.run_pixels(pv_a, class_id)
         s_r = r_result.signed_feature_summary.numpy().astype(np.float32)
         s_c = c_result.signed_feature_summary.numpy().astype(np.float32)
         s_a = a_result.signed_feature_summary.numpy().astype(np.float32)
@@ -174,7 +190,7 @@ def main() -> None:
     with DFAEngine(cfg["model_flag"], cfg["sae_path"], cfg["dim_mean_path"],
                    layer=cfg["layer"], device=cfg["device"],
                    sae_k=cfg["sae_k"]) as engine:
-        records = run_clips(engine, clips)
+        records = run_clips(engine, clips, cfg)
 
     save_parquet(records, sl_map, out_dir)
     make_plot(records, sl_map, out_dir)
