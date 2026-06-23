@@ -63,6 +63,15 @@ def aggregate_per_class(clips: pd.DataFrame, acc_r: pd.DataFrame,
     return grp.merge(acc[["class_id", "acc_R", "acc_C", "acc_drop"]], on="class_id")
 
 
+def compute_flip_rate(clips: pd.DataFrame) -> pd.Series:
+    s_r = np.stack([np.asarray(v) for v in clips["signed_vec_R"]]).astype(np.float32)
+    s_c = np.stack([np.asarray(v) for v in clips["signed_vec_C"]]).astype(np.float32)
+    n_active   = (np.abs(s_r) > 1e-8).sum(axis=1).astype(float)
+    flip_count = (np.sign(s_r) != np.sign(s_c)).sum(axis=1).astype(float)
+    n_active[n_active == 0] = np.nan
+    return pd.Series(flip_count / n_active, index=clips.index)
+
+
 def plot_kde(clips: pd.DataFrame, out_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(9, 5))
     x_range = np.linspace(clips["delta"].min(), clips["delta"].max(), 500)
@@ -106,6 +115,55 @@ def plot_scatter(per_class: pd.DataFrame, out_dir: Path) -> None:
     print(f"  Scatter → {out_dir / 'scatter_delta_vs_accdrop.png'}")
 
 
+def plot_kde_signed(clips: pd.DataFrame, out_dir: Path) -> None:
+    clips = clips.copy()
+    clips["signed_delta"] = clips["total_signed_R"] - clips["total_signed_C"]
+    fig, ax = plt.subplots(figsize=(9, 5))
+    x_range = np.linspace(clips["signed_delta"].min(), clips["signed_delta"].max(), 500)
+    for label, colour in SL_COLOURS.items():
+        vals = clips.loc[clips["sl_label"] == label, "signed_delta"].values
+        if len(vals) < 2:
+            continue
+        kde = gaussian_kde(vals)
+        ax.fill_between(x_range, kde(x_range), alpha=0.4, color=colour,
+                        label=f"{label.capitalize()} (n={len(vals)})")
+        ax.plot(x_range, kde(x_range), color=colour, linewidth=1.5)
+    ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
+    ax.set_xlabel("signed delta  (total_signed_R − total_signed_C)")
+    ax.set_ylabel("density")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_dir / "kde_signed_delta_temporal_vs_static.png", dpi=150)
+    plt.close(fig)
+    print(f"  KDE signed → {out_dir / 'kde_signed_delta_temporal_vs_static.png'}")
+
+
+def plot_scatter_fliprate(clips: pd.DataFrame, per_class: pd.DataFrame, out_dir: Path) -> None:
+    fr = clips.copy()
+    fr["flip_rate"] = compute_flip_rate(clips)
+    fr = fr.groupby("class_id")["flip_rate"].mean().reset_index()
+    pc = per_class[["class_id", "sl_label", "acc_drop", "n"]].merge(fr, on="class_id")
+    n_min, n_max = pc["n"].min(), pc["n"].max()
+    sizes = 30 + 170 * (pc["n"] - n_min) / max(n_max - n_min, 1)
+    fig, ax = plt.subplots(figsize=(10, 7))
+    for label, colour in SL_COLOURS.items():
+        mask = pc["sl_label"] == label
+        ax.scatter(pc.loc[mask, "flip_rate"], pc.loc[mask, "acc_drop"],
+                   s=sizes[mask], c=colour, alpha=0.8, label=label.capitalize(), zorder=3)
+    for _, row in pc.iterrows():
+        ax.annotate(str(int(row["class_id"])), (row["flip_rate"], row["acc_drop"]),
+                    fontsize=7, xytext=(4, 4), textcoords="offset points")
+    ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+    ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
+    ax.set_xlabel("mean flip rate  (sign changes / n_active features)")
+    ax.set_ylabel("accuracy drop  (acc_R − acc_C)")
+    ax.legend(title="point size = clip count")
+    fig.tight_layout()
+    fig.savefig(out_dir / "scatter_fliprate_vs_accdrop.png", dpi=150)
+    plt.close(fig)
+    print(f"  Scatter flip rate → {out_dir / 'scatter_fliprate_vs_accdrop.png'}")
+
+
 def main() -> None:
     out_dir = Path(PATHS["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -120,6 +178,8 @@ def main() -> None:
 
     plot_kde(clips, out_dir)
     plot_scatter(per_class, out_dir)
+    plot_kde_signed(clips, out_dir)
+    plot_scatter_fliprate(clips, per_class, out_dir)
     print("Done.")
 
 
