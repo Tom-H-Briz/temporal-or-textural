@@ -28,20 +28,28 @@ CLASSES = [6, 30, 59, 164, 169, 171, 173]
 def compute_feature_stats(clips: pd.DataFrame) -> pd.DataFrame:
     s_r = np.stack([np.asarray(v) for v in clips["signed_vec_R"]]).astype(np.float32)
     s_c = np.stack([np.asarray(v) for v in clips["signed_vec_C"]]).astype(np.float32)
+    s_a = np.stack([np.asarray(v) for v in clips["signed_vec_A"]]).astype(np.float32)
     mean_s_R   = s_r.mean(axis=0)
     mean_s_C   = s_c.mean(axis=0)
+    mean_s_A   = s_a.mean(axis=0)
     mean_abs_R = np.abs(s_r).mean(axis=0)
     mean_abs_C = np.abs(s_c).mean(axis=0)
+    mean_abs_A = np.abs(s_a).mean(axis=0)
     sign_R     = np.where((s_r > 1e-8).sum(axis=0) >= (s_r < -1e-8).sum(axis=0), 1, -1)
     return pd.DataFrame({
         "feature_idx":  np.arange(s_r.shape[1]),
         "mean_s_R":     mean_s_R,
         "mean_s_C":     mean_s_C,
+        "mean_s_A":     mean_s_A,
         "delta":        mean_s_R - mean_s_C,
+        "delta_A":      mean_s_R - mean_s_A,
         "mean_abs_R":   mean_abs_R,
         "mean_abs_C":   mean_abs_C,
+        "mean_abs_A":   mean_abs_A,
         "abs_delta":    mean_abs_R - mean_abs_C,
+        "abs_delta_A":  mean_abs_R - mean_abs_A,
         "flip_rate":    (np.sign(s_r) != np.sign(s_c)).mean(axis=0),
+        "flip_rate_A":  (np.sign(s_r) != np.sign(s_a)).mean(axis=0),
         "sign_R":       sign_R,
         "pct_active_R": (np.abs(s_r) > 1e-8).mean(axis=0),
     })
@@ -63,15 +71,19 @@ def make_histogram(df: pd.DataFrame, class_id: int, n_clips: int, out_dir: Path)
     bsize = 6144 // 10
     y_top = sdf["mean_abs_R"].max()
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(np.arange(1, 6145), sdf["mean_abs_R"].values, linewidth=0.8)
+    x = np.arange(1, 6145)
+    ax.plot(x, sdf["mean_abs_R"].values, linewidth=0.8, label="R")
+    ax.plot(x, sdf["mean_abs_C"].values, linewidth=0.8, linestyle="--", label="C")
+    ax.plot(x, sdf["mean_abs_A"].values, linewidth=0.8, linestyle=":", label="A")
     ax.set_yscale("log")
     for i in range(1, 10):
         x = i * bsize
         ax.axvline(x, color="grey", linewidth=0.6, linestyle="--")
         ax.text(x - bsize / 2, y_top, f"N{i * 10}", ha="center", va="top", fontsize=8)
     ax.text((9 * bsize + 6144) / 2, y_top, "N100", ha="center", va="top", fontsize=8)
+    ax.legend(fontsize=8)
     ax.set_xlabel("feature rank (sorted by mean_abs_R descending)")
-    ax.set_ylabel("mean_abs_R (log scale)")
+    ax.set_ylabel("mean_abs (log scale)")
     ax.set_title(f"Class {class_id} — DFA mass distribution (n={n_clips} clips)")
     fig.tight_layout()
     fig.savefig(out_dir / f"class_{class_id}_dfa_histogram.png", dpi=150)
@@ -90,9 +102,9 @@ def process_class(class_id: int, all_clips: pd.DataFrame, out_dir: Path) -> dict
     df["delta_rank_pct"] = df["rank"] / 6144 * 100
     df["n_clips"]        = n_clips
     cols = ["feature_idx", "rank", "delta_rank_pct", "dfa_decile",
-            "mean_s_R", "mean_s_C", "delta",
-            "mean_abs_R", "mean_abs_C", "abs_delta",
-            "flip_rate", "sign_R", "pct_active_R", "n_clips"]
+            "mean_s_R", "mean_s_C", "mean_s_A", "delta", "delta_A",
+            "mean_abs_R", "mean_abs_C", "mean_abs_A", "abs_delta", "abs_delta_A",
+            "flip_rate", "flip_rate_A", "sign_R", "pct_active_R", "n_clips"]
     df[cols].to_csv(out_dir / f"class_{class_id}_feature_ranking.csv", index=False)
     make_histogram(df, class_id, n_clips, out_dir)
     row = {"class_id": class_id, "n_clips": n_clips}

@@ -30,63 +30,70 @@ PATHS = {
     "parquet":    str(ROOT / "outputs/analysis/dfa_mass_delta/dfa_mass_delta.parquet"),
     "acc_R":      str(ROOT / "outputs/stage1_class_selection/per_class_accuracy.csv"),
     "acc_C":      str(ROOT / "outputs/stage1_class_selection_TF/per_class_accuracy_TF_C.csv"),
+    "acc_A":      str(ROOT / "outputs/stage1_class_selection_TF/per_class_accuracy_TF_A.csv"),
     "output_dir": str(ROOT / "outputs/analysis/dfa_mass_delta"),
 }
 
 
-def load_and_validate_accuracy(paths: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_and_validate_accuracy(paths: dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     acc_r = pd.read_csv(paths["acc_R"])
     acc_c = pd.read_csv(paths["acc_C"])
-    if set(acc_r.columns) != set(acc_c.columns):
-        raise ValueError(f"Accuracy files have different columns.\n  acc_R: {acc_r.columns.tolist()}\n  acc_C: {acc_c.columns.tolist()}")
-    if "class_id" not in acc_r.columns:
-        raise ValueError(f"No 'class_id' column found; got: {acc_r.columns.tolist()}")
-    if "accuracy" not in acc_r.columns:
-        raise ValueError(f"No 'accuracy' column found; got: {acc_r.columns.tolist()}")
+    acc_a = pd.read_csv(paths["acc_A"])
+    for name, df in [("acc_C", acc_c), ("acc_A", acc_a)]:
+        if set(df.columns) != set(acc_r.columns):
+            raise ValueError(f"{name} columns differ from acc_R: {df.columns.tolist()}")
+    if "class_id" not in acc_r.columns or "accuracy" not in acc_r.columns:
+        raise ValueError(f"Expected class_id and accuracy columns; got: {acc_r.columns.tolist()}")
     dfa_set = set(DFA_CLASSES)
     acc_r = acc_r[acc_r["class_id"].isin(dfa_set)].copy()
     acc_c = acc_c[acc_c["class_id"].isin(dfa_set)].copy()
-    return acc_r, acc_c
+    acc_a = acc_a[acc_a["class_id"].isin(dfa_set)].copy()
+    return acc_r, acc_c, acc_a
 
 
 def aggregate_per_class(clips: pd.DataFrame, acc_r: pd.DataFrame,
-                        acc_c: pd.DataFrame) -> pd.DataFrame:
+                        acc_c: pd.DataFrame, acc_a: pd.DataFrame) -> pd.DataFrame:
     grp = clips.groupby("class_id").agg(
         mean_delta=("delta", "mean"),
+        mean_delta_A=("delta_A", "mean"),
         n=("delta", "count"),
         sl_label=("sl_label", lambda x: x.mode()[0]),
     ).reset_index()
     acc = acc_r[["class_id", "accuracy"]].rename(columns={"accuracy": "acc_R"})
-    acc = acc.merge(acc_c[["class_id", "accuracy"]].rename(columns={"accuracy": "acc_C"}),
-                    on="class_id")
-    acc["acc_drop"] = acc["acc_R"] - acc["acc_C"]
-    return grp.merge(acc[["class_id", "acc_R", "acc_C", "acc_drop"]], on="class_id")
+    acc = acc.merge(acc_c[["class_id", "accuracy"]].rename(columns={"accuracy": "acc_C"}), on="class_id")
+    acc = acc.merge(acc_a[["class_id", "accuracy"]].rename(columns={"accuracy": "acc_A"}), on="class_id")
+    acc["acc_drop_C"] = acc["acc_R"] - acc["acc_C"]
+    acc["acc_drop_A"] = acc["acc_R"] - acc["acc_A"]
+    return grp.merge(acc[["class_id", "acc_R", "acc_C", "acc_A", "acc_drop_C", "acc_drop_A"]], on="class_id")
 
 
-def compute_flip_rate(clips: pd.DataFrame) -> pd.Series:
+def compute_flip_rate(clips: pd.DataFrame, col_b: str = "signed_vec_C") -> pd.Series:
     s_r = np.stack([np.asarray(v) for v in clips["signed_vec_R"]]).astype(np.float32)
-    s_c = np.stack([np.asarray(v) for v in clips["signed_vec_C"]]).astype(np.float32)
+    s_b = np.stack([np.asarray(v) for v in clips[col_b]]).astype(np.float32)
     n_active   = (np.abs(s_r) > 1e-8).sum(axis=1).astype(float)
-    flip_count = (np.sign(s_r) != np.sign(s_c)).sum(axis=1).astype(float)
+    flip_count = (np.sign(s_r) != np.sign(s_b)).sum(axis=1).astype(float)
     n_active[n_active == 0] = np.nan
     return pd.Series(flip_count / n_active, index=clips.index)
 
 
 def plot_kde(clips: pd.DataFrame, out_dir: Path) -> None:
-    fig, ax = plt.subplots(figsize=(9, 5))
-    x_range = np.linspace(clips["delta"].min(), clips["delta"].max(), 500)
+    all_vals = np.concatenate([clips["delta"].values, clips["delta_A"].values])
+    x_range  = np.linspace(all_vals.min(), all_vals.max(), 500)
+    fig, ax  = plt.subplots(figsize=(9, 5))
     for label, colour in SL_COLOURS.items():
-        vals = clips.loc[clips["sl_label"] == label, "delta"].values
-        if len(vals) < 2:
-            continue
-        kde = gaussian_kde(vals)
-        ax.fill_between(x_range, kde(x_range), alpha=0.4, color=colour,
-                        label=f"{label.capitalize()} (n={len(vals)})")
-        ax.plot(x_range, kde(x_range), color=colour, linewidth=1.5)
+        mask = clips["sl_label"] == label
+        for col, ls, cond in [("delta", "-", "C"), ("delta_A", "--", "A")]:
+            vals = clips.loc[mask, col].values
+            if len(vals) < 2:
+                continue
+            kde = gaussian_kde(vals)
+            ax.fill_between(x_range, kde(x_range), alpha=0.15, color=colour)
+            ax.plot(x_range, kde(x_range), color=colour, linewidth=1.5,
+                    linestyle=ls, label=f"{label.capitalize()} R−{cond} (n={len(vals)})")
     ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("delta  (total_abs_R − total_abs_C)")
+    ax.set_xlabel("delta  (total_abs_R − total_abs_X)")
     ax.set_ylabel("density")
-    ax.legend()
+    ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(out_dir / "kde_delta_temporal_vs_static.png", dpi=150)
     plt.close(fig)
@@ -99,16 +106,20 @@ def plot_scatter(per_class: pd.DataFrame, out_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 7))
     for label, colour in SL_COLOURS.items():
         mask = per_class["sl_label"] == label
-        ax.scatter(per_class.loc[mask, "mean_delta"], per_class.loc[mask, "acc_drop"],
-                   s=sizes[mask], c=colour, alpha=0.8, label=label.capitalize(), zorder=3)
+        ax.scatter(per_class.loc[mask, "mean_delta"], per_class.loc[mask, "acc_drop_C"],
+                   s=sizes[mask], c=colour, alpha=0.8, marker="o",
+                   label=f"{label.capitalize()} R−C", zorder=3)
+        ax.scatter(per_class.loc[mask, "mean_delta_A"], per_class.loc[mask, "acc_drop_A"],
+                   s=sizes[mask], c=colour, alpha=0.8, marker="^",
+                   label=f"{label.capitalize()} R−A", zorder=3)
     for _, row in per_class.iterrows():
-        ax.annotate(str(int(row["class_id"])), (row["mean_delta"], row["acc_drop"]),
+        ax.annotate(str(int(row["class_id"])), (row["mean_delta"], row["acc_drop_C"]),
                     fontsize=7, xytext=(4, 4), textcoords="offset points")
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
     ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("mean delta  (R − C)")
-    ax.set_ylabel("accuracy drop  (acc_R − acc_C)")
-    ax.legend(title="point size = clip count")
+    ax.set_xlabel("mean delta  (R − X)")
+    ax.set_ylabel("accuracy drop  (acc_R − acc_X)")
+    ax.legend(title="○=C  △=A", fontsize=8)
     fig.tight_layout()
     fig.savefig(out_dir / "scatter_delta_vs_accdrop.png", dpi=150)
     plt.close(fig)
@@ -117,21 +128,25 @@ def plot_scatter(per_class: pd.DataFrame, out_dir: Path) -> None:
 
 def plot_kde_signed(clips: pd.DataFrame, out_dir: Path) -> None:
     clips = clips.copy()
-    clips["signed_delta"] = clips["total_signed_R"] - clips["total_signed_C"]
-    fig, ax = plt.subplots(figsize=(9, 5))
-    x_range = np.linspace(clips["signed_delta"].min(), clips["signed_delta"].max(), 500)
+    clips["signed_delta_C"] = clips["total_signed_R"] - clips["total_signed_C"]
+    clips["signed_delta_A"] = clips["total_signed_R"] - clips["total_signed_A"]
+    all_vals = np.concatenate([clips["signed_delta_C"].values, clips["signed_delta_A"].values])
+    x_range  = np.linspace(all_vals.min(), all_vals.max(), 500)
+    fig, ax  = plt.subplots(figsize=(9, 5))
     for label, colour in SL_COLOURS.items():
-        vals = clips.loc[clips["sl_label"] == label, "signed_delta"].values
-        if len(vals) < 2:
-            continue
-        kde = gaussian_kde(vals)
-        ax.fill_between(x_range, kde(x_range), alpha=0.4, color=colour,
-                        label=f"{label.capitalize()} (n={len(vals)})")
-        ax.plot(x_range, kde(x_range), color=colour, linewidth=1.5)
+        mask = clips["sl_label"] == label
+        for col, ls, cond in [("signed_delta_C", "-", "C"), ("signed_delta_A", "--", "A")]:
+            vals = clips.loc[mask, col].values
+            if len(vals) < 2:
+                continue
+            kde = gaussian_kde(vals)
+            ax.fill_between(x_range, kde(x_range), alpha=0.15, color=colour)
+            ax.plot(x_range, kde(x_range), color=colour, linewidth=1.5,
+                    linestyle=ls, label=f"{label.capitalize()} R−{cond} (n={len(vals)})")
     ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("signed delta  (total_signed_R − total_signed_C)")
+    ax.set_xlabel("signed delta  (total_signed_R − total_signed_X)")
     ax.set_ylabel("density")
-    ax.legend()
+    ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(out_dir / "kde_signed_delta_temporal_vs_static.png", dpi=150)
     plt.close(fig)
@@ -140,24 +155,29 @@ def plot_kde_signed(clips: pd.DataFrame, out_dir: Path) -> None:
 
 def plot_scatter_fliprate(clips: pd.DataFrame, per_class: pd.DataFrame, out_dir: Path) -> None:
     fr = clips.copy()
-    fr["flip_rate"] = compute_flip_rate(clips)
-    fr = fr.groupby("class_id")["flip_rate"].mean().reset_index()
-    pc = per_class[["class_id", "sl_label", "acc_drop", "n"]].merge(fr, on="class_id")
+    fr["flip_rate_C"] = compute_flip_rate(clips, col_b="signed_vec_C")
+    fr["flip_rate_A"] = compute_flip_rate(clips, col_b="signed_vec_A")
+    fr = fr.groupby("class_id")[["flip_rate_C", "flip_rate_A"]].mean().reset_index()
+    pc = per_class[["class_id", "sl_label", "acc_drop_C", "acc_drop_A", "n"]].merge(fr, on="class_id")
     n_min, n_max = pc["n"].min(), pc["n"].max()
     sizes = 30 + 170 * (pc["n"] - n_min) / max(n_max - n_min, 1)
     fig, ax = plt.subplots(figsize=(10, 7))
     for label, colour in SL_COLOURS.items():
         mask = pc["sl_label"] == label
-        ax.scatter(pc.loc[mask, "flip_rate"], pc.loc[mask, "acc_drop"],
-                   s=sizes[mask], c=colour, alpha=0.8, label=label.capitalize(), zorder=3)
+        ax.scatter(pc.loc[mask, "flip_rate_C"], pc.loc[mask, "acc_drop_C"],
+                   s=sizes[mask], c=colour, alpha=0.8, marker="o",
+                   label=f"{label.capitalize()} R−C", zorder=3)
+        ax.scatter(pc.loc[mask, "flip_rate_A"], pc.loc[mask, "acc_drop_A"],
+                   s=sizes[mask], c=colour, alpha=0.8, marker="^",
+                   label=f"{label.capitalize()} R−A", zorder=3)
     for _, row in pc.iterrows():
-        ax.annotate(str(int(row["class_id"])), (row["flip_rate"], row["acc_drop"]),
+        ax.annotate(str(int(row["class_id"])), (row["flip_rate_C"], row["acc_drop_C"]),
                     fontsize=7, xytext=(4, 4), textcoords="offset points")
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
     ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
     ax.set_xlabel("mean flip rate  (sign changes / n_active features)")
-    ax.set_ylabel("accuracy drop  (acc_R − acc_C)")
-    ax.legend(title="point size = clip count")
+    ax.set_ylabel("accuracy drop  (acc_R − acc_X)")
+    ax.legend(title="○=C  △=A", fontsize=8)
     fig.tight_layout()
     fig.savefig(out_dir / "scatter_fliprate_vs_accdrop.png", dpi=150)
     plt.close(fig)
@@ -168,11 +188,12 @@ def main() -> None:
     out_dir = Path(PATHS["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    acc_r, acc_c = load_and_validate_accuracy(PATHS)
+    acc_r, acc_c, acc_a = load_and_validate_accuracy(PATHS)
     clips = pd.read_parquet(PATHS["parquet"])
     clips = clips[clips["class_id"].isin(set(DFA_CLASSES))]
+    clips["delta_A"] = clips["total_abs_R"] - clips["total_abs_A"]
 
-    per_class = aggregate_per_class(clips, acc_r, acc_c)
+    per_class = aggregate_per_class(clips, acc_r, acc_c, acc_a)
     per_class.to_csv(out_dir / "per_class_summary.csv", index=False)
     print(f"  CSV → {out_dir / 'per_class_summary.csv'}")
 

@@ -31,9 +31,9 @@ import matplotlib.colors as mcolors
 CFG = {
     "model_flag":  "timesformer",
     "class_id":    164,
-    "features":    [2156, 708, 5385],
+    "features":    [622, 1588, 1988, 708],
     "n_clips":     3,
-    "seed":        42,
+    "seed":        11,
     "layer":       7,
     "device":      "cuda" if torch.cuda.is_available() else "cpu",
     "video_dir":   Path("data/ssv2/20bn-something-something-v2"),
@@ -107,6 +107,11 @@ def shuffle_frames(frames: list, seed: int) -> list:
     shuffled = frames.copy()
     rng.shuffle(shuffled)
     return shuffled
+
+
+def midpoint_frames(frames: list) -> list:
+    """All frames replaced with the midpoint frame."""
+    return [frames[len(frames) // 2]] * len(frames)
 
 # ---------------------------------------------------------------------------
 # MODEL + SAE LOADING
@@ -203,15 +208,18 @@ def signed_activation_map(
     W_dec: torch.Tensor,   # (dict_size, hidden_dim)
     num_frames: int,
     n_spatial: int,
+    sign_override: float | None = None,
 ) -> np.ndarray:
     """
     Returns array of shape (num_frames, 14, 14) with signed activations.
-    Sign determined by sign(W_dec[feature_idx].mean()).
+    Sign from sign_override when provided (e.g. sign(mean_s_R) from per-class CSV),
+    otherwise falls back to sign(W_dec[feature_idx].mean()).
     """
     feat_acts = z[:, feature_idx]  # (n_patch_tokens,)
-    dec_sign  = float(torch.sign(W_dec[feature_idx].mean()))
-    if dec_sign == 0.0:
-        dec_sign = 1.0
+    if sign_override is not None:
+        dec_sign = float(np.sign(sign_override)) or 1.0
+    else:
+        dec_sign = float(torch.sign(W_dec[feature_idx].mean())) or 1.0
 
     signed = feat_acts * dec_sign  # (n_patch_tokens,)
 
@@ -246,9 +254,10 @@ def make_feature_image(
     clip_ids: list[str],
     feature_idx: int,
     class_id: int,
-    condition: str,                        # "R" or "C"
+    condition: str,
     output_path: Path,
     num_frames: int,
+    vmax: float | None = None,
 ):
     n_clips = len(clips_activations)
     fig, axes = plt.subplots(
@@ -256,9 +265,9 @@ def make_feature_image(
         figsize=(num_frames * 2, n_clips * 2.2),
     )
 
-    # Consistent colour scale across all clips and frames for this feature/condition
-    all_vals = np.concatenate([a.flatten() for a in clips_activations])
-    vmax = float(np.abs(all_vals).max())
+    if vmax is None:
+        all_vals = np.concatenate([a.flatten() for a in clips_activations])
+        vmax = float(np.abs(all_vals).max())
     vmax = vmax if vmax > 0 else 1.0
     norm = mcolors.TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
     cmap = cm.RdBu_r  # Red = positive (driver), Blue = negative (suppressor)
@@ -316,6 +325,17 @@ def main():
     model, processor, sae, dim_mean = load_model_and_sae(cfg, resolved, device)
     W_dec = get_decoder_weights(sae)
 
+    # Load per-class DFA signs from ranking CSV if available
+    import pandas as pd
+    ranking_csv = ROOT / "outputs/analysis/per_class_feature_delta" / f"class_{cfg['class_id']}_feature_ranking.csv"
+    if ranking_csv.exists():
+        _df = pd.read_csv(ranking_csv, usecols=["feature_idx", "sign_R"])
+        sign_dict = dict(zip(_df["feature_idx"], _df["sign_R"].astype(float)))
+        print(f"  Loaded DFA signs for {len(sign_dict)} features from {ranking_csv.name}")
+    else:
+        sign_dict = {}
+        print(f"  No ranking CSV found — using decoder-weight sign fallback")
+
     # Select clips
     all_clip_ids = load_clip_ids(
         ROOT / cfg["val_path"],
@@ -332,35 +352,34 @@ def main():
 
         r_activations = []
         c_activations = []
+        a_activations = []
         r_frames_all  = []
         c_frames_all  = []
+        a_frames_all  = []
 
         for clip_id in clip_ids:
-            frames = load_video_frames(
-                clip_id, ROOT / cfg["video_dir"], cfg["num_frames"]
-            )
+            frames   = load_video_frames(clip_id, ROOT / cfg["video_dir"], cfg["num_frames"])
             shuffled = shuffle_frames(frames, seed=int(clip_id) % 2**32)
+            frozen   = midpoint_frames(frames)
 
-            # Real pass
-            z_r = extract_activations(
-                frames, model, processor, sae, dim_mean, cfg, resolved, device
-            )
-            acts_r = signed_activation_map(
-                z_r, feat_idx, W_dec, cfg["num_frames"], cfg["n_spatial"]
-            )
-
-            # Shuffle pass
-            z_c = extract_activations(
-                shuffled, model, processor, sae, dim_mean, cfg, resolved, device
-            )
-            acts_c = signed_activation_map(
-                z_c, feat_idx, W_dec, cfg["num_frames"], cfg["n_spatial"]
-            )
+            z_r    = extract_activations(frames,   model, processor, sae, dim_mean, cfg, resolved, device)
+            z_c    = extract_activations(shuffled, model, processor, sae, dim_mean, cfg, resolved, device)
+            z_a    = extract_activations(frozen,   model, processor, sae, dim_mean, cfg, resolved, device)
+            sign_ov = sign_dict.get(feat_idx)
+            acts_r = signed_activation_map(z_r, feat_idx, W_dec, cfg["num_frames"], cfg["n_spatial"], sign_ov)
+            acts_c = signed_activation_map(z_c, feat_idx, W_dec, cfg["num_frames"], cfg["n_spatial"], sign_ov)
+            acts_a = signed_activation_map(z_a, feat_idx, W_dec, cfg["num_frames"], cfg["n_spatial"], sign_ov)
 
             r_activations.append(acts_r)
             c_activations.append(acts_c)
+            a_activations.append(acts_a)
             r_frames_all.append(frames)
             c_frames_all.append(shuffled)
+            a_frames_all.append(frozen)
+
+        # Dynamic range fixed to R so C and A are directly comparable
+        r_vals = np.concatenate([a.flatten() for a in r_activations])
+        shared_vmax = float(np.abs(r_vals).max()) or 1.0
 
         # Plot R
         make_feature_image(
@@ -372,6 +391,7 @@ def main():
             condition="R",
             output_path=out_dir / f"feature_{feat_idx}_class{cfg['class_id']}_R.png",
             num_frames=cfg["num_frames"],
+            vmax=shared_vmax,
         )
 
         # Plot C
@@ -384,6 +404,20 @@ def main():
             condition="C",
             output_path=out_dir / f"feature_{feat_idx}_class{cfg['class_id']}_C.png",
             num_frames=cfg["num_frames"],
+            vmax=shared_vmax,
+        )
+
+        # Plot A
+        make_feature_image(
+            clips_activations=a_activations,
+            clips_frames=a_frames_all,
+            clip_ids=clip_ids,
+            feature_idx=feat_idx,
+            class_id=cfg["class_id"],
+            condition="A",
+            output_path=out_dir / f"feature_{feat_idx}_class{cfg['class_id']}_A.png",
+            num_frames=cfg["num_frames"],
+            vmax=shared_vmax,
         )
 
     print("\nDone.")
