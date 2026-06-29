@@ -1,22 +1,23 @@
 #!/bin/bash
-#SBATCH --job-name=tot_train_sae
-#SBATCH --output=train_sae_%j.out
+#SBATCH --job-name=tot_train_sae_x16
+#SBATCH --output=train_sae_x16_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --time=12:00:00
 
-source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
+source $HOME/.tokens
 
 export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
 
 export MODEL_NAME=timesformer
-export SAE_K=128
+export SAE_K=64
+export SAE_EXPANSION=16
 export SAE_ALPHA=0.03
 export SAE_LOSS_FN=aux
 export SAE_EPOCHS=5
-export SAE_JOB_LABEL=128
+export SAE_JOB_LABEL=x16
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 
