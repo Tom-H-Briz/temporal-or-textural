@@ -117,7 +117,7 @@ for ax, group in zip(axes, groups):
                 ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
                         f"{v:.3f}", ha="center", va="bottom", fontsize=8)
     ax.set_xticks(list(x))
-    ax.set_xticklabels(shared_conds)
+    ax.set_xticklabels(["R", "A", "B", "C / C1*"])
     ax.set_title(f"{group.capitalize()} classes")
     ax.set_xlabel("Condition")
     ax.set_ylabel("Top-1 accuracy")
