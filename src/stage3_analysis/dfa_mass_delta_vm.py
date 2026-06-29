@@ -1,11 +1,12 @@
 """
-DFA mass delta diagnostic (VideoMAE) — R vs C vs A across SL manifest clips.
+DFA mass delta diagnostic (VideoMAE) — R vs C1 vs A across SL manifest clips.
 
-For each R-correct clip: delta = sum(abs(DFA_R)) - sum(abs(DFA_C))
+C1 = shuffled consecutive frame pairs (seed = int(clip_id) % 2**32)
+For each R-correct clip: delta = sum(abs(DFA_R)) - sum(abs(DFA_C1))
 
 Outputs:
-    outputs/analysis/dfa_mass_delta_vm/dfa_mass_delta.parquet
-    outputs/analysis/dfa_mass_delta_vm/dfa_mass_delta.png
+    outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1.parquet
+    outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta.png
 """
 
 import os
@@ -25,7 +26,6 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
-from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
 from ToT_utils import _strip_brackets, load_metadata
 from stage3_analysis.dfa_engine import DFAEngine
@@ -43,7 +43,7 @@ CFG = {
     "video_dir":       os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "manifest_path":   str(ROOT / "outputs/Laura_SL/manifest_SL_subset.json"),
     "sl_csv_path":     str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
-    "output_dir":      str(ROOT / "outputs/analysis/dfa_mass_delta_vm"),
+    "output_dir":      str(ROOT / "outputs/analysis/dfa_mass_delta_vm_c1"),
 }
 
 
@@ -78,14 +78,17 @@ def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
     return result
 
 
-def preprocess_c(clip_path: Path, clip_id: str, num_frames: int, processor, device: str) -> torch.Tensor:
+def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int, processor, device: str) -> torch.Tensor:
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
-    frames = apply_shuffle(frames, int(clip_id) % 2**32)
-    n      = len(frames)
-    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
-    return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
+    n       = len(frames)
+    idx     = torch.linspace(0, n - 1, num_frames).long().tolist()
+    sampled = [frames[i] for i in idx]
+    pairs   = [(sampled[i], sampled[i + 1]) for i in range(0, num_frames, 2)]
+    order   = np.random.default_rng(int(clip_id) % 2**32).permutation(len(pairs)).tolist()
+    result  = [f for i in order for f in pairs[i]]
+    return processor(result, return_tensors="pt")["pixel_values"].to(device)
 
 
 def preprocess_a(clip_path: Path, num_frames: int, processor, device: str) -> torch.Tensor:
@@ -104,28 +107,28 @@ def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict) 
         r_result = engine.run(path_r, class_id)
         if not r_result.correct:
             continue
-        pv_c     = preprocess_c(path_r, clip_id, engine._num_frames, engine._processor, cfg["device"])
+        pv_c1    = preprocess_c1(path_r, clip_id, engine._num_frames, engine._processor, cfg["device"])
         pv_a     = preprocess_a(path_r, engine._num_frames, engine._processor, cfg["device"])
-        c_result = engine.run_pixels(pv_c, class_id)
-        a_result = engine.run_pixels(pv_a, class_id)
-        s_r = r_result.signed_feature_summary.numpy().astype(np.float32)
-        s_c = c_result.signed_feature_summary.numpy().astype(np.float32)
-        s_a = a_result.signed_feature_summary.numpy().astype(np.float32)
+        c1_result = engine.run_pixels(pv_c1, class_id)
+        a_result  = engine.run_pixels(pv_a, class_id)
+        s_r  = r_result.signed_feature_summary.numpy().astype(np.float32)
+        s_c1 = c1_result.signed_feature_summary.numpy().astype(np.float32)
+        s_a  = a_result.signed_feature_summary.numpy().astype(np.float32)
         records.append({
-            "clip_id":        clip_id,
-            "class_id":       class_id,
-            "total_abs_R":    float(r_result.per_feature_summary.sum()),
-            "total_abs_C":    float(c_result.per_feature_summary.sum()),
-            "total_abs_A":    float(a_result.per_feature_summary.sum()),
-            "delta":          float(r_result.per_feature_summary.sum() - c_result.per_feature_summary.sum()),
-            "correct_C":      bool(c_result.correct),
-            "correct_A":      bool(a_result.correct),
-            "total_signed_R": float(s_r.sum()),
-            "total_signed_C": float(s_c.sum()),
-            "total_signed_A": float(s_a.sum()),
-            "signed_vec_R":   s_r,
-            "signed_vec_C":   s_c,
-            "signed_vec_A":   s_a,
+            "clip_id":         clip_id,
+            "class_id":        class_id,
+            "total_abs_R":     float(r_result.per_feature_summary.sum()),
+            "total_abs_C1":    float(c1_result.per_feature_summary.sum()),
+            "total_abs_A":     float(a_result.per_feature_summary.sum()),
+            "delta":           float(r_result.per_feature_summary.sum() - c1_result.per_feature_summary.sum()),
+            "correct_C1":      bool(c1_result.correct),
+            "correct_A":       bool(a_result.correct),
+            "total_signed_R":  float(s_r.sum()),
+            "total_signed_C1": float(s_c1.sum()),
+            "total_signed_A":  float(s_a.sum()),
+            "signed_vec_R":    s_r,
+            "signed_vec_C1":   s_c1,
+            "signed_vec_A":    s_a,
         })
         if (i + 1) % 100 == 0:
             print(f"  [{i+1}/{len(clips)}] R-correct so far: {len(records)}")
@@ -137,10 +140,10 @@ def save_parquet(records: list[dict], sl_map: dict[int, str], out_dir: Path) -> 
     df = pd.DataFrame(records)
     df["sl_label"] = df["class_id"].map(sl_map).fillna("unlabelled")
     df = df[["clip_id", "class_id", "sl_label",
-             "total_abs_R", "total_abs_C", "total_abs_A", "delta", "correct_C", "correct_A",
-             "total_signed_R", "total_signed_C", "total_signed_A",
-             "signed_vec_R", "signed_vec_C", "signed_vec_A"]]
-    path = out_dir / "dfa_mass_delta.parquet"
+             "total_abs_R", "total_abs_C1", "total_abs_A", "delta", "correct_C1", "correct_A",
+             "total_signed_R", "total_signed_C1", "total_signed_A",
+             "signed_vec_R", "signed_vec_C1", "signed_vec_A"]]
+    path = out_dir / "dfa_mass_delta_vm_c1.parquet"
     df.to_parquet(path, index=False)
     print(f"  Parquet → {path}  ({len(df)} rows)")
 
@@ -157,7 +160,7 @@ def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path) -> Non
         ax.scatter(grp["delta"], grp["y"], s=8, c=colour, alpha=0.6,
                    label=f"{label.capitalize()} (n={len(grp)})")
     ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("delta  (total_abs_R − total_abs_C)")
+    ax.set_xlabel("delta  (total_abs_R − total_abs_C1)")
     ax.set_ylabel("clip rank (sorted by delta ascending)")
     ax.legend()
     fig.tight_layout()

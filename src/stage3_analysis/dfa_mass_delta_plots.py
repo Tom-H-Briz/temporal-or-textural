@@ -10,6 +10,7 @@ Outputs:
     outputs/analysis/dfa_mass_delta/per_class_summary.csv
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -26,12 +27,20 @@ SL_COLOURS = {"temporal": "steelblue", "static": "darkorange"}
 DFA_CLASSES = [0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40, 41,
                42, 44, 57, 59, 83, 84, 123, 126, 142, 143, 145, 164, 168, 169, 171, 173]
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--model", choices=["TF", "VM"], default="TF")
+args = parser.parse_args()
+
+_suffix = "" if args.model == "TF" else "_vm"
+_acc_dir = "stage1_class_selection_TF" if args.model == "TF" else "stage1_class_selection_VM"
+_acc_pfx = "TF" if args.model == "TF" else "VM"
+
 PATHS = {
-    "parquet":    str(ROOT / "outputs/analysis/dfa_mass_delta/dfa_mass_delta.parquet"),
+    "parquet":    str(ROOT / f"outputs/analysis/dfa_mass_delta{_suffix}/dfa_mass_delta.parquet"),
     "acc_R":      str(ROOT / "outputs/stage1_class_selection/per_class_accuracy.csv"),
-    "acc_C":      str(ROOT / "outputs/stage1_class_selection_TF/per_class_accuracy_TF_C.csv"),
-    "acc_A":      str(ROOT / "outputs/stage1_class_selection_TF/per_class_accuracy_TF_A.csv"),
-    "output_dir": str(ROOT / "outputs/analysis/dfa_mass_delta"),
+    "acc_C":      str(ROOT / f"outputs/{_acc_dir}/per_class_accuracy_{_acc_pfx}_C.csv"),
+    "acc_A":      str(ROOT / f"outputs/{_acc_dir}/per_class_accuracy_{_acc_pfx}_A.csv"),
+    "output_dir": str(ROOT / f"outputs/analysis/dfa_mass_delta{_suffix}"),
 }
 
 

@@ -91,19 +91,21 @@ print(f"CSV → {out_csv}")
 # Bar chart: TF vs VM for R/A/B/C, panels for temporal and static
 # ---------------------------------------------------------------------------
 
-shared_conds = ["R", "A", "B", "C"]
-groups       = ["temporal", "static"]
-models       = ["TF", "VM"]
-colours      = {"TF": "steelblue", "VM": "darkorange"}
+x_labels = ["R", "A", "B", "C"]
+# VM uses C1 in the C slot; TF uses C
+model_conds = {"TF": ["R", "A", "B", "C"], "VM": ["R", "A", "B", "C1"]}
+groups      = ["temporal", "static"]
+models      = ["TF", "VM"]
+colours     = {"TF": "steelblue", "VM": "darkorange"}
 
 fig, axes = plt.subplots(1, 2, figsize=(13, 5), sharey=False)
 
 for ax, group in zip(axes, groups):
-    x     = range(len(shared_conds))
+    x     = range(len(x_labels))
     width = 0.35
     for i, model in enumerate(models):
         vals = []
-        for cond in shared_conds:
+        for cond in model_conds[model]:
             row = summary[(summary["model"] == model) &
                           (summary["condition"] == cond) &
                           (summary["sl_group"] == group)]
