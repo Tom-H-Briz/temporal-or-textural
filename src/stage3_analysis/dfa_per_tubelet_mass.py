@@ -109,11 +109,13 @@ def preprocess_a(clip_path: Path, num_frames: int,
 
 
 def save_outputs(
-    running_abs:    dict,
-    running_signed: dict,
-    running_count:  dict,
-    sl_map:         dict,
-    out_dir:        Path,
+    running_abs:       dict,
+    running_signed:    dict,
+    running_share_sum: dict,
+    tubelet_occurrence: dict,
+    running_count:     dict,
+    sl_map:            dict,
+    out_dir:           Path,
 ) -> None:
     conditions = ["R", "C1", "A"]
     rows_lock, rows_score = [], []
@@ -121,15 +123,24 @@ def save_outputs(
     for class_id in sorted(running_abs):
         n     = running_count[class_id]
         label = sl_map.get(class_id, "unlabelled")
+
+        # Per-condition per-clip share metrics (vectorised over all features)
+        pc_share, mode_t, frac_mode = {}, {}, {}
         for cond in conditions:
-            mean_abs    = (running_abs[class_id][cond]    / n).numpy()  # (8, dict_size)
+            pc_share[cond] = (running_share_sum[class_id][cond] / n).numpy()  # (dict_size,)
+            occ = tubelet_occurrence[class_id][cond].numpy()                   # (8, dict_size)
+            mode_t[cond]   = occ.argmax(axis=0)                               # (dict_size,)
+            frac_mode[cond] = occ.max(axis=0) / n                             # (dict_size,)
+
+        # Aggregate abs/signed for parquet and total_abs_R / top_abs_R
+        mean_abs_R = (running_abs[class_id]["R"] / n).numpy()   # (8, dict_size)
+        total_abs_R = mean_abs_R.sum(axis=0)                    # (dict_size,)
+        top_abs_R   = mean_abs_R.max(axis=0)                    # (dict_size,)
+
+        for cond in conditions:
+            mean_abs    = (running_abs[class_id][cond]    / n).numpy()
             mean_signed = (running_signed[class_id][cond] / n).numpy()
-
             for feat in range(mean_abs.shape[1]):
-                feat_abs = mean_abs[:, feat]        # (8,)
-                feat_sgn = mean_signed[:, feat]
-
-                # long format rows
                 for t in range(NUM_TUBELETS):
                     rows_lock.append({
                         "class_id":    class_id,
@@ -137,26 +148,27 @@ def save_outputs(
                         "feature_idx": feat,
                         "tubelet_idx": t,
                         "condition":   cond,
-                        "mean_abs":    float(feat_abs[t]),
-                        "mean_signed": float(feat_sgn[t]),
+                        "mean_abs":    float(mean_abs[t, feat]),
+                        "mean_signed": float(mean_signed[t, feat]),
                         "n_clips":     n,
                     })
 
-                # position-lock score
-                total = feat_abs.sum()
-                if total > 0:
-                    top_t     = int(feat_abs.argmax())
-                    top_share = float(feat_abs[top_t] / total)
-                else:
-                    top_t, top_share = 0, 0.0
-                rows_score.append({
-                    "class_id":         class_id,
-                    "feature_idx":      feat,
-                    "condition":        cond,
-                    "top_tubelet_idx":  top_t,
-                    "top_tubelet_share": top_share,
-                    "n_clips":          n,
-                })
+        pos_consistent = (mode_t["R"] == mode_t["C1"]) & (mode_t["R"] == mode_t["A"])
+
+        for feat in range(total_abs_R.shape[0]):
+            row = {
+                "class_id":    class_id,
+                "feature_idx": feat,
+                "n_clips":     n,
+                "total_abs_R": float(total_abs_R[feat]),
+                "top_abs_R":   float(top_abs_R[feat]),
+                "pos_consistent": bool(pos_consistent[feat]),
+            }
+            for cond in conditions:
+                row[f"mean_per_clip_share_{cond}"]    = float(pc_share[cond][feat])
+                row[f"mode_tubelet_{cond}"]           = int(mode_t[cond][feat])
+                row[f"frac_clips_matching_mode_{cond}"] = float(frac_mode[cond][feat])
+            rows_score.append(row)
 
     log.info(f"  Writing parquet ({len(rows_lock):,} rows)…")
     df_lock = pd.DataFrame(rows_lock)
@@ -184,6 +196,9 @@ def main() -> None:
 
     running_abs    = defaultdict(lambda: {c: torch.zeros(NUM_TUBELETS, dict_size) for c in ["R","C1","A"]})
     running_signed = defaultdict(lambda: {c: torch.zeros(NUM_TUBELETS, dict_size) for c in ["R","C1","A"]})
+    # per-clip share accumulators — fix for aggregate-mass share bias
+    running_share_sum    = defaultdict(lambda: {c: torch.zeros(dict_size) for c in ["R","C1","A"]})
+    tubelet_occurrence   = defaultdict(lambda: {c: torch.zeros(NUM_TUBELETS, dict_size) for c in ["R","C1","A"]})
     running_count  = defaultdict(int)
 
     with DFAEngine(cfg["model_flag"], cfg["sae_path"], cfg["dim_mean_path"],
@@ -209,19 +224,25 @@ def main() -> None:
             except Exception as exc:
                 log.warning(f"SKIP_PERT {clip_id}: {exc}"); continue
 
-            running_abs[class_id]["R"]  += r_result.per_tubelet_abs
-            running_abs[class_id]["C1"] += c1_result.per_tubelet_abs
-            running_abs[class_id]["A"]  += a_result.per_tubelet_abs
-            running_signed[class_id]["R"]  += r_result.per_tubelet_signed
-            running_signed[class_id]["C1"] += c1_result.per_tubelet_signed
-            running_signed[class_id]["A"]  += a_result.per_tubelet_signed
+            for cond, result in [("R", r_result), ("C1", c1_result), ("A", a_result)]:
+                pabs = result.per_tubelet_abs          # (8, dict_size)
+                running_abs[class_id][cond]    += pabs
+                running_signed[class_id][cond] += result.per_tubelet_signed
+
+                col_sum    = pabs.sum(dim=0).clamp(min=1e-10)  # (dict_size,)
+                col_max, col_argmax = pabs.max(dim=0)           # (dict_size,) each
+                running_share_sum[class_id][cond] += col_max / col_sum
+                tubelet_occurrence[class_id][cond].scatter_add_(
+                    0, col_argmax.unsqueeze(0), torch.ones(1, dict_size)
+                )
             running_count[class_id] += 1
 
             if (i + 1) % 100 == 0:
                 log.info(f"[{i+1}/{len(clips)}] R-correct so far: {sum(running_count.values())}")
 
     log.info(f"Done — {sum(running_count.values())} R-correct clips across {len(running_count)} classes")
-    save_outputs(running_abs, running_signed, running_count, sl_map, out_dir)
+    save_outputs(running_abs, running_signed, running_share_sum,
+                 tubelet_occurrence, running_count, sl_map, out_dir)
 
 
 if __name__ == "__main__":
