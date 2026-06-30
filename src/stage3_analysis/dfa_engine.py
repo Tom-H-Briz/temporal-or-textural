@@ -41,7 +41,10 @@ DFAResult = collections.namedtuple(
         "all_logits",
         "signed_feature_summary",
         "token_fire_counts",
+        "per_tubelet_abs",      # (8, dict_size) float32 or None
+        "per_tubelet_signed",   # (8, dict_size) float32 or None
     ],
+    defaults=(None, None),
 )
 
 # ---------------------------------------------------------------------------
@@ -185,12 +188,15 @@ class DFAEngine:
         out   = torch.cat([cls, recon], dim=1) if cls_offset else recon
         return (out,) + output[1:] if isinstance(output, tuple) else out
 
-    def run(self, clip: Path, correct_class_idx: int) -> DFAResult:
+    def run(self, clip: Path, correct_class_idx: int,
+            return_per_tubelet: bool = False) -> DFAResult:
         """Forward pass with SAE splice, then backward from correct-class logit."""
         pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device)
-        return self.run_pixels(pixel_values, correct_class_idx)
+        return self.run_pixels(pixel_values, correct_class_idx,
+                               return_per_tubelet=return_per_tubelet)
 
-    def run_pixels(self, pixel_values: torch.Tensor, correct_class_idx: int) -> DFAResult:
+    def run_pixels(self, pixel_values: torch.Tensor, correct_class_idx: int,
+                   return_per_tubelet: bool = False) -> DFAResult:
         """Same as run() but accepts pre-computed pixel_values — use for in-memory perturbations."""
         self._z = None
         model_output = self._model(pixel_values=pixel_values)
@@ -217,6 +223,19 @@ class DFAEngine:
         grad_z = self._z.grad                              # (T, dict_size), signed
         z_detached = self._z.detach()
         dfa_tensor = grad_z * z_detached                   # (T, dict_size), signed
+
+        # --- BEGIN NEW: optional per-tubelet aggregation, OFF BY DEFAULT ---
+        per_tubelet_abs = None
+        per_tubelet_signed = None
+        if return_per_tubelet:
+            T, dict_size = dfa_tensor.shape
+            num_tubelets = 8
+            assert T % num_tubelets == 0, f"T={T} not divisible by {num_tubelets} tubelets"
+            reshaped = dfa_tensor.reshape(num_tubelets, T // num_tubelets, dict_size)
+            per_tubelet_abs    = reshaped.abs().sum(dim=1).detach().float().cpu()
+            per_tubelet_signed = reshaped.sum(dim=1).detach().float().cpu()
+        # --- END NEW ---
+
         per_feature_summary = (
             dfa_tensor.abs().sum(dim=0).detach().float().cpu()   # (dict_size,), float32
         )
@@ -236,6 +255,8 @@ class DFAEngine:
             all_logits=all_logits,
             signed_feature_summary=signed_feature_summary,
             token_fire_counts=token_fire_counts,
+            per_tubelet_abs=per_tubelet_abs,
+            per_tubelet_signed=per_tubelet_signed,
         )
 
     def get_z(self, clip: Path) -> torch.Tensor:
