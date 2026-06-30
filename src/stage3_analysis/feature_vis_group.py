@@ -31,7 +31,7 @@ import matplotlib.colors as mcolors
 CFG = {
     "model_flag":  "timesformer",
     "class_id":    164,
-    "features":    [622, 1588, 1988, 708],
+    "features":    [4688, 4473, 1990, 5578],
     "n_clips":     3,
     "seed":        11,
     "layer":       7,
@@ -318,7 +318,7 @@ def main():
     resolved = _resolve_cfg(cfg)
     device   = cfg["device"]
 
-    out_dir  = ROOT / cfg["output_dir"]
+    out_dir = ROOT / "outputs/analysis/visualisations" / f"class_{cfg['class_id']}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Load model + SAE

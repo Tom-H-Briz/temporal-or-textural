@@ -35,7 +35,7 @@ OUT_DIR = ROOT / "outputs" / "analysis" / f"per_class_feature_delta_{CFG['backbo
 
 
 def detect_condition_col(df: pd.DataFrame) -> str:
-    candidates = [c for c in df.columns if c.startswith("signed_vec_") and c != "signed_vec_R"]
+    candidates = [c for c in df.columns if c.startswith("signed_vec_") and c not in ("signed_vec_R", "signed_vec_A")]
     assert len(candidates) == 1, f"Expected exactly one condition column, found: {candidates}"
     print(f"Using condition column: {candidates[0]}")
     return candidates[0]
