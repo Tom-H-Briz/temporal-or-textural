@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import av
+import numpy as np
 import torch
 
 ROOT = Path(__file__).parent.parent.parent
@@ -265,7 +266,7 @@ class DFAEngine:
         correct_class_idx: int,
         ablate_indices: list[int],
         z_cache: torch.Tensor,
-    ) -> tuple[float, int, bool]:
+    ) -> tuple[float, int, bool, np.ndarray]:
         """Forward-only ablation pass. Zeros ablate_indices in z before decode.
         ablate_indices=[] gives the unablated baseline. No backward pass."""
         z = z_cache.clone()
@@ -279,7 +280,8 @@ class DFAEngine:
             self._z_override = None
         logits = output.logits.squeeze(0)
         predicted = int(logits.argmax().item())
-        return float(logits[correct_class_idx].item()), predicted, predicted == correct_class_idx
+        all_logits = logits.detach().cpu().float().numpy()
+        return float(logits[correct_class_idx].item()), predicted, predicted == correct_class_idx, all_logits
 
     def get_z_pixels(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """Like get_z() but accepts pre-computed pixel_values — use for in-memory perturbations."""

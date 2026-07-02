@@ -91,9 +91,9 @@ def run_clip(
     rows  = []
     for cond, pv in [("R", pv_r), ("C1", pv_c1)]:
         z_cache = engine.get_z_pixels(pv)
-        base_logit, _, _ = engine.run_ablated(pv, class_id, [], z_cache)
+        base_logit, _, _, base_all_logits = engine.run_ablated(pv, class_id, [], z_cache)
         for target_name, indices in TARGETS.items():
-            abl_logit, pred, correct = engine.run_ablated(pv, class_id, indices, z_cache)
+            abl_logit, pred, correct, abl_all_logits = engine.run_ablated(pv, class_id, indices, z_cache)
             rows.append({
                 "clip_id":                clip_id,
                 "class_id":               class_id,
@@ -105,6 +105,8 @@ def run_clip(
                 "delta":                  base_logit - abl_logit,
                 "predicted_class_ablated": pred,
                 "correct_ablated":        correct,
+                "baseline_all_logits":    base_all_logits,
+                "ablated_all_logits":     abl_all_logits,
             })
     return rows
 
