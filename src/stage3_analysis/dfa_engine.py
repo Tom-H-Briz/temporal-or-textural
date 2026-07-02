@@ -259,6 +259,17 @@ class DFAEngine:
             per_tubelet_signed=per_tubelet_signed,
         )
 
+    def get_z_pixels(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """Like get_z() but accepts pre-computed pixel_values — use for in-memory perturbations."""
+        self._z = None
+        with torch.no_grad():
+            self._model(pixel_values=pixel_values)
+        if self._z is None:
+            raise RuntimeError(f"DFA hook did not fire — check layer={self._layer}")
+        z = self._z.detach().clone()
+        self._z = None
+        return z
+
     def get_z(self, clip: Path) -> torch.Tensor:
         """Forward pass in no_grad — returns z (num_tokens, dict_size) without backward."""
         pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device)
