@@ -259,6 +259,28 @@ class DFAEngine:
             per_tubelet_signed=per_tubelet_signed,
         )
 
+    def run_ablated(
+        self,
+        pixel_values: torch.Tensor,
+        correct_class_idx: int,
+        ablate_indices: list[int],
+        z_cache: torch.Tensor,
+    ) -> tuple[float, int, bool]:
+        """Forward-only ablation pass. Zeros ablate_indices in z before decode.
+        ablate_indices=[] gives the unablated baseline. No backward pass."""
+        z = z_cache.clone()
+        if ablate_indices:
+            z[:, ablate_indices] = 0.0
+        self._z_override = z
+        try:
+            with torch.no_grad():
+                output = self._model(pixel_values=pixel_values)
+        finally:
+            self._z_override = None
+        logits = output.logits.squeeze(0)
+        predicted = int(logits.argmax().item())
+        return float(logits[correct_class_idx].item()), predicted, predicted == correct_class_idx
+
     def get_z_pixels(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """Like get_z() but accepts pre-computed pixel_values — use for in-memory perturbations."""
         self._z = None
