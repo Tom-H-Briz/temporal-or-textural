@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import av
@@ -109,6 +110,7 @@ def run_clip(
 
 
 def main() -> None:
+    dry_run = "--dry-run" in sys.argv
     cfg = {**CFG, **_resolve_cfg(CFG)}
     out_dir: Path = cfg["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -116,23 +118,33 @@ def main() -> None:
     (out_dir / "ablation_targets.json").write_text(json.dumps(TARGETS, indent=2))
     log.info(f"Targets ({len(TARGETS)}): {list(TARGETS.keys())}")
 
-    clips    = load_clips(cfg)
-    all_rows = []
+    clips = load_clips(cfg)
+    if dry_run:
+        clips = clips[:10]
+        log.info("DRY RUN — 10 clips only")
 
+    all_rows  = []
+    clip_times = []
     with DFAEngine(cfg["model_flag"], cfg["sae_path"], cfg["dim_mean_path"],
                    layer=cfg["layer"], device=cfg["device"], sae_k=cfg["sae_k"]) as engine:
         for i, (clip_id, class_id, sl_label, clip_path) in enumerate(clips):
+            t0 = time.time()
             try:
                 all_rows.extend(run_clip(engine, clip_id, class_id, sl_label, clip_path, cfg["device"]))
             except Exception as exc:
                 log.warning(f"SKIP {clip_id}: {exc}")
-            if (i + 1) % 100 == 0:
-                log.info(f"[{i+1}/{len(clips)}]  rows so far: {len(all_rows):,}")
+            elapsed = time.time() - t0
+            clip_times.append(elapsed)
+            log.info(f"[{i+1}/{len(clips)}] clip {clip_id}  {elapsed:.1f}s  rows: {len(all_rows):,}")
 
     df = pd.DataFrame(all_rows)
-    out_path = out_dir / "ablation_results_long.parquet"
+    suffix   = "_dry_run" if dry_run else ""
+    out_path = out_dir / f"ablation_results_long{suffix}.parquet"
     df.to_parquet(out_path, index=False)
     log.info(f"  {len(df):,} rows → {out_path}")
+    if dry_run and clip_times:
+        mean_s = sum(clip_times) / len(clip_times)
+        log.info(f"  Mean {mean_s:.1f}s/clip → full run estimate: {3558 * mean_s / 3600:.1f} hours")
 
 
 if __name__ == "__main__":

@@ -10,8 +10,6 @@ Outputs (outputs/analysis/scaffold_mass_pct/):
     scaffold_pct_per_slgroup_per_feature.csv
     scaffold_pct_combined.csv
 
-Do not run until SCAFFOLD_FEATURES is finalised.
-
 Usage:
     uv run python src/stage3_analysis/scaffold_mass_pct.py
 """
@@ -131,10 +129,7 @@ def sanity_check(df_a: pd.DataFrame, df_b: pd.DataFrame, df_c: pd.DataFrame) -> 
 
 
 def main() -> None:
-    assert SCAFFOLD_FEATURES, (
-        "SCAFFOLD_FEATURES is empty — do not run until the position-lock fix run "
-        "confirms the final feature set (7 or 8 features, pending feature 4061 status)."
-    )
+    assert SCAFFOLD_FEATURES, "SCAFFOLD_FEATURES is empty — populate before running."
 
     out_dir: Path = CFG["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
