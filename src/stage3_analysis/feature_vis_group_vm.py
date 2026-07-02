@@ -33,10 +33,10 @@ from ToT_utils import MODEL_REGISTRY, load_metadata, _strip_brackets
 
 CFG = {
     "model_flag":   "videomae",
-    "class_id":     59,
-    "features":     [3513, 3558, 5578, 1990],
+    "class_id":     169,
+    "features":     [1842, 1990, 1996,5578, 3513,3558,4061,5552],
     "n_clips":      3,
-    "seed":         11,
+    "seed":         42,
     "layer":        7,
     "device":       "cuda" if torch.cuda.is_available() else "cpu",
     "video_dir":    Path("data/ssv2/20bn-something-something-v2"),

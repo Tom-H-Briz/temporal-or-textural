@@ -19,14 +19,14 @@ from pathlib import Path
 import pandas as pd
 
 ROOT         = Path(__file__).parent.parent.parent
-SCORES_PATH = ROOT / "outputs/analysis/dfa_per_tubelet_mass/position_lock_scores.csv"
-OUT_DIR     = ROOT / "outputs/analysis/dfa_per_tubelet_mass"
+SCORES_PATH = ROOT / "outputs/analysis/z_position_lock/z_position_lock_scores.csv"
+OUT_DIR     = ROOT / "outputs/analysis/z_position_lock"
 
 # ---------------------------------------------------------------------------
 # Thresholds
 # ---------------------------------------------------------------------------
-MIN_MEAN_PER_CLIP_SHARE = 0.50   # avg per-clip dominant-tubelet share in R
-MIN_FRAC_MATCHING_MODE  = 0.60   # ≥60% of clips individually peak at the modal tubelet
+MIN_MEAN_PER_CLIP_SHARE = 0.90   # avg per-clip dominant-tubelet share in R
+MIN_FRAC_MATCHING_MODE  = 0.90   # ≥60% of clips individually peak at the modal tubelet
 REQUIRE_POS_CONSISTENT  = True   # modal tubelet agrees across R/C1/A
 MIN_TOTAL_ABS_R         = 0.05   # total R DFA mass across all 8 tubelets
 MIN_TOP_ABS_R           = 0.02   # peak tubelet R mass
@@ -37,13 +37,20 @@ def main() -> None:
     # New CSV is already wide — one row per (class_id, feature_idx), no pivot needed
     merged = pd.read_csv(SCORES_PATH)
 
+    print("\nDistribution of mean_per_clip_share_R:")
+    print(merged["mean_per_clip_share_R"].describe(percentiles=[.5,.75,.9,.95,.99]))
+    print("\nDistribution of frac_clips_matching_mode_R:")
+    print(merged["frac_clips_matching_mode_R"].describe(percentiles=[.5,.75,.9,.95,.99]))
+    print()
+
     mask = (
-        (merged["mean_per_clip_share_R"] >= MIN_MEAN_PER_CLIP_SHARE) &
-        (merged["frac_clips_matching_mode_R"] >= MIN_FRAC_MATCHING_MODE) &
+        (merged["mean_per_clip_share_R"]      >= MIN_MEAN_PER_CLIP_SHARE) &
+        (merged["frac_clips_matching_mode_R"] >= MIN_FRAC_MATCHING_MODE)  &
         (merged["total_abs_R"] >= MIN_TOTAL_ABS_R) &
         (merged["top_abs_R"]   >= MIN_TOP_ABS_R)
     )
-    if REQUIRE_POS_CONSISTENT:
+    # pos_consistent not available in z-only CSV (R condition only)
+    if REQUIRE_POS_CONSISTENT and "pos_consistent" in merged.columns:
         mask &= merged["pos_consistent"]
 
     result = merged[mask].copy()
@@ -58,23 +65,26 @@ def main() -> None:
         ascending=[False, True, True]
     ).reset_index(drop=True)
 
-    cols = [
-        "feature_idx", "n_classes_locked", "class_id", "n_clips",
-        "mode_tubelet_R", "mode_tubelet_C1", "mode_tubelet_A", "pos_consistent",
-        "mean_per_clip_share_R", "mean_per_clip_share_C1", "mean_per_clip_share_A",
-        "frac_clips_matching_mode_R", "frac_clips_matching_mode_C1", "frac_clips_matching_mode_A",
-        "total_abs_R", "top_abs_R",
-    ]
+    available = set(result.columns)
+    optional  = ["mode_tubelet_C1", "mode_tubelet_A", "pos_consistent",
+                 "mean_per_clip_share_C1", "mean_per_clip_share_A",
+                 "frac_clips_matching_mode_C1", "frac_clips_matching_mode_A"]
+    cols = (
+        ["feature_idx", "n_classes_locked", "class_id", "n_clips",
+         "mode_tubelet_R", "mean_per_clip_share_R", "frac_clips_matching_mode_R",
+         "total_abs_R", "top_abs_R"]
+        + [c for c in optional if c in available]
+    )
     out_path = OUT_DIR / "position_lock_summary.csv"
     result[cols].to_csv(out_path, index=False)
 
     unique_ids = sorted(result["feature_idx"].unique())
     # One row per unique feature: feature_idx, locked tubelet (modal top_t_R across classes)
     feat_tubelet = (
-        result.groupby("feature_idx")["top_t_R"]
+        result.groupby("feature_idx")["mode_tubelet_R"]
         .agg(lambda x: int(x.mode().iloc[0]))
         .reset_index()
-        .rename(columns={"top_t_R": "tubelet_idx"})
+        .rename(columns={"mode_tubelet_R": "tubelet_idx"})
         .sort_values("feature_idx")
     )
     id_path = OUT_DIR / "position_locked_feature_ids.txt"
@@ -88,10 +98,9 @@ def main() -> None:
     print(f"  → {out_path}")
     print(f"  → {id_path}")
     print(f"\nUnique features by class coverage:")
-    print(result.drop_duplicates("feature_idx")[
-        ["feature_idx", "n_classes_locked", "mode_tubelet_R",
-         "mean_per_clip_share_R", "frac_clips_matching_mode_R", "total_abs_R"]
-    ].to_string(index=False))
+    summary_cols = ["feature_idx", "n_classes_locked", "mode_tubelet_R",
+                    "mean_per_clip_share_R", "frac_clips_matching_mode_R", "total_abs_R"]
+    print(result.drop_duplicates("feature_idx")[summary_cols].to_string(index=False))
 
 
 if __name__ == "__main__":
