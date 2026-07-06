@@ -3,7 +3,7 @@
 #SBATCH --output=scaffold_ablation_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=06:00:00
+#SBATCH --time=02:00:00
 
 source $HOME/.tokens
 
@@ -20,8 +20,6 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops pandas pyarrow transformers huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        echo '=== scaffold_mass_pct ===' &&
-        python src/stage3_analysis/scaffold_mass_pct.py &&
         echo '=== run_ablation ===' &&
         python src/stage3_analysis/run_ablation.py &&
         echo '=== ablation_summary ===' &&
