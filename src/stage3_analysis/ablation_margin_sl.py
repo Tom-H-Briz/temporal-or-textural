@@ -21,10 +21,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from stage3_analysis.ablation_targets import TARGETS
 
 CFG = {
-    "source":  ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long.parquet",
-    "out_dir": ROOT / "outputs/analysis/scaffold_ablation",
-    "target":  "clean7",
+    "source":    ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long.parquet",
+    "out_dir":   ROOT / "outputs/analysis/scaffold_ablation",
+    "target":    "all4",
     "condition": "R",
+    "run_tag":   "cover_uncover_060726",   # change for each new run — stamps all output filenames
     "confound_threshold": 0.5,
 }
 
@@ -102,12 +103,13 @@ def main() -> None:
             (df["ablation_target"]        == CFG["target"])].copy()
     print(f"  {len(df):,} clips  |  sl_labels: {df['sl_label'].value_counts().to_dict()}")
 
+    tag = CFG["run_tag"]
     per_clip = build_per_clip(df)
-    per_clip.to_csv(out_dir / "ablation_margin_sl_all.csv", index=False)
-    print(f"  {len(per_clip):,} rows → ablation_margin_sl_all.csv")
+    per_clip.to_csv(out_dir / f"ablation_margin_sl_all_{tag}.csv", index=False)
+    print(f"  {len(per_clip):,} rows → ablation_margin_sl_all_{tag}.csv")
 
     summary = build_summary(per_clip, CFG["confound_threshold"])
-    summary.to_csv(out_dir / "ablation_sl_summary.csv", index=False)
+    summary.to_csv(out_dir / f"ablation_sl_summary_{tag}.csv", index=False)
 
     print()
     print(summary.round(4).to_string(index=False))

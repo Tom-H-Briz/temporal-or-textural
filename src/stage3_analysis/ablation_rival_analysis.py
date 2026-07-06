@@ -12,9 +12,10 @@ Usage:
 from pathlib import Path
 import pandas as pd
 
-ROOT   = Path(__file__).parent.parent.parent
-SRC    = ROOT / "outputs/analysis/scaffold_ablation/ablation_margin_view_R.csv"
-OUT    = ROOT / "outputs/analysis/scaffold_ablation"
+ROOT    = Path(__file__).parent.parent.parent
+RUN_TAG = "cover_uncover_060726"   # change for each new run — stamps source and output filenames
+OUT     = ROOT / "outputs/analysis/scaffold_ablation"
+SRC     = OUT / f"ablation_margin_view_R_{RUN_TAG}.csv"
 
 
 def rival_frequency(df: pd.DataFrame) -> pd.DataFrame:
@@ -47,8 +48,8 @@ def main() -> None:
     freq  = rival_frequency(df)
     flips = flip_clips(df)
 
-    freq.to_csv(OUT / "ablation_rival_frequency.csv", index=False)
-    flips.to_csv(OUT / "ablation_flip_clips.csv", index=False)
+    freq.to_csv(OUT / f"ablation_rival_frequency_{RUN_TAG}.csv", index=False)
+    flips.to_csv(OUT / f"ablation_flip_clips_{RUN_TAG}.csv", index=False)
 
     print(freq.to_string(index=False))
     print()

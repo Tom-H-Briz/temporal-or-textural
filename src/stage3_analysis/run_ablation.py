@@ -42,6 +42,7 @@ CFG = {
     "source_glob": "outputs/analysis/**/dfa_mass_delta_vm_c1.parquet",
     "video_dir":   os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "out_dir":     ROOT / "outputs/analysis/scaffold_ablation",
+    "run_tag":     "cover_uncover_060726",   # stamps output parquet — change each run
 }
 
 
@@ -140,8 +141,8 @@ def main() -> None:
             log.info(f"[{i+1}/{len(clips)}] clip {clip_id}  {elapsed:.1f}s  rows: {len(all_rows):,}")
 
     df = pd.DataFrame(all_rows)
-    suffix   = "_dry_run" if dry_run else ""
-    out_path = out_dir / f"ablation_results_long{suffix}.parquet"
+    tag      = "dry_run" if dry_run else cfg["run_tag"]
+    out_path = out_dir / f"ablation_results_long_{tag}.parquet"
     df.to_parquet(out_path, index=False)
     log.info(f"  {len(df):,} rows → {out_path}")
     if dry_run and clip_times:

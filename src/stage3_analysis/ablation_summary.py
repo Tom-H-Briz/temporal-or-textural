@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from stage3_analysis.ablation_targets import SINGLETON_TARGETS, TARGETS
 
 CFG = {
-    "source":      ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long.parquet",
+    "source":      ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long_cover_uncover_060726.parquet",
     "src_glob":    "outputs/analysis/**/dfa_mass_delta_vm_c1.parquet",
     "out_dir":     ROOT / "outputs/analysis/scaffold_ablation",
 }
