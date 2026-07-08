@@ -20,7 +20,7 @@ import pandas as pd
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from stage3_analysis.ablation_targets import SINGLETON_TARGETS, TARGETS
+from stage3_analysis.ablation_targets import SINGLETON_TARGETS, GROUP_TARGETS, TARGETS
 
 CFG = {
     "source":      ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long_cover_uncover_060726.parquet",
@@ -57,13 +57,15 @@ def compute_additivity(summary: pd.DataFrame) -> pd.DataFrame:
     for cond in CONDITIONS:
         sub = overall[overall["perturbation_condition"] == cond].set_index("ablation_target")["mean_delta"]
         singleton_sum = float(sub.loc[SINGLETON_TARGETS].sum())
-        clean7_delta  = float(sub.loc["clean7"])
-        rows.append({
-            "perturbation_condition": cond,
-            "singleton_sum":          singleton_sum,
-            "clean7_delta":           clean7_delta,
-            "additivity_gap":         singleton_sum - clean7_delta,
-        })
+        for group in GROUP_TARGETS:
+            group_delta = float(sub.loc[group])
+            rows.append({
+                "perturbation_condition": cond,
+                "group_target":           group,
+                "singleton_sum":          singleton_sum,
+                "group_delta":            group_delta,
+                "additivity_gap":         singleton_sum - group_delta,
+            })
     return pd.DataFrame(rows)
 
 

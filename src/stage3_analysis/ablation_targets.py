@@ -15,3 +15,4 @@ TARGETS: dict[str, list[int]] = {
 }
 
 SINGLETON_TARGETS = [k for k in TARGETS if k.startswith("single_")]
+GROUP_TARGETS     = [k for k in TARGETS if k not in set(SINGLETON_TARGETS)]
