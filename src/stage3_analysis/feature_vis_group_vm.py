@@ -33,10 +33,10 @@ from ToT_utils import MODEL_REGISTRY, load_metadata, _strip_brackets
 
 CFG = {
     "model_flag":   "videomae",
-    "class_id":     169,
-    "features":     [1842, 1990, 1996,5578, 3513,3558,4061,5552],
+    "class_id":     17,
+    "features":     [1642, 4061,4912],
     "n_clips":      3,
-    "seed":         42,
+    "seed":         11,
     "layer":        7,
     "device":       "cuda" if torch.cuda.is_available() else "cpu",
     "video_dir":    Path("data/ssv2/20bn-something-something-v2"),
@@ -234,15 +234,7 @@ def main():
     model, processor, sae, dim_mean = load_model_and_sae(cfg, resolved, device)
     W_dec = get_decoder_weights(sae)
 
-    import pandas as pd
-    ranking_csv = ROOT / "outputs/analysis/per_class_feature_delta_vm_c1" / f"class_{cfg['class_id']}_feature_ranking.csv"
-    if ranking_csv.exists():
-        _df = pd.read_csv(ranking_csv, usecols=["feature_idx", "sign_R"])
-        sign_dict = dict(zip(_df["feature_idx"], _df["sign_R"].astype(float)))
-        print(f"  Loaded DFA signs for {len(sign_dict)} features from {ranking_csv.name}")
-    else:
-        sign_dict = {}
-        print("  No ranking CSV found — using decoder-weight sign fallback")
+    sign_dict = {}  # sign always from decoder weights — not pre-averaged CSVs
 
     all_clip_ids = load_clip_ids(ROOT / cfg["val_path"], ROOT / cfg["labels_path"], cfg["class_id"])
     rng      = random.Random(cfg["seed"])
