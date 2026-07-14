@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import matplotlib
 matplotlib.use("Agg")
@@ -33,10 +34,10 @@ from ToT_utils import MODEL_REGISTRY, load_metadata, _strip_brackets
 
 CFG = {
     "model_flag":   "videomae",
-    "class_id":     17,
-    "features":     [1642, 4061,4912],
+    "class_id":     32,
+    "features":     [1842, 5578, 1996, 3513,1990,3558,5552],
     "n_clips":      3,
-    "seed":         11,
+    "seed":         25,
     "layer":        7,
     "device":       "cuda" if torch.cuda.is_available() else "cpu",
     "video_dir":    Path("data/ssv2/20bn-something-something-v2"),
@@ -157,21 +158,25 @@ def get_decoder_weights(sae) -> torch.Tensor:
 # SIGNED ACTIVATION MAP
 # ---------------------------------------------------------------------------
 
+def lookup_dfa_sign(clip_id: str, feat: int) -> float:
+    src = ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1.parquet"
+    row = pd.read_parquet(src, columns=["clip_id", "signed_vec_R"]).query("clip_id == @clip_id")
+    if row.empty:
+        raise KeyError(f"Clip {clip_id} not found in mass delta parquet — is it R-correct and in the SL subset?")
+    val = float(np.asarray(row.iloc[0]["signed_vec_R"])[feat])
+    return float(np.sign(val)) or 1.0
+
+
 def signed_activation_map(
     z: torch.Tensor,
     feature_idx: int,
-    W_dec: torch.Tensor,
+    clip_id: str,
     num_tubelets: int,
     n_spatial: int,
-    sign_override: float | None = None,
 ) -> np.ndarray:
-    """Returns (num_tubelets, 14, 14) signed activations."""
-    feat_acts = z[:, feature_idx]
-    if sign_override is not None:
-        dec_sign = float(np.sign(sign_override)) or 1.0
-    else:
-        dec_sign = float(torch.sign(W_dec[feature_idx].mean())) or 1.0
-    signed    = feat_acts * dec_sign
+    """Returns (num_tubelets, 14, 14) signed activations using per-clip DFA sign."""
+    dec_sign  = lookup_dfa_sign(clip_id, feature_idx)
+    signed    = z[:, feature_idx] * dec_sign
     spatial_size = int(n_spatial ** 0.5)
     return signed.numpy().reshape(num_tubelets, spatial_size, spatial_size)
 
@@ -214,7 +219,6 @@ def make_feature_image(clips_activations, clips_frames, clip_ids,
     sm = cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     fig.colorbar(sm, ax=axes, orientation="vertical", fraction=0.02, pad=0.02, label="signed activation")
-    plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -232,14 +236,18 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     model, processor, sae, dim_mean = load_model_and_sae(cfg, resolved, device)
-    W_dec = get_decoder_weights(sae)
-
-    sign_dict = {}  # sign always from decoder weights — not pre-averaged CSVs
 
     all_clip_ids = load_clip_ids(ROOT / cfg["val_path"], ROOT / cfg["labels_path"], cfg["class_id"])
+    # Restrict to R-correct clips in the parquet (required for DFA sign lookup)
+    pq_ids = set(pd.read_parquet(
+        ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1.parquet",
+        columns=["clip_id"]
+    )["clip_id"].tolist())
+    all_clip_ids = [c for c in all_clip_ids if c in pq_ids]
+    assert all_clip_ids, f"No R-correct clips found for class {cfg['class_id']}"
     rng      = random.Random(cfg["seed"])
     clip_ids = rng.sample(all_clip_ids, cfg["n_clips"])
-    print(f"Selected clips: {clip_ids}")
+    print(f"Selected clips (R-correct): {clip_ids}")
 
     for feat_idx in cfg["features"]:
         print(f"\nProcessing feature {feat_idx}...")
@@ -257,10 +265,9 @@ def main():
             z_c1 = extract_activations(f_c1,  model, processor, sae, dim_mean, cfg, device)
             z_a  = extract_activations(f_a,   model, processor, sae, dim_mean, cfg, device)
 
-            sign_ov = sign_dict.get(feat_idx)
-            r_activations.append(signed_activation_map(z_r,  feat_idx, W_dec, cfg["num_tubelets"], cfg["n_spatial"], sign_ov))
-            c1_activations.append(signed_activation_map(z_c1, feat_idx, W_dec, cfg["num_tubelets"], cfg["n_spatial"], sign_ov))
-            a_activations.append(signed_activation_map(z_a,  feat_idx, W_dec, cfg["num_tubelets"], cfg["n_spatial"], sign_ov))
+            r_activations.append(signed_activation_map(z_r,  feat_idx, clip_id, cfg["num_tubelets"], cfg["n_spatial"]))
+            c1_activations.append(signed_activation_map(z_c1, feat_idx, clip_id, cfg["num_tubelets"], cfg["n_spatial"]))
+            a_activations.append(signed_activation_map(z_a,  feat_idx, clip_id, cfg["num_tubelets"], cfg["n_spatial"]))
 
             # One display frame per tubelet — first frame of each pair
             r_display.append(frames[::2])

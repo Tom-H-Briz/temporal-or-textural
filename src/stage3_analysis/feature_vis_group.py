@@ -30,8 +30,8 @@ import matplotlib.colors as mcolors
 
 CFG = {
     "model_flag":  "timesformer",
-    "class_id":    164,
-    "features":    [4688, 4473, 1990, 5578],
+    "class_id":    6,
+    "features":    [1588, 2156, 3183, 1517,4590,2090],
     "n_clips":     3,
     "seed":        11,
     "layer":       7,
@@ -39,7 +39,7 @@ CFG = {
     "video_dir":   Path("data/ssv2/20bn-something-something-v2"),
     "labels_path": Path("data/ssv2/labels/labels.json"),
     "val_path":    Path("data/ssv2/labels/validation.json"),
-    "output_dir":  Path("outputs/analysis/visualisations") / "class_164",
+    "output_dir":  None,   # set dynamically from class_id below
     "num_frames":  8,      # TF input frames
     "cls_offset":  1,      # TF prepends CLS at position 0
     "n_spatial":   196,    # 14×14 spatial patches per frame
@@ -225,7 +225,9 @@ def signed_activation_map(
 
     # Reshape to (num_frames, 14, 14)
     spatial_size = int(n_spatial ** 0.5)  # 14
-    signed_np = signed.numpy().reshape(num_frames, spatial_size, spatial_size)
+    # TimesFormer patch tokens are patch-major/frame-minor (see TimesformerEmbeddings
+    # .forward's permute for divided space-time attention), not frame-major like VideoMAE.
+    signed_np = signed.numpy().reshape(spatial_size, spatial_size, num_frames).transpose(2, 0, 1)
     return signed_np
 
 # ---------------------------------------------------------------------------
@@ -319,7 +321,11 @@ def main():
     device   = cfg["device"]
 
     out_dir = ROOT / "outputs/analysis/visualisations" / f"class_{cfg['class_id']}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if out_dir.exists():
+        print(f"Output directory exists: {out_dir}")
+    else:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Created output directory: {out_dir}")
 
     # Load model + SAE
     model, processor, sae, dim_mean = load_model_and_sae(cfg, resolved, device)

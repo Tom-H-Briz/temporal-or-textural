@@ -8,7 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 
 # ── Config ────────────────────────────────────────────────────────────────────
-CLIP_ID = "144528"
+CLIP_ID = "71971"
+
 
 VIDEO_DIR = ROOT / "data/ssv2/20bn-something-something-v2"
 # ─────────────────────────────────────────────────────────────────────────────
