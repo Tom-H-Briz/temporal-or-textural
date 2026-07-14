@@ -20,5 +20,5 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops pandas pyarrow transformers huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python src/stage3_analysis/z_position_lock_extraction.py
+        python src/stage3_analysis/z_position_lock_extraction.py --model videomae --layer 7
     "

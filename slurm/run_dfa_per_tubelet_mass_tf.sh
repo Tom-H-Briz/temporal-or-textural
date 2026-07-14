@@ -1,9 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=tot_dfa_tubelet
-#SBATCH --output=dfa_per_tubelet_mass_%j.out
+#SBATCH --job-name=tot_dfa_tubelet_tf
+#SBATCH --output=dfa_per_tubelet_mass_tf_%A_%a.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --time=04:00:00
+#SBATCH --array=5,7,9
 
 source $HOME/.tokens
 
@@ -20,5 +21,5 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops pandas pyarrow transformers huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python src/stage3_analysis/dfa_per_tubelet_mass.py --model videomae --layer 7
+        python src/stage3_analysis/dfa_per_tubelet_mass.py --model timesformer --layer $SLURM_ARRAY_TASK_ID
     "
