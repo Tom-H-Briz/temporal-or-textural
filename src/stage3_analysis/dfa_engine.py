@@ -24,7 +24,7 @@ ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sae import BatchTopKSAE
-from ToT_utils import MODEL_REGISTRY
+from ToT_utils import MODEL_REGISTRY, gather_by_position
 
 # ---------------------------------------------------------------------------
 # Output type
@@ -42,8 +42,8 @@ DFAResult = collections.namedtuple(
         "all_logits",
         "signed_feature_summary",
         "token_fire_counts",
-        "per_tubelet_abs",      # (8, dict_size) float32 or None
-        "per_tubelet_signed",   # (8, dict_size) float32 or None
+        "per_position_abs",     # (num_positions, dict_size) float32 or None
+        "per_position_signed",  # (num_positions, dict_size) float32 or None
     ],
     defaults=(None, None),
 )
@@ -190,14 +190,14 @@ class DFAEngine:
         return (out,) + output[1:] if isinstance(output, tuple) else out
 
     def run(self, clip: Path, correct_class_idx: int,
-            return_per_tubelet: bool = False) -> DFAResult:
+            return_per_position: bool = False) -> DFAResult:
         """Forward pass with SAE splice, then backward from correct-class logit."""
         pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device)
         return self.run_pixels(pixel_values, correct_class_idx,
-                               return_per_tubelet=return_per_tubelet)
+                               return_per_position=return_per_position)
 
     def run_pixels(self, pixel_values: torch.Tensor, correct_class_idx: int,
-                   return_per_tubelet: bool = False) -> DFAResult:
+                   return_per_position: bool = False) -> DFAResult:
         """Same as run() but accepts pre-computed pixel_values — use for in-memory perturbations."""
         self._z = None
         model_output = self._model(pixel_values=pixel_values)
@@ -225,17 +225,13 @@ class DFAEngine:
         z_detached = self._z.detach()
         dfa_tensor = grad_z * z_detached                   # (T, dict_size), signed
 
-        # --- BEGIN NEW: optional per-tubelet aggregation, OFF BY DEFAULT ---
-        per_tubelet_abs = None
-        per_tubelet_signed = None
-        if return_per_tubelet:
-            T, dict_size = dfa_tensor.shape
-            num_tubelets = 8
-            assert T % num_tubelets == 0, f"T={T} not divisible by {num_tubelets} tubelets"
-            reshaped = dfa_tensor.reshape(num_tubelets, T // num_tubelets, dict_size)
-            per_tubelet_abs    = reshaped.abs().sum(dim=1).detach().float().cpu()
-            per_tubelet_signed = reshaped.sum(dim=1).detach().float().cpu()
-        # --- END NEW ---
+        # Optional per-position (VM: tubelet, TF: frame) aggregation, OFF BY DEFAULT
+        per_position_abs = None
+        per_position_signed = None
+        if return_per_position:
+            grouped = gather_by_position(dfa_tensor, self.model_flag)  # (num_positions, N_SPATIAL, dict_size)
+            per_position_abs    = grouped.abs().sum(dim=1).detach().float().cpu()
+            per_position_signed = grouped.sum(dim=1).detach().float().cpu()
 
         per_feature_summary = (
             dfa_tensor.abs().sum(dim=0).detach().float().cpu()   # (dict_size,), float32
@@ -256,8 +252,8 @@ class DFAEngine:
             all_logits=all_logits,
             signed_feature_summary=signed_feature_summary,
             token_fire_counts=token_fire_counts,
-            per_tubelet_abs=per_tubelet_abs,
-            per_tubelet_signed=per_tubelet_signed,
+            per_position_abs=per_position_abs,
+            per_position_signed=per_position_signed,
         )
 
     def run_ablated(

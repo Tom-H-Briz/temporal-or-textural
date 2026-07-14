@@ -1,21 +1,25 @@
 """
 Activation-based position lock extraction — z from get_z(), no backward pass.
 
-For each clip, computes per-tubelet SAE activation (z, not DFA) for R, C1, A.
-Accumulates per-clip share statistics per class × condition — same corrected
-metric as fixed dfa_per_tubelet_mass.py (share per clip then averaged).
+For each clip, computes per-position SAE activation (z, not DFA) for R, shuffle, A.
+Position = VM tubelet or TF frame. Accumulates per-clip share statistics per class ×
+condition — same corrected metric as fixed dfa_per_tubelet_mass.py (share per clip
+then averaged).
 
 No R-correct gate — answers "where does this feature fire", not causal contribution.
 
-Token ordering: temporal-major — confirmed at feature_vis_group_vm.py:176.
-tubelet_idx = token_idx // 196
+Token-to-position gathering is model-aware — see ToT_utils.gather_by_position.
+Shuffle condition is "C1" (pairwise, tubelet-aware) for VM and "C" (full shuffle,
+matches dfa_mass_delta.py) for TF — see SHUFFLE_LABEL.
 
-Output: outputs/analysis/z_position_lock/z_position_lock_scores.csv
+Output: outputs/analysis/z_position_lock/z_position_lock_scores_{model}_l{layer}.csv
 
 Usage:
-    uv run python src/stage3_analysis/z_position_lock_extraction.py
+    uv run python src/stage3_analysis/z_position_lock_extraction.py --model videomae --layer 7
+    uv run python src/stage3_analysis/z_position_lock_extraction.py --model timesformer --layer 5
 """
 
+import argparse
 import av
 import logging
 import os
@@ -33,8 +37,9 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
+from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
-from ToT_utils import _strip_brackets, load_metadata
+from ToT_utils import MODEL_REGISTRY, N_SPATIAL, _strip_brackets, gather_by_position, load_metadata
 from stage3_analysis.dfa_engine import DFAEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -44,13 +49,9 @@ DFA_CLASSES = {0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40,
                41, 42, 44, 57, 59, 83, 84, 123, 126, 142, 143, 145, 164,
                168, 169, 171, 173}
 
-NUM_TUBELETS = 8
-DICT_SIZE    = 6144
-CONDITIONS   = ["R", "C1", "A"]
+DICT_SIZE = 6144
 
 CFG = {
-    "model_flag":      "videomae",
-    "layer":           7,
     "device":          "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"),
     "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
@@ -60,14 +61,24 @@ CFG = {
 }
 
 
-def _resolve_cfg() -> dict:
-    sae_path = ROOT / "outputs" / "sae" / "sae_layer7_job64.pt"
-    dim_mean = ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"
+def _resolve_cfg(model_flag: str, layer: int) -> dict:
+    sae_dir = ROOT / "outputs" / "sae"
+    if model_flag == "videomae":
+        sae_path = sae_dir / f"sae_layer{layer}_job64.pt"     # job64 pinned — see brief §clarification
+        dim_mean = sae_dir / f"layer{layer}_dim_mean.pt"
+        sae_k    = 64
+    else:  # timesformer
+        matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
+        if len(matches) != 1:
+            raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
+        sae_path = matches[0]
+        sae_k    = torch.load(sae_path, map_location="cpu", weights_only=True).get("sae_k")
+        dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
     if not sae_path.exists():
-        raise FileNotFoundError(f"VM SAE not found: {sae_path}")
+        raise FileNotFoundError(f"{model_flag} SAE not found: {sae_path}")
     if not dim_mean.exists():
         raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": 64}
+    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": sae_k}
 
 
 def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
@@ -110,6 +121,23 @@ def preprocess_a(clip_path: Path, num_frames: int,
     return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
 
 
+def preprocess_c_tf(clip_path: Path, clip_id: str, num_frames: int,
+                    processor, device: str) -> torch.Tensor:
+    """TF's full-frame shuffle — matches dfa_mass_delta.py's preprocess_c. No tubelet
+    pairing (TF has no tubelet structure to preserve)."""
+    container = av.open(str(clip_path))
+    frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
+    container.close()
+    frames = apply_shuffle(frames, int(clip_id) % 2**32)
+    n      = len(frames)
+    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
+    return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
+
+
+SHUFFLE_PREPROCESSOR = {"videomae": preprocess_c1, "timesformer": preprocess_c_tf}
+SHUFFLE_LABEL         = {"videomae": "C1",          "timesformer": "C"}
+
+
 def accumulate(tubelet_z: torch.Tensor, class_id: int, cond: str,
                running_share_sum: dict, tubelet_occurrence: dict, running_abs_sum: dict) -> None:
     """Per-clip accumulation with active-feature mask."""
@@ -124,21 +152,32 @@ def accumulate(tubelet_z: torch.Tensor, class_id: int, cond: str,
 
 
 def main() -> None:
-    resolved = _resolve_cfg()
-    cfg      = CFG
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", choices=["videomae", "timesformer"], required=True)
+    parser.add_argument("--layer", type=int, required=True)
+    args = parser.parse_args()
+
+    resolved = _resolve_cfg(args.model, args.layer)
+    cfg      = {**CFG, "model_flag": args.model, "layer": args.layer}
     out_dir  = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    num_positions  = MODEL_REGISTRY[args.model]["num_patch_tokens"] // N_SPATIAL
+    position_label = MODEL_REGISTRY[args.model]["position_label"]
+    conditions     = ["R", SHUFFLE_LABEL[args.model], "A"]
+    shuffle_fn     = SHUFFLE_PREPROCESSOR[args.model]
+    out_suffix     = f"{args.model}_l{args.layer}"
 
     sl_map = {int(r["class_id"]): r["category"]
               for _, r in pd.read_csv(cfg["sl_csv_path"]).iterrows()}
     clips  = load_clips(cfg)
 
-    running_share_sum  = defaultdict(lambda: {c: torch.zeros(DICT_SIZE)              for c in CONDITIONS})
-    tubelet_occurrence = defaultdict(lambda: {c: torch.zeros(NUM_TUBELETS, DICT_SIZE) for c in CONDITIONS})
-    running_abs_sum    = defaultdict(lambda: {c: torch.zeros(NUM_TUBELETS, DICT_SIZE) for c in CONDITIONS})
+    running_share_sum  = defaultdict(lambda: {c: torch.zeros(DICT_SIZE)                  for c in conditions})
+    tubelet_occurrence = defaultdict(lambda: {c: torch.zeros(num_positions, DICT_SIZE) for c in conditions})
+    running_abs_sum    = defaultdict(lambda: {c: torch.zeros(num_positions, DICT_SIZE) for c in conditions})
     running_count      = defaultdict(int)
 
-    log.info(f"Scanning {len(clips):,} clips for R/C1/A (get_z, forward pass only)…")
+    log.info(f"Scanning {len(clips):,} clips for R/{conditions[1]}/A (get_z, forward pass only)…")
     with DFAEngine(cfg["model_flag"], resolved["sae_path"], resolved["dim_mean_path"],
                    layer=cfg["layer"], device=cfg["device"],
                    sae_k=resolved["sae_k"]) as engine:
@@ -146,17 +185,17 @@ def main() -> None:
         for i, (clip_id, class_id, clip_path) in enumerate(clips):
             try:
                 z_r = engine.get_z(clip_path)
-                pv_c1 = preprocess_c1(clip_path, clip_id, engine._num_frames,
-                                      engine._processor, cfg["device"])
-                pv_a  = preprocess_a(clip_path, engine._num_frames,
+                pv_shuf = shuffle_fn(clip_path, clip_id, engine._num_frames,
                                      engine._processor, cfg["device"])
-                z_c1 = engine.get_z_pixels(pv_c1)
-                z_a  = engine.get_z_pixels(pv_a)
+                pv_a    = preprocess_a(clip_path, engine._num_frames,
+                                       engine._processor, cfg["device"])
+                z_shuf = engine.get_z_pixels(pv_shuf)
+                z_a    = engine.get_z_pixels(pv_a)
             except Exception as exc:
                 log.warning(f"SKIP {clip_id}: {exc}"); continue
 
-            for z, cond in [(z_r, "R"), (z_c1, "C1"), (z_a, "A")]:
-                tubelet_z = z.reshape(NUM_TUBELETS, 196, DICT_SIZE).sum(dim=1).cpu()
+            for z, cond in zip([z_r, z_shuf, z_a], conditions):
+                tubelet_z = gather_by_position(z, args.model).sum(dim=1).cpu()
                 accumulate(tubelet_z, class_id, cond,
                            running_share_sum, tubelet_occurrence, running_abs_sum)
             running_count[class_id] += 1
@@ -171,7 +210,7 @@ def main() -> None:
         label = sl_map.get(class_id, "unlabelled")
 
         stats = {}
-        for cond in CONDITIONS:
+        for cond in conditions:
             mean_share = (running_share_sum[class_id][cond] / n).numpy()
             mean_abs   = (running_abs_sum[class_id][cond]   / n).numpy()
             occ        = tubelet_occurrence[class_id][cond].numpy()
@@ -184,7 +223,7 @@ def main() -> None:
             }
 
         pos_consistent = (
-            (stats["R"]["mode_t"] == stats["C1"]["mode_t"]) &
+            (stats["R"]["mode_t"] == stats[conditions[1]]["mode_t"]) &
             (stats["R"]["mode_t"] == stats["A"]["mode_t"])
         )
 
@@ -198,14 +237,14 @@ def main() -> None:
                 "top_abs_R":     float(stats["R"]["top_abs"][feat]),
                 "pos_consistent": bool(pos_consistent[feat]),
             }
-            for cond in CONDITIONS:
+            for cond in conditions:
                 row[f"mean_per_clip_share_{cond}"]        = float(stats[cond]["mean_share"][feat])
-                row[f"mode_tubelet_{cond}"]               = int(stats[cond]["mode_t"][feat])
+                row[f"mode_{position_label}_{cond}"]      = int(stats[cond]["mode_t"][feat])
                 row[f"frac_clips_matching_mode_{cond}"]   = float(stats[cond]["frac_mode"][feat])
             rows.append(row)
 
     df = pd.DataFrame(rows)
-    out_path = out_dir / "z_position_lock_scores.csv"
+    out_path = out_dir / f"z_position_lock_scores_{out_suffix}.csv"
     df.to_csv(out_path, index=False)
     log.info(f"  → {out_path}  ({len(df):,} rows)")
     log.info("Done.")

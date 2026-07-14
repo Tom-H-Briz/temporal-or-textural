@@ -32,6 +32,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         "layer_getter":     lambda model, i: model.videomae.encoder.layer[i],
         "hidden_dim":       768,
         "num_patch_tokens": 1568,
+        "position_label":   "tubelet",
     },
     "timesformer": {
         "model_class":      TimesformerForVideoClassification,
@@ -42,8 +43,35 @@ MODEL_REGISTRY: dict[str, dict] = {
         "layer_getter":     lambda model, i: model.timesformer.encoder.layer[i],
         "hidden_dim":       768,
         "num_patch_tokens": 1568,
+        "position_label":   "frame",
     },
 }
+
+N_SPATIAL = 196   # 14x14 patch grid — constant across both backbones at this resolution
+
+
+def gather_by_position(tokens: torch.Tensor, model_flag: str) -> torch.Tensor:
+    """
+    Group patch tokens (CLS already excluded) by temporal position — VM: tubelet,
+    TF: frame — in a canonical position-major axis order for both models, so every
+    caller reduces over dim=1 regardless of model_flag.
+
+    VM (videomae) is temporal-major natively: token_idx = position*196 + patch.
+    TF (timesformer) is patch-major/frame-minor after the time-embedding permute in
+    TimesformerEmbeddings.forward: token_idx = patch*num_frames + position.
+
+    tokens: (num_patch_tokens, ...trailing dims...)
+    Returns: (num_positions, N_SPATIAL, ...trailing dims...)
+    """
+    num_patch_tokens = tokens.shape[0]
+    num_positions = num_patch_tokens // N_SPATIAL
+    if model_flag == "videomae":
+        return tokens.reshape(num_positions, N_SPATIAL, *tokens.shape[1:])
+    elif model_flag == "timesformer":
+        grouped = tokens.reshape(N_SPATIAL, num_positions, *tokens.shape[1:])
+        return grouped.transpose(0, 1)
+    else:
+        raise ValueError(f"No position-gather rule registered for model_flag={model_flag!r}")
 
 
 def _strip_brackets(template: str) -> str:

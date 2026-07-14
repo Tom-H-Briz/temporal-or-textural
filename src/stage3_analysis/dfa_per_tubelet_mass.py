@@ -1,19 +1,23 @@
 """
-Per-tubelet DFA mass extraction — VM, R / C1 / A, 32 SL classes.
+Per-position DFA mass extraction — VM + TF, R / shuffle / A, 32 SL classes.
 
-Token ordering: temporal-major (token 0–195 = tubelet 0, 196–391 = tubelet 1, …).
-Confirmed in feature_vis_group_vm.py:176 — reshape(num_tubelets, 14, 14).
+Position = VM tubelet or TF frame (MODEL_REGISTRY[model_flag]["position_label"]).
+Token-to-position gathering is model-aware — see ToT_utils.gather_by_position.
+Shuffle condition is "C1" (pairwise, tubelet-aware) for VM and "C" (full shuffle,
+matches dfa_mass_delta.py) for TF — not the same perturbation, see SHUFFLE_LABEL.
 
 Aggregates online per class — no per-clip tensors stored.
 
 Outputs (outputs/analysis/dfa_per_tubelet_mass/):
-  tubelet_position_lock.parquet     — long format: class×feature×tubelet×condition
-  position_lock_scores.csv          — per class×feature×condition: top tubelet share
+  tubelet_position_lock_{model}_l{layer}.parquet   — long format: class×feature×position×condition
+  position_lock_scores_{model}_l{layer}.csv        — per class×feature×condition: top position share
 
 Usage:
-    uv run python src/stage3_analysis/dfa_per_tubelet_mass.py
+    uv run python src/stage3_analysis/dfa_per_tubelet_mass.py --model videomae --layer 7
+    uv run python src/stage3_analysis/dfa_per_tubelet_mass.py --model timesformer --layer 5
 """
 
+import argparse
 import av
 import logging
 import os
@@ -33,8 +37,9 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
+from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
-from ToT_utils import MODEL_REGISTRY, _strip_brackets, load_metadata
+from ToT_utils import MODEL_REGISTRY, N_SPATIAL, _strip_brackets, load_metadata
 from stage3_analysis.dfa_engine import DFAEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -44,12 +49,8 @@ DFA_CLASSES = {0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40,
                41, 42, 44, 57, 59, 83, 84, 123, 126, 142, 143, 145, 164,
                168, 169, 171, 173}
 
-NUM_TUBELETS = 8
-
 CFG = {
-    "model_flag":      "videomae",
-    "layer":           7,
-    "device":          "cuda" if torch.cuda.is_available() else "cpu",
+    "device":          "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"),
     "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir":       os.environ.get("VIDEO_DIR",        str(ROOT / "data/ssv2/20bn-something-something-v2")),
@@ -58,14 +59,24 @@ CFG = {
 }
 
 
-def _resolve_cfg(cfg: dict) -> dict:
-    sae_path = ROOT / "outputs" / "sae" / "sae_layer7_job64.pt"
-    dim_mean = ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"
+def _resolve_cfg(model_flag: str, layer: int) -> dict:
+    sae_dir = ROOT / "outputs" / "sae"
+    if model_flag == "videomae":
+        sae_path = sae_dir / f"sae_layer{layer}_job64.pt"     # job64 pinned — see brief §clarification
+        dim_mean = sae_dir / f"layer{layer}_dim_mean.pt"
+        sae_k    = 64
+    else:  # timesformer
+        matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
+        if len(matches) != 1:
+            raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
+        sae_path = matches[0]
+        sae_k    = torch.load(sae_path, map_location="cpu", weights_only=True).get("sae_k")
+        dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
     if not sae_path.exists():
-        raise FileNotFoundError(f"VM SAE not found: {sae_path}")
+        raise FileNotFoundError(f"{model_flag} SAE not found: {sae_path}")
     if not dim_mean.exists():
         raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": 64}
+    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": sae_k}
 
 
 def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
@@ -108,6 +119,23 @@ def preprocess_a(clip_path: Path, num_frames: int,
     return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
 
 
+def preprocess_c_tf(clip_path: Path, clip_id: str, num_frames: int,
+                    processor, device: str) -> torch.Tensor:
+    """TF's full-frame shuffle — matches dfa_mass_delta.py's preprocess_c. No tubelet
+    pairing (TF has no tubelet structure to preserve)."""
+    container = av.open(str(clip_path))
+    frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
+    container.close()
+    frames = apply_shuffle(frames, int(clip_id) % 2**32)
+    n      = len(frames)
+    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
+    return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
+
+
+SHUFFLE_PREPROCESSOR = {"videomae": preprocess_c1, "timesformer": preprocess_c_tf}
+SHUFFLE_LABEL         = {"videomae": "C1",          "timesformer": "C"}
+
+
 def save_outputs(
     running_abs:       dict,
     running_signed:    dict,
@@ -116,8 +144,11 @@ def save_outputs(
     running_count:     dict,
     sl_map:            dict,
     out_dir:           Path,
+    conditions:        list[str],
+    num_positions:     int,
+    position_label:    str,
+    out_suffix:        str,
 ) -> None:
-    conditions = ["R", "C1", "A"]
     rows_lock, rows_score = [], []
 
     for class_id in sorted(running_abs):
@@ -128,12 +159,12 @@ def save_outputs(
         pc_share, mode_t, frac_mode = {}, {}, {}
         for cond in conditions:
             pc_share[cond] = (running_share_sum[class_id][cond] / n).numpy()  # (dict_size,)
-            occ = tubelet_occurrence[class_id][cond].numpy()                   # (8, dict_size)
+            occ = tubelet_occurrence[class_id][cond].numpy()                   # (num_positions, dict_size)
             mode_t[cond]   = occ.argmax(axis=0)                               # (dict_size,)
             frac_mode[cond] = occ.max(axis=0) / n                             # (dict_size,)
 
         # Aggregate abs/signed for parquet and total_abs_R / top_abs_R
-        mean_abs_R = (running_abs[class_id]["R"] / n).numpy()   # (8, dict_size)
+        mean_abs_R = (running_abs[class_id]["R"] / n).numpy()   # (num_positions, dict_size)
         total_abs_R = mean_abs_R.sum(axis=0)                    # (dict_size,)
         top_abs_R   = mean_abs_R.max(axis=0)                    # (dict_size,)
 
@@ -141,19 +172,19 @@ def save_outputs(
             mean_abs    = (running_abs[class_id][cond]    / n).numpy()
             mean_signed = (running_signed[class_id][cond] / n).numpy()
             for feat in range(mean_abs.shape[1]):
-                for t in range(NUM_TUBELETS):
+                for t in range(num_positions):
                     rows_lock.append({
                         "class_id":    class_id,
                         "sl_label":    label,
                         "feature_idx": feat,
-                        "tubelet_idx": t,
+                        f"{position_label}_idx": t,
                         "condition":   cond,
                         "mean_abs":    float(mean_abs[t, feat]),
                         "mean_signed": float(mean_signed[t, feat]),
                         "n_clips":     n,
                     })
 
-        pos_consistent = (mode_t["R"] == mode_t["C1"]) & (mode_t["R"] == mode_t["A"])
+        pos_consistent = (mode_t["R"] == mode_t[conditions[1]]) & (mode_t["R"] == mode_t[conditions[2]])
 
         for feat in range(total_abs_R.shape[0]):
             row = {
@@ -166,24 +197,37 @@ def save_outputs(
             }
             for cond in conditions:
                 row[f"mean_per_clip_share_{cond}"]    = float(pc_share[cond][feat])
-                row[f"mode_tubelet_{cond}"]           = int(mode_t[cond][feat])
+                row[f"mode_{position_label}_{cond}"]  = int(mode_t[cond][feat])
                 row[f"frac_clips_matching_mode_{cond}"] = float(frac_mode[cond][feat])
             rows_score.append(row)
 
+    lock_path  = out_dir / f"tubelet_position_lock_{out_suffix}.parquet"
+    score_path = out_dir / f"position_lock_scores_{out_suffix}.csv"
     log.info(f"  Writing parquet ({len(rows_lock):,} rows)…")
     df_lock = pd.DataFrame(rows_lock)
     table   = pa.Table.from_pandas(df_lock, preserve_index=False)
-    pq.write_table(table, str(out_dir / "tubelet_position_lock.parquet"))
-    log.info(f"  Parquet → {out_dir / 'tubelet_position_lock.parquet'}")
+    pq.write_table(table, str(lock_path))
+    log.info(f"  Parquet → {lock_path}")
 
     df_score = pd.DataFrame(rows_score)
-    df_score.to_csv(out_dir / "position_lock_scores.csv", index=False)
-    log.info(f"  CSV → {out_dir / 'position_lock_scores.csv'}")
+    df_score.to_csv(score_path, index=False)
+    log.info(f"  CSV → {score_path}")
 
 
 def main() -> None:
-    resolved = _resolve_cfg(CFG)
-    cfg      = {**CFG, **resolved}
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", choices=["videomae", "timesformer"], required=True)
+    parser.add_argument("--layer", type=int, required=True)
+    args = parser.parse_args()
+
+    resolved = _resolve_cfg(args.model, args.layer)
+    cfg      = {**CFG, "model_flag": args.model, "layer": args.layer, **resolved}
+
+    num_positions  = MODEL_REGISTRY[args.model]["num_patch_tokens"] // N_SPATIAL
+    position_label = MODEL_REGISTRY[args.model]["position_label"]
+    conditions     = ["R", SHUFFLE_LABEL[args.model], "A"]
+    shuffle_fn     = SHUFFLE_PREPROCESSOR[args.model]
+    out_suffix     = f"{args.model}_l{args.layer}"
 
     out_dir = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -194,11 +238,11 @@ def main() -> None:
     clips      = load_clips(cfg)
     dict_size  = 6144
 
-    running_abs    = defaultdict(lambda: {c: torch.zeros(NUM_TUBELETS, dict_size) for c in ["R","C1","A"]})
-    running_signed = defaultdict(lambda: {c: torch.zeros(NUM_TUBELETS, dict_size) for c in ["R","C1","A"]})
+    running_abs    = defaultdict(lambda: {c: torch.zeros(num_positions, dict_size) for c in conditions})
+    running_signed = defaultdict(lambda: {c: torch.zeros(num_positions, dict_size) for c in conditions})
     # per-clip share accumulators — fix for aggregate-mass share bias
-    running_share_sum    = defaultdict(lambda: {c: torch.zeros(dict_size) for c in ["R","C1","A"]})
-    tubelet_occurrence   = defaultdict(lambda: {c: torch.zeros(NUM_TUBELETS, dict_size) for c in ["R","C1","A"]})
+    running_share_sum    = defaultdict(lambda: {c: torch.zeros(dict_size) for c in conditions})
+    tubelet_occurrence   = defaultdict(lambda: {c: torch.zeros(num_positions, dict_size) for c in conditions})
     running_count  = defaultdict(int)
 
     with DFAEngine(cfg["model_flag"], cfg["sae_path"], cfg["dim_mean_path"],
@@ -207,7 +251,7 @@ def main() -> None:
 
         for i, (clip_id, class_id, clip_path) in enumerate(clips):
             try:
-                r_result = engine.run(clip_path, class_id, return_per_tubelet=True)
+                r_result = engine.run(clip_path, class_id, return_per_position=True)
             except Exception as exc:
                 log.warning(f"SKIP {clip_id}: {exc}"); continue
 
@@ -215,19 +259,19 @@ def main() -> None:
                 continue
 
             try:
-                pv_c1    = preprocess_c1(clip_path, clip_id, engine._num_frames,
-                                         engine._processor, cfg["device"])
+                pv_shuf  = shuffle_fn(clip_path, clip_id, engine._num_frames,
+                                      engine._processor, cfg["device"])
                 pv_a     = preprocess_a(clip_path, engine._num_frames,
                                         engine._processor, cfg["device"])
-                c1_result = engine.run_pixels(pv_c1, class_id, return_per_tubelet=True)
-                a_result  = engine.run_pixels(pv_a,  class_id, return_per_tubelet=True)
+                shuf_result = engine.run_pixels(pv_shuf, class_id, return_per_position=True)
+                a_result    = engine.run_pixels(pv_a,    class_id, return_per_position=True)
             except Exception as exc:
                 log.warning(f"SKIP_PERT {clip_id}: {exc}"); continue
 
-            for cond, result in [("R", r_result), ("C1", c1_result), ("A", a_result)]:
-                pabs = result.per_tubelet_abs          # (8, dict_size)
+            for cond, result in zip(conditions, [r_result, shuf_result, a_result]):
+                pabs = result.per_position_abs          # (num_positions, dict_size)
                 running_abs[class_id][cond]    += pabs
-                running_signed[class_id][cond] += result.per_tubelet_signed
+                running_signed[class_id][cond] += result.per_position_signed
 
                 col_sum    = pabs.sum(dim=0).clamp(min=1e-10)  # (dict_size,)
                 col_max, col_argmax = pabs.max(dim=0)           # (dict_size,) each
@@ -242,7 +286,8 @@ def main() -> None:
 
     log.info(f"Done — {sum(running_count.values())} R-correct clips across {len(running_count)} classes")
     save_outputs(running_abs, running_signed, running_share_sum,
-                 tubelet_occurrence, running_count, sl_map, out_dir)
+                 tubelet_occurrence, running_count, sl_map, out_dir,
+                 conditions, num_positions, position_label, out_suffix)
 
 
 if __name__ == "__main__":
