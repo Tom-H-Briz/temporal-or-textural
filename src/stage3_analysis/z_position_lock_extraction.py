@@ -49,8 +49,6 @@ DFA_CLASSES = {0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40,
                41, 42, 44, 57, 59, 83, 84, 123, 126, 142, 143, 145, 164,
                168, 169, 171, 173}
 
-DICT_SIZE = 6144
-
 CFG = {
     "device":          "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"),
     "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data/ssv2/labels/labels.json")),
@@ -61,24 +59,34 @@ CFG = {
 }
 
 
-def _resolve_cfg(model_flag: str, layer: int) -> dict:
+def _resolve_cfg(model_flag: str, layer: int, job_label: str = "64", sae_k_default: int = 64) -> dict:
+    """job_label/sae_k_default only drive the videomae branch — TF's job label is always
+    `layer` by its own established checkpoint-naming convention."""
     sae_dir = ROOT / "outputs" / "sae"
     if model_flag == "videomae":
-        sae_path = sae_dir / f"sae_layer{layer}_job64.pt"     # job64 pinned — see brief §clarification
+        sae_path = sae_dir / f"sae_layer{layer}_job{job_label}.pt"
         dim_mean = sae_dir / f"layer{layer}_dim_mean.pt"
-        sae_k    = 64
     else:  # timesformer
+        job_label = str(layer)
         matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
         if len(matches) != 1:
             raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
         sae_path = matches[0]
-        sae_k    = torch.load(sae_path, map_location="cpu", weights_only=True).get("sae_k")
         dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
     if not sae_path.exists():
         raise FileNotFoundError(f"{model_flag} SAE not found: {sae_path}")
     if not dim_mean.exists():
         raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": sae_k}
+
+    # nb_concepts (dict_size) and sae_k always come from the checkpoint's actual weights,
+    # never hardcoded — different job labels can carry different k/expansion (e.g. VM's
+    # job128_16x is k=128 at 16x expansion vs job64's k=64 at 8x).
+    ckpt = torch.load(sae_path, map_location="cpu", weights_only=True)
+    state_dict  = ckpt["sae_state_dict"] if isinstance(ckpt, dict) and "sae_state_dict" in ckpt else ckpt
+    nb_concepts = state_dict["dictionary._weights"].shape[0]
+    ckpt_sae_k  = ckpt.get("sae_k") if isinstance(ckpt, dict) else None
+    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean),
+            "sae_k": ckpt_sae_k or sae_k_default, "nb_concepts": nb_concepts, "job_label": job_label}
 
 
 def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
@@ -155,26 +163,31 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=["videomae", "timesformer"], required=True)
     parser.add_argument("--layer", type=int, required=True)
+    parser.add_argument("--job-label", type=str, default="64", help="videomae only")
+    parser.add_argument("--sae-k", type=int, default=64, help="videomae fallback if checkpoint lacks sae_k")
     args = parser.parse_args()
 
-    resolved = _resolve_cfg(args.model, args.layer)
-    cfg      = {**CFG, "model_flag": args.model, "layer": args.layer}
-    out_dir  = Path(cfg["output_dir"])
+    resolved  = _resolve_cfg(args.model, args.layer, args.job_label, args.sae_k)
+    cfg       = {**CFG, "model_flag": args.model, "layer": args.layer}
+    dict_size = resolved["nb_concepts"]   # checkpoint-derived — was hardcoded 6144
+    out_dir   = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
     num_positions  = MODEL_REGISTRY[args.model]["num_patch_tokens"] // N_SPATIAL
     position_label = MODEL_REGISTRY[args.model]["position_label"]
     conditions     = ["R", SHUFFLE_LABEL[args.model], "A"]
     shuffle_fn     = SHUFFLE_PREPROCESSOR[args.model]
-    out_suffix     = f"{args.model}_l{args.layer}"
+    # Suffix reflects the checkpoint actually resolved, not raw CLI input — TF's job_label
+    # comes back as str(layer) from _resolve_cfg regardless of the (unused) --job-label default.
+    out_suffix     = f"{args.model}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}"
 
     sl_map = {int(r["class_id"]): r["category"]
               for _, r in pd.read_csv(cfg["sl_csv_path"]).iterrows()}
     clips  = load_clips(cfg)
 
-    running_share_sum  = defaultdict(lambda: {c: torch.zeros(DICT_SIZE)                  for c in conditions})
-    tubelet_occurrence = defaultdict(lambda: {c: torch.zeros(num_positions, DICT_SIZE) for c in conditions})
-    running_abs_sum    = defaultdict(lambda: {c: torch.zeros(num_positions, DICT_SIZE) for c in conditions})
+    running_share_sum  = defaultdict(lambda: {c: torch.zeros(dict_size)                  for c in conditions})
+    tubelet_occurrence = defaultdict(lambda: {c: torch.zeros(num_positions, dict_size) for c in conditions})
+    running_abs_sum    = defaultdict(lambda: {c: torch.zeros(num_positions, dict_size) for c in conditions})
     running_count      = defaultdict(int)
 
     log.info(f"Scanning {len(clips):,} clips for R/{conditions[1]}/A (get_z, forward pass only)…")
@@ -227,7 +240,7 @@ def main() -> None:
             (stats["R"]["mode_t"] == stats["A"]["mode_t"])
         )
 
-        for feat in range(DICT_SIZE):
+        for feat in range(dict_size):
             row = {
                 "class_id":      class_id,
                 "sl_label":      label,
