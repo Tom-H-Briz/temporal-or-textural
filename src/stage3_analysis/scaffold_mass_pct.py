@@ -1,19 +1,26 @@
 """
 Scaffold feature mass contribution (%) — R / C1 / A.
 
-Reads dfa_mass_delta_vm_c1.parquet. No DFA engine calls — pure parquet analysis.
+Reads a dfa_mass_delta_vm_c1*.parquet for one specific SAE config. No DFA engine
+calls — pure parquet analysis. Feature indices are only meaningful within the SAE
+that produced them — never reuse SCAFFOLD_FEATURES across a different --layer/
+--job-label/--sae-k without re-deriving the candidate list for that config.
 
 Outputs (outputs/analysis/scaffold_mass_pct/):
-    scaffold_mass_long.parquet               — per clip × condition × feature (floor)
-    scaffold_pct_per_clip.parquet            — per clip × condition
-    scaffold_pct_per_class_per_feature.csv
-    scaffold_pct_per_slgroup_per_feature.csv
-    scaffold_pct_combined.csv
+    scaffold_mass_long_{suffix}.parquet               — per clip × condition × feature (floor)
+    scaffold_pct_per_clip_{suffix}.parquet            — per clip × condition
+    scaffold_pct_per_class_per_feature_{suffix}.csv
+    scaffold_pct_per_slgroup_per_feature_{suffix}.csv
+    scaffold_pct_combined_{suffix}.csv
 
 Usage:
-    uv run python src/stage3_analysis/scaffold_mass_pct.py
+    uv run python src/stage3_analysis/scaffold_mass_pct.py --layer 7 --job-label 64 \\
+        --features 1842,5578,1996,3513,1990,3558,4061,5552
+    uv run python src/stage3_analysis/scaffold_mass_pct.py --layer 5 --job-label 64 \\
+        --features 1394,1784,1919,2468,2577,3246,3325,6006
 """
 
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -21,33 +28,34 @@ import pandas as pd
 
 ROOT = Path(__file__).parent.parent.parent
 
-SCAFFOLD_FEATURES: list[int] = [1842, 5578, 1996, 3513, 1990, 3558, 4061, 5552]
-# Tubelets:                        0     1     3     4     5     6     7     7
-# 4061: soft lock — R share 0.974 (σ=0.013) vs 5552's 0.990 (σ=0.004); A share 0.864 vs 1.000.
-# Kept in set; disambiguation deferred to ablation (isolate-4061 condition). Finalised 020726.
-
 CFG = {
-    "source_glob": "outputs/analysis/**/dfa_mass_delta_vm_c1.parquet",
-    "out_dir":     ROOT / "outputs/analysis/scaffold_mass_pct",
+    "source_dir": ROOT / "outputs/analysis/dfa_mass_delta_vm_c1",
+    "out_dir":    ROOT / "outputs/analysis/scaffold_mass_pct",
 }
 
 CONDITIONS = ["R", "C1", "A"]
 
 
-def locate_source() -> Path:
-    matches = list(ROOT.glob(CFG["source_glob"]))
-    assert len(matches) == 1, f"Expected exactly 1 source parquet, found: {matches}"
-    return matches[0]
+def locate_source(layer: int, job_label: str, sae_k: int) -> Path:
+    """Prefer the layer/job/k-suffixed file; fall back to the original unsuffixed
+    L7/job64 baseline file if this is that exact config and no suffixed copy exists."""
+    suffixed = CFG["source_dir"] / f"dfa_mass_delta_vm_c1_l{layer}_job{job_label}_k{sae_k}.parquet"
+    if suffixed.exists():
+        return suffixed
+    legacy = CFG["source_dir"] / "dfa_mass_delta_vm_c1.parquet"
+    if (layer, job_label, sae_k) == (7, "64", 64) and legacy.exists():
+        return legacy
+    raise FileNotFoundError(f"No source parquet found: {suffixed} (or legacy {legacy})")
 
 
-def extract_long(df: pd.DataFrame) -> pd.DataFrame:
+def extract_long(df: pd.DataFrame, scaffold_features: list[int]) -> pd.DataFrame:
     """Stage 1 — long format: one row per (clip, condition, feature)."""
     meta = df[["clip_id", "class_id", "sl_label", "correct_C1", "correct_A"]].reset_index(drop=True)
     chunks = []
     for cond in CONDITIONS:
-        mat = np.stack(df[f"signed_vec_{cond}"].to_numpy()).astype(np.float32)  # (N, 6144)
+        mat = np.stack(df[f"signed_vec_{cond}"].to_numpy()).astype(np.float32)  # (N, dict_size)
         total = np.abs(mat).sum(axis=1)  # (N,)
-        for feat in SCAFFOLD_FEATURES:
+        for feat in scaffold_features:
             sv = mat[:, feat]
             chunk = meta.copy()
             chunk["condition"] = cond
@@ -129,25 +137,34 @@ def sanity_check(df_a: pd.DataFrame, df_b: pd.DataFrame, df_c: pd.DataFrame) -> 
 
 
 def main() -> None:
-    assert SCAFFOLD_FEATURES, "SCAFFOLD_FEATURES is empty — populate before running."
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--layer", type=int, required=True)
+    parser.add_argument("--job-label", type=str, default="64")
+    parser.add_argument("--sae-k", type=int, default=64)
+    parser.add_argument("--features", type=str, required=True,
+                         help="comma-separated candidate feature indices for this SAE config")
+    args = parser.parse_args()
+    scaffold_features = [int(f) for f in args.features.split(",")]
+    out_suffix = f"l{args.layer}_job{args.job_label}_k{args.sae_k}"
 
     out_dir: Path = CFG["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    src = locate_source()
+    src = locate_source(args.layer, args.job_label, args.sae_k)
     print(f"Source: {src}")
+    print(f"Candidate features ({len(scaffold_features)}): {scaffold_features}")
     df = pd.read_parquet(src)
     print(f"  {len(df):,} clips, {df['class_id'].nunique()} classes, {df['sl_label'].value_counts().to_dict()}")
 
     print("Stage 1: extracting long format...")
-    long = extract_long(df)
-    long.to_parquet(out_dir / "scaffold_mass_long.parquet", index=False)
-    print(f"  {len(long):,} rows → scaffold_mass_long.parquet")
+    long = extract_long(df, scaffold_features)
+    long.to_parquet(out_dir / f"scaffold_mass_long_{out_suffix}.parquet", index=False)
+    print(f"  {len(long):,} rows → scaffold_mass_long_{out_suffix}.parquet")
 
     print("Stage 2: per-clip scaffold %...")
     pct_per_clip = compute_pct_per_clip(long)
-    pct_per_clip.to_parquet(out_dir / "scaffold_pct_per_clip.parquet", index=False)
-    print(f"  {len(pct_per_clip):,} rows → scaffold_pct_per_clip.parquet")
+    pct_per_clip.to_parquet(out_dir / f"scaffold_pct_per_clip_{out_suffix}.parquet", index=False)
+    print(f"  {len(pct_per_clip):,} rows → scaffold_pct_per_clip_{out_suffix}.parquet")
 
     print("Stage 3: aggregations...")
     df_a = agg_per_class_per_feature(long)
@@ -156,9 +173,9 @@ def main() -> None:
 
     sanity_check(df_a, df_b, df_c)
 
-    df_a.to_csv(out_dir / "scaffold_pct_per_class_per_feature.csv", index=False)
-    df_b.to_csv(out_dir / "scaffold_pct_per_slgroup_per_feature.csv", index=False)
-    df_c.to_csv(out_dir / "scaffold_pct_combined.csv", index=False)
+    df_a.to_csv(out_dir / f"scaffold_pct_per_class_per_feature_{out_suffix}.csv", index=False)
+    df_b.to_csv(out_dir / f"scaffold_pct_per_slgroup_per_feature_{out_suffix}.csv", index=False)
+    df_c.to_csv(out_dir / f"scaffold_pct_combined_{out_suffix}.csv", index=False)
     print("Done.")
 
 

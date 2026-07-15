@@ -4,11 +4,20 @@ DFA mass delta diagnostic (VideoMAE) — R vs C1 vs A across SL manifest clips.
 C1 = shuffled consecutive frame pairs (seed = int(clip_id) % 2**32)
 For each R-correct clip: delta = sum(abs(DFA_R)) - sum(abs(DFA_C1))
 
-Outputs:
-    outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1.parquet
-    outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta.png
+signed_vec_R/C1/A are checkpoint-width vectors (dict_size varies by SAE config,
+e.g. 6144 at 8x expansion vs 12288 at 16x) — feature indices are only meaningful
+within the SAE that produced them, never comparable across configs.
+
+Outputs (outputs/analysis/dfa_mass_delta_vm_c1/):
+    dfa_mass_delta_vm_c1_{layer}_job{job_label}_k{sae_k}.parquet
+    dfa_mass_delta_{layer}_job{job_label}_k{sae_k}.png
+
+Usage:
+    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7 --job-label 64
+    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7 --job-label 128_16x --sae-k 128
 """
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -34,7 +43,6 @@ SL_COLOURS = {"temporal": "steelblue", "static": "darkorange"}
 
 CFG = {
     "model_flag":      "videomae",
-    "layer":           7,
     "device":          "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"),
     "dfa_classes":     [0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40, 41,
                         42, 44, 57, 59, 83, 84, 123, 126, 142, 143, 145, 164, 168, 169, 171, 173],
@@ -47,14 +55,18 @@ CFG = {
 }
 
 
-def _resolve_cfg(cfg: dict) -> dict:
-    sae_path = ROOT / "outputs" / "sae" / "sae_layer7_job64.pt"
-    dim_mean = ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"
+def _resolve_cfg(layer: int, job_label: str = "64", sae_k_default: int = 64) -> dict:
+    sae_dir  = ROOT / "outputs" / "sae"
+    sae_path = sae_dir / f"sae_layer{layer}_job{job_label}.pt"
+    dim_mean = sae_dir / f"layer{layer}_dim_mean.pt"
     if not sae_path.exists():
         raise FileNotFoundError(f"VM SAE checkpoint not found: {sae_path}")
     if not dim_mean.exists():
         raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": 64}
+    ckpt = torch.load(sae_path, map_location="cpu", weights_only=True)
+    ckpt_sae_k = ckpt.get("sae_k") if isinstance(ckpt, dict) else None
+    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean),
+            "sae_k": ckpt_sae_k or sae_k_default, "layer": layer, "job_label": job_label}
 
 
 def build_sl_label_map(cfg: dict) -> dict[int, str]:
@@ -136,19 +148,19 @@ def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict) 
     return records
 
 
-def save_parquet(records: list[dict], sl_map: dict[int, str], out_dir: Path) -> None:
+def save_parquet(records: list[dict], sl_map: dict[int, str], out_dir: Path, out_suffix: str) -> None:
     df = pd.DataFrame(records)
     df["sl_label"] = df["class_id"].map(sl_map).fillna("unlabelled")
     df = df[["clip_id", "class_id", "sl_label",
              "total_abs_R", "total_abs_C1", "total_abs_A", "delta", "correct_C1", "correct_A",
              "total_signed_R", "total_signed_C1", "total_signed_A",
              "signed_vec_R", "signed_vec_C1", "signed_vec_A"]]
-    path = out_dir / "dfa_mass_delta_vm_c1.parquet"
+    path = out_dir / f"dfa_mass_delta_vm_c1_{out_suffix}.parquet"
     df.to_parquet(path, index=False)
     print(f"  Parquet → {path}  ({len(df)} rows)")
 
 
-def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path) -> None:
+def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path, out_suffix: str) -> None:
     df = pd.DataFrame(records)
     df["sl_label"] = df["class_id"].map(sl_map).fillna("unlabelled")
     df = df.sort_values("delta").reset_index(drop=True)
@@ -164,14 +176,22 @@ def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path) -> Non
     ax.set_ylabel("clip rank (sorted by delta ascending)")
     ax.legend()
     fig.tight_layout()
-    path = out_dir / "dfa_mass_delta.png"
+    path = out_dir / f"dfa_mass_delta_{out_suffix}.png"
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"  Plot → {path}")
 
 
 def main() -> None:
-    cfg = {**CFG, **_resolve_cfg(CFG)}
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--layer", type=int, required=True)
+    parser.add_argument("--job-label", type=str, default="64")
+    parser.add_argument("--sae-k", type=int, default=64, help="fallback if checkpoint lacks sae_k")
+    args = parser.parse_args()
+
+    resolved   = _resolve_cfg(args.layer, args.job_label, args.sae_k)
+    cfg        = {**CFG, **resolved}
+    out_suffix = f"l{args.layer}_job{args.job_label}_k{resolved['sae_k']}"
     print(f"Device: {cfg['device']}  Layer: {cfg['layer']}")
     print(f"SAE: {Path(cfg['sae_path']).name}  sae_k={cfg['sae_k']}")
 
@@ -186,8 +206,8 @@ def main() -> None:
                    sae_k=cfg["sae_k"]) as engine:
         records = run_clips(engine, clips, cfg)
 
-    save_parquet(records, sl_map, out_dir)
-    make_plot(records, sl_map, out_dir)
+    save_parquet(records, sl_map, out_dir, out_suffix)
+    make_plot(records, sl_map, out_dir, out_suffix)
     print("Done.")
 
 
