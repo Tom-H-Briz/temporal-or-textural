@@ -12,6 +12,7 @@ Usage:
     uv run python src/stage3_analysis/run_ablation.py
 """
 
+import argparse
 import json
 import logging
 import os
@@ -37,29 +38,42 @@ log = logging.getLogger(__name__)
 
 CFG = {
     "model_flag":  "videomae",
-    "layer":       7,
     "device":      "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"),
-    "source_glob": "outputs/analysis/**/dfa_mass_delta_vm_c1.parquet",
+    "mass_delta_dir": ROOT / "outputs/analysis/dfa_mass_delta_vm_c1",
     "video_dir":   os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "out_dir":     ROOT / "outputs/analysis/scaffold_ablation",
-    "run_tag":     "cover_uncover_060726",   # stamps output parquet — change each run
 }
 
 
-def _resolve_cfg(cfg: dict) -> dict:
-    sae_path = ROOT / "outputs" / "sae" / "sae_layer7_job64.pt"
-    dim_mean = ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"
+def _resolve_cfg(layer: int, job_label: str, sae_k: int) -> dict:
+    """VM SAE checkpoint for the given layer/job_label — layer is a caller
+    argument now (was hardcoded to 7), matching the extraction scripts'
+    _resolve_cfg convention."""
+    sae_path = ROOT / "outputs" / "sae" / f"sae_layer{layer}_job{job_label}.pt"
+    dim_mean = ROOT / "outputs" / "sae" / f"layer{layer}_dim_mean.pt"
     if not sae_path.exists():
         raise FileNotFoundError(f"SAE not found: {sae_path}")
     if not dim_mean.exists():
         raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": 64}
+    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean),
+            "sae_k": sae_k, "layer": layer}
+
+
+def _resolve_source_parquet(mass_delta_dir: Path, layer: int, job_label: str, sae_k: int) -> Path:
+    """Per-clip signed-vector source — suffixed pattern preferred, falling back
+    to the legacy unsuffixed file only for the original L7/job64/k64 baseline
+    (matches scaffold_mass_pct.locate_source's precedent)."""
+    suffixed = mass_delta_dir / f"dfa_mass_delta_vm_c1_l{layer}_job{job_label}_k{sae_k}.parquet"
+    if suffixed.exists():
+        return suffixed
+    legacy = mass_delta_dir / "dfa_mass_delta_vm_c1.parquet"
+    if (layer, job_label, sae_k) == (7, "64", 64) and legacy.exists():
+        return legacy
+    raise FileNotFoundError(f"No mass-delta source parquet found: {suffixed}")
 
 
 def load_clips(cfg: dict) -> list[tuple[str, int, str, Path]]:
-    matches = list(ROOT.glob(cfg["source_glob"]))
-    assert len(matches) == 1, f"Expected 1 source parquet, found: {matches}"
-    df = pd.read_parquet(matches[0])
+    df = pd.read_parquet(cfg["source_parquet"])
     video_dir = Path(cfg["video_dir"])
     result = []
     for _, row in df.iterrows():
@@ -112,9 +126,24 @@ def run_clip(
     return rows
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--layer", type=int, default=7)
+    parser.add_argument("--job-label", type=str, default="64")
+    parser.add_argument("--sae-k", type=int, default=64)
+    parser.add_argument("--run-tag", type=str, default=None,
+                         help="defaults to l{layer}_job{job-label}_k{sae-k} if omitted")
+    parser.add_argument("--dry-run", action="store_true")
+    return parser.parse_args()
+
+
 def main() -> None:
-    dry_run = "--dry-run" in sys.argv
-    cfg = {**CFG, **_resolve_cfg(CFG)}
+    args = _parse_args()
+    dry_run = args.dry_run
+    resolved = _resolve_cfg(args.layer, args.job_label, args.sae_k)
+    source_parquet = _resolve_source_parquet(CFG["mass_delta_dir"], args.layer, args.job_label, args.sae_k)
+    run_tag = args.run_tag or f"l{args.layer}_job{args.job_label}_k{args.sae_k}"
+    cfg = {**CFG, **resolved, "source_parquet": source_parquet, "run_tag": run_tag}
     out_dir: Path = cfg["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
 
