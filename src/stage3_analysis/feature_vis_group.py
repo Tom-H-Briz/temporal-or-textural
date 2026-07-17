@@ -31,7 +31,7 @@ import matplotlib.colors as mcolors
 CFG = {
     "model_flag":  "timesformer",
     "class_id":    6,
-    "features":    [1588, 2156, 3183, 1517,4590,2090],
+    "features":    [4991, 4380, 4864, 958,182],
     "n_clips":     3,
     "seed":        11,
     "layer":       7,
