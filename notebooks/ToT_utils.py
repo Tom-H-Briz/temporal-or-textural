@@ -16,16 +16,19 @@ from transformers import (
     VideoMAEImageProcessor,
 )
 
-MODEL_ID = "MCG-NJU/videomae-base-finetuned-ssv2"  # legacy — prefer MODEL_REGISTRY
+ROOT = Path(__file__).parent.parent
+
+MODEL_ID = "MCG-NJU/videomae-base-finetuned-ssv2"  # legacy — prefer CHECKPOINT_REGISTRY
 NUM_FRAMES = 16   # legacy — prefer MODEL_REGISTRY["videomae"]["num_frames"]
 NUM_CLASSES = 174
 
-# Registry values for num_patch_tokens are literals; the tier-1 shape asserts in
-# setup_model() validate them against the model's actual output on every forward pass.
+# Backbone-only fields — none of these vary with dataset. Checkpoint identity is a
+# (model x dataset) product, so it lives in CHECKPOINT_REGISTRY instead.
+# num_patch_tokens values are literals; the tier-1 shape asserts in setup_model()
+# validate them against the model's actual output on every forward pass.
 MODEL_REGISTRY: dict[str, dict] = {
     "videomae": {
         "model_class":      VideoMAEForVideoClassification,
-        "checkpoint":       "MCG-NJU/videomae-base-finetuned-ssv2",
         "num_frames":       16,
         "processor_class":  VideoMAEImageProcessor,
         "cls_offset":       0,
@@ -36,7 +39,6 @@ MODEL_REGISTRY: dict[str, dict] = {
     },
     "timesformer": {
         "model_class":      TimesformerForVideoClassification,
-        "checkpoint":       "facebook/timesformer-base-finetuned-ssv2",
         "num_frames":       8,
         "processor_class":  AutoImageProcessor,
         "cls_offset":       1,
@@ -44,6 +46,32 @@ MODEL_REGISTRY: dict[str, dict] = {
         "hidden_dim":       768,
         "num_patch_tokens": 1568,
         "position_label":   "frame",
+    },
+}
+
+# (model_name, dataset_name) -> HF checkpoint string. The only place a finetuned
+# checkpoint string lives — checkpoint identity is a (backbone x dataset) product.
+CHECKPOINT_REGISTRY: dict[tuple[str, str], str] = {
+    ("videomae", "ssv2"):         "MCG-NJU/videomae-base-finetuned-ssv2",
+    ("timesformer", "ssv2"):      "facebook/timesformer-base-finetuned-ssv2",
+    ("videomae", "kinetics400"):  "MCG-NJU/videomae-base-finetuned-kinetics",
+}
+
+# dataset_name -> backbone-independent dataset paths. labels_path/validation_path
+# are None for datasets without SSv2-style template/label JSON metadata — callers
+# that need a clip list fall back to globbing video_dir directly in that case.
+DATASET_REGISTRY: dict[str, dict] = {
+    "ssv2": {
+        "data_root":       ROOT / "data" / "ssv2",
+        "labels_path":     ROOT / "data" / "ssv2" / "labels" / "labels.json",
+        "validation_path": ROOT / "data" / "ssv2" / "labels" / "validation.json",
+        "video_dir":       ROOT / "data" / "ssv2_val_set",
+    },
+    "kinetics400": {
+        "data_root":       ROOT / "data" / "kinetics400",
+        "labels_path":     None,
+        "validation_path": None,
+        "video_dir":       ROOT / "data" / "kinetics400" / "val",
     },
 }
 

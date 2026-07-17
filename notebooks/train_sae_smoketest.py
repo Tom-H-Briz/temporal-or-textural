@@ -38,7 +38,7 @@ from train_sae import (
     train_epoch,
     validate,
 )
-from ToT_utils import MODEL_REGISTRY
+from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY
 
 OUTPUT_DIR  = ROOT / "outputs" / "sae"
 OUTPUT_FILE = OUTPUT_DIR / "train_sae_smoketest.txt"
@@ -71,7 +71,8 @@ def main() -> bool:
         device           = SMOKE_CFG["device"]
 
         log(f"Device:    {device}")
-        log(f"Model:     {SMOKE_CFG['model_name']} ({model_cfg['checkpoint']})")
+        checkpoint = CHECKPOINT_REGISTRY[(SMOKE_CFG["model_name"], "ssv2")]
+        log(f"Model:     {SMOKE_CFG['model_name']} ({checkpoint})")
         log(f"Layer:     {SMOKE_CFG['layer']}")
         log(f"nb_concepts={SMOKE_CFG['nb_concepts']}  top_k={SMOKE_CFG['top_k']:,}")
         log(f"cls_offset={cls_offset}  num_patch_tokens={num_patch_tokens}")

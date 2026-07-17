@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from perturbation import apply_first_last, apply_shuffle
 from perturbationA import apply_midpoint_frame
-from ToT_utils import MODEL_REGISTRY, _strip_brackets, load_metadata
+from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, _strip_brackets, load_metadata
 
 CFG = {
     "model_name":      "timesformer",
@@ -129,9 +129,10 @@ def main() -> None:
         labels.append(label_map[template])
     print(f"  {len(clip_paths):,} clips")
 
-    model_cfg = MODEL_REGISTRY[CFG["model_name"]]
-    processor = model_cfg["processor_class"].from_pretrained(model_cfg["checkpoint"])
-    model     = model_cfg["model_class"].from_pretrained(model_cfg["checkpoint"])
+    model_cfg  = MODEL_REGISTRY[CFG["model_name"]]
+    checkpoint = CHECKPOINT_REGISTRY[(CFG["model_name"], "ssv2")]
+    processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
+    model      = model_cfg["model_class"].from_pretrained(checkpoint)
     model.to(device).eval()
 
     out_dir = Path(CFG["output_dir"])

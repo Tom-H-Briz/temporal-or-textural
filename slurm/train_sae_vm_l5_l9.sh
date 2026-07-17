@@ -7,7 +7,7 @@
 #SBATCH --array=5,9
 
 # Prereq: compute_dim_mean_vm_sweep.sh must have completed for these layers first
-# (writes outputs/sae/layer{5,9}_dim_mean.pt).
+# (writes outputs/sae/vmae_ssv2_layer{5,9}_dim_mean.pt).
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 
@@ -23,7 +23,7 @@ export SAE_ALPHA=0.03
 export SAE_LOSS_FN=aux
 export SAE_EPOCHS=5                 # 5 epochs x 20k train_clips = 100k clip exposures, matches L7 recipe
 export SAE_JOB_LABEL=64             # matches legacy L7 checkpoint's job64 naming
-export DIM_MEAN_PATH="$HOME/temporal-or-textural/outputs/sae/layer${SLURM_ARRAY_TASK_ID}_dim_mean.pt"
+export DIM_MEAN_PATH="$HOME/temporal-or-textural/outputs/sae/vmae_ssv2_layer${SLURM_ARRAY_TASK_ID}_dim_mean.pt"
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 
@@ -35,5 +35,5 @@ apptainer exec --nv \
         pip install --quiet av einops wandb pandas pyarrow matplotlib transformers huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
         python notebooks/train_sae.py &&
-        cp outputs/sae/sae_vmae_k64_x8_l${SLURM_ARRAY_TASK_ID}_job64_best.pt outputs/sae/sae_layer${SLURM_ARRAY_TASK_ID}_job64.pt
+        cp outputs/sae/sae_vmae_ssv2_k64_x8_l${SLURM_ARRAY_TASK_ID}_job64_best.pt outputs/sae/sae_layer${SLURM_ARRAY_TASK_ID}_job64.pt
     "

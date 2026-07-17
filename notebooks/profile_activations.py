@@ -20,13 +20,11 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from ToT_utils import MODEL_REGISTRY, SSv2ClipDataset, load_metadata
+from ToT_utils import CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset, load_metadata
 
 CFG = {
     "model_name":      "videomae",
-    "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data" / "ssv2" / "labels" / "labels.json")),
-    "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data" / "ssv2" / "labels" / "validation.json")),
-    "video_dir":       os.environ.get("VIDEO_DIR",       str(ROOT / "data" / "ssv2_val_set")),
+    "dataset_name":    "ssv2",   # overridable via DATASET_NAME env var — required, never silently defaulted downstream
     "layer":           7,
     "n_clips":         2000,
     "batch_size":      8,
@@ -35,8 +33,9 @@ CFG = {
 }
 
 for _key, _env, _cast in [
-    ("model_name", "MODEL_NAME", str),
-    ("layer",      "SAE_LAYER",  int),
+    ("model_name",   "MODEL_NAME",   str),
+    ("dataset_name", "DATASET_NAME", str),
+    ("layer",        "SAE_LAYER",    int),
 ]:
     if os.environ.get(_env):
         CFG[_key] = _cast(os.environ[_env])
@@ -44,12 +43,20 @@ for _key, _env, _cast in [
 assert CFG["model_name"] in MODEL_REGISTRY, (
     f"Unknown model_name {CFG['model_name']!r}. Valid: {list(MODEL_REGISTRY)}"
 )
-_model_cfg = MODEL_REGISTRY[CFG["model_name"]]
-CFG["num_frames"] = _model_cfg["num_frames"]
+assert CFG["dataset_name"] in DATASET_REGISTRY, (
+    f"Unknown dataset_name {CFG['dataset_name']!r}. Valid: {list(DATASET_REGISTRY)}"
+)
+_model_cfg   = MODEL_REGISTRY[CFG["model_name"]]
+_dataset_cfg = DATASET_REGISTRY[CFG["dataset_name"]]
+CFG["num_frames"]  = _model_cfg["num_frames"]
+CFG["hf_checkpoint"] = CHECKPOINT_REGISTRY[(CFG["model_name"], CFG["dataset_name"])]
+CFG["labels_path"]     = os.environ.get("LABELS_PATH")     or (str(_dataset_cfg["labels_path"])     if _dataset_cfg["labels_path"]     else None)
+CFG["validation_path"] = os.environ.get("VALIDATION_PATH") or (str(_dataset_cfg["validation_path"]) if _dataset_cfg["validation_path"] else None)
+CFG["video_dir"]       = os.environ.get("VIDEO_DIR")       or str(_dataset_cfg["video_dir"])
 
 _abbrev = {"videomae": "vmae", "timesformer": "tf"}[CFG["model_name"]]
 CFG["dim_mean_out"] = str(
-    ROOT / "outputs" / "sae" / f"{_abbrev}_layer{CFG['layer']}_dim_mean.pt"
+    ROOT / "outputs" / "sae" / f"{_abbrev}_{CFG['dataset_name']}_layer{CFG['layer']}_dim_mean.pt"
 )
 
 
@@ -59,13 +66,13 @@ def main():
     cls_offset = model_cfg["cls_offset"]
 
     print(f"Device:    {device}")
-    print(f"Model:     {CFG['model_name']} ({model_cfg['checkpoint']})")
+    print(f"Model:     {CFG['model_name']} ({CFG['hf_checkpoint']})")
     print(f"Layer:     {CFG['layer']}  cls_offset={cls_offset}")
     print(f"Output:    {CFG['dim_mean_out']}")
 
     print("Loading model...")
-    processor = model_cfg["processor_class"].from_pretrained(model_cfg["checkpoint"])
-    model     = model_cfg["model_class"].from_pretrained(model_cfg["checkpoint"])
+    processor = model_cfg["processor_class"].from_pretrained(CFG["hf_checkpoint"])
+    model     = model_cfg["model_class"].from_pretrained(CFG["hf_checkpoint"])
     model.to(device).eval()
     for p in model.parameters():
         p.requires_grad_(False)
@@ -79,10 +86,15 @@ def main():
     model_cfg["layer_getter"](model, CFG["layer"]).register_forward_hook(_hook)
 
     print("Loading clips...")
-    _, clips, _ = load_metadata(CFG["labels_path"], CFG["validation_path"])
     video_dir = Path(CFG["video_dir"])
-    paths = [video_dir / f"{c['id']}.webm" for c in clips]
-    paths = [p for p in paths if p.exists()][: CFG["n_clips"]]
+    if CFG["labels_path"] is not None:
+        _, clips, _ = load_metadata(CFG["labels_path"], CFG["validation_path"])
+        paths = [video_dir / f"{c['id']}.webm" for c in clips]
+        paths = [p for p in paths if p.exists()][: CFG["n_clips"]]
+    else:
+        # No SSv2-style template/label JSON for this dataset — list video_dir directly.
+        paths = sorted(p for ext in ("*.mp4", "*.webm", "*.avi") for p in video_dir.glob(ext))
+        paths = paths[: CFG["n_clips"]]
     print(f"  Using {len(paths)} clips")
 
     dataset = SSv2ClipDataset(paths, processor, CFG["num_frames"])
@@ -126,6 +138,9 @@ def main():
           f"max: {token_mean_norm.max():.3f}, mean: {token_mean_norm.mean():.3f}")
 
     out_path = Path(CFG["dim_mean_out"])
+    assert CFG["dataset_name"] in str(out_path), (
+        f"dataset_name {CFG['dataset_name']!r} missing from dim_mean output path: {out_path}"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(per_dim_mean.float(), out_path)
     print(f"\nSaved per-dim mean → {out_path}")

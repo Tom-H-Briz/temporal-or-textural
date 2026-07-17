@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from perturb_accuracy_tf import CFG, PerturbedSSv2Dataset, run_condition, save_csv
-from ToT_utils import MODEL_REGISTRY, _strip_brackets, load_metadata
+from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, _strip_brackets, load_metadata
 
 label_map, clips, id2template = load_metadata(CFG["labels_path"], CFG["validation_path"])
 video_dir = Path(CFG["video_dir"])
@@ -28,9 +28,10 @@ for c in clips:
     labels.append(label_map[template])
 print(f"  {len(clip_paths):,} clips")
 
-model_cfg = MODEL_REGISTRY[CFG["model_name"]]
-processor = model_cfg["processor_class"].from_pretrained(model_cfg["checkpoint"])
-model     = model_cfg["model_class"].from_pretrained(model_cfg["checkpoint"])
+model_cfg  = MODEL_REGISTRY[CFG["model_name"]]
+checkpoint = CHECKPOINT_REGISTRY[(CFG["model_name"], "ssv2")]
+processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
+model      = model_cfg["model_class"].from_pretrained(checkpoint)
 model.to(CFG["device"]).eval()
 
 out_dir = Path(CFG["output_dir"])

@@ -28,13 +28,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from sae import BatchTopKSAE
 from sae.losses import top_k_auxiliary_loss, reanimation_regularizer
-from ToT_utils import MODEL_REGISTRY, SSv2ClipDataset, load_metadata
+from ToT_utils import CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset, load_metadata
 
 CFG = {
     "model_name":      "videomae",   # overridable via MODEL_NAME env var
-    "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data" / "ssv2" / "labels" / "labels.json")),
-    "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data" / "ssv2" / "labels" / "validation.json")),
-    "video_dir":       os.environ.get("VIDEO_DIR",       str(ROOT / "data" / "ssv2_val_set")),
+    "dataset_name":    "ssv2",       # overridable via DATASET_NAME env var — required, never silently defaulted downstream
     "device":          "cuda" if torch.cuda.is_available() else "cpu",
     "layer":           7,
     # Training
@@ -62,7 +60,8 @@ SAE_CONFIG = {
 # --- SLURM env var overrides ---
 # Apply all overrides before touching the registry so model_name is final first.
 for _key, _env, _cast in [
-    ("model_name", "MODEL_NAME",    str),
+    ("model_name",   "MODEL_NAME",   str),
+    ("dataset_name", "DATASET_NAME", str),
     ("loss_fn",    "SAE_LOSS_FN",   str),
     ("job_label",  "SAE_JOB_LABEL", str),
     ("epochs",     "SAE_EPOCHS",    int),
@@ -84,8 +83,16 @@ for _key, _env, _cast in [
 assert CFG["model_name"] in MODEL_REGISTRY, (
     f"Unknown model_name {CFG['model_name']!r}. Valid: {list(MODEL_REGISTRY)}"
 )
-_model_cfg = MODEL_REGISTRY[CFG["model_name"]]
+assert CFG["dataset_name"] in DATASET_REGISTRY, (
+    f"Unknown dataset_name {CFG['dataset_name']!r}. Valid: {list(DATASET_REGISTRY)}"
+)
+_model_cfg   = MODEL_REGISTRY[CFG["model_name"]]
+_dataset_cfg = DATASET_REGISTRY[CFG["dataset_name"]]
 _abbrev                 = {"videomae": "vmae", "timesformer": "tf"}[CFG["model_name"]]
+CFG["hf_checkpoint"]    = CHECKPOINT_REGISTRY[(CFG["model_name"], CFG["dataset_name"])]
+CFG["labels_path"]      = os.environ.get("LABELS_PATH")     or (str(_dataset_cfg["labels_path"])     if _dataset_cfg["labels_path"]     else None)
+CFG["validation_path"]  = os.environ.get("VALIDATION_PATH") or (str(_dataset_cfg["validation_path"]) if _dataset_cfg["validation_path"] else None)
+CFG["video_dir"]        = os.environ.get("VIDEO_DIR")       or str(_dataset_cfg["video_dir"])
 CFG["num_frames"]       = _model_cfg["num_frames"]
 CFG["hidden_dim"]       = _model_cfg["hidden_dim"]
 CFG["num_patch_tokens"] = _model_cfg["num_patch_tokens"]
@@ -93,7 +100,7 @@ CFG["nb_concepts"]      = SAE_CONFIG["expansion"] * _model_cfg["hidden_dim"]
 CFG["top_k"]            = SAE_CONFIG["k"] * CFG["num_patch_tokens"]
 CFG["aux_loss_coeff"]   = SAE_CONFIG["alpha"]
 CFG["dim_mean_path"]    = os.environ.get("DIM_MEAN_PATH") or str(
-    ROOT / "outputs" / "sae" / f"{_abbrev}_layer{CFG['layer']}_dim_mean.pt"
+    ROOT / "outputs" / "sae" / f"{_abbrev}_{CFG['dataset_name']}_layer{CFG['layer']}_dim_mean.pt"
 )
 
 
@@ -108,12 +115,16 @@ def build_loss_fn(cfg: dict):
 
 
 def build_split(cfg: dict) -> tuple[list[Path], list[Path]]:
-    _, clips, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
     video_dir = Path(cfg["video_dir"])
-
-    all_paths = [video_dir / f"{c['id']}.webm" for c in clips]
-    all_paths = [p for p in all_paths if p.exists()]
-    print(f"  {len(all_paths):,} clips on disk  ({len(clips):,} in validation.json)")
+    if cfg["labels_path"] is not None:
+        _, clips, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
+        all_paths = [video_dir / f"{c['id']}.webm" for c in clips]
+        all_paths = [p for p in all_paths if p.exists()]
+        print(f"  {len(all_paths):,} clips on disk  ({len(clips):,} in validation.json)")
+    else:
+        # No SSv2-style template/label JSON for this dataset — list video_dir directly.
+        all_paths = sorted(p for ext in ("*.mp4", "*.webm", "*.avi") for p in video_dir.glob(ext))
+        print(f"  {len(all_paths):,} clips found in {video_dir} (directory listing, no labels.json)")
 
     rng = random.Random(cfg["split_seed"])
     rng.shuffle(all_paths)
@@ -150,9 +161,12 @@ def setup_model(cfg: dict) -> tuple:
     cls_offset       = model_cfg["cls_offset"]
     num_patch_tokens = cfg["num_patch_tokens"]
     hidden_dim       = cfg["hidden_dim"]
+    # dataset_name defaults to ssv2 for callers (e.g. layer_selector.py's probe_cfg)
+    # that predate the dataset axis and never set it.
+    checkpoint = CHECKPOINT_REGISTRY[(cfg["model_name"], cfg.get("dataset_name", "ssv2"))]
 
-    processor = model_cfg["processor_class"].from_pretrained(model_cfg["checkpoint"])
-    model     = model_cfg["model_class"].from_pretrained(model_cfg["checkpoint"])
+    processor = model_cfg["processor_class"].from_pretrained(checkpoint)
+    model     = model_cfg["model_class"].from_pretrained(checkpoint)
     model.to(cfg["device"]).eval()
     for p in model.parameters():
         p.requires_grad_(False)
@@ -300,9 +314,12 @@ def main() -> None:
 
     _abbrev  = {"videomae": "vmae", "timesformer": "tf"}[CFG["model_name"]]
     run_name = (
-        f"sae_{_abbrev}_k{SAE_CONFIG['k']}_x{SAE_CONFIG['expansion']}"
+        f"sae_{_abbrev}_{CFG['dataset_name']}_k{SAE_CONFIG['k']}_x{SAE_CONFIG['expansion']}"
         f"_l{CFG['layer']}_job{CFG['job_label']}"
     )
+    # dataset_name is required (never defaulted) and must appear in the checkpoint
+    # path — a same-layer SSv2/Kinetics checkpoint collision is not a recoverable mistake.
+    assert CFG["dataset_name"] in run_name
     CFG["checkpoint"]      = str(Path(CFG["output_dir"]) / f"{run_name}.pt")
     CFG["best_checkpoint"] = str(Path(CFG["output_dir"]) / f"{run_name}_best.pt")
 
@@ -327,7 +344,7 @@ def main() -> None:
     print("Building data split...")
     train_paths, val_paths = build_split(CFG)
 
-    print(f"Loading model: {_model_cfg['checkpoint']}")
+    print(f"Loading model: {CFG['hf_checkpoint']}")
     model, processor, hook_storage = setup_model(CFG)
 
     train_loader, val_loader = build_loaders(train_paths, val_paths, processor, CFG)
@@ -377,6 +394,7 @@ def main() -> None:
             "sae_k":                SAE_CONFIG["k"],
         }
         epoch_ckpt = str(Path(CFG["output_dir"]) / f"{run_name}_epoch{epoch + 1}.pt")
+        assert CFG["dataset_name"] in epoch_ckpt and CFG["dataset_name"] in CFG["checkpoint"]
         torch.save(ckpt_payload, epoch_ckpt)
         torch.save(ckpt_payload, CFG["checkpoint"])  # rolling latest for resume
 
@@ -384,6 +402,7 @@ def main() -> None:
         wandb.log({"val/score": score, "epoch": epoch + 1}, step=global_step)
         if score > best_score:
             best_score = score
+            assert CFG["dataset_name"] in CFG["best_checkpoint"]
             torch.save(ckpt_payload, CFG["best_checkpoint"])
             print(f"  Saved epoch {epoch + 1}  ★ new best (score={score:.4f})")
         else:

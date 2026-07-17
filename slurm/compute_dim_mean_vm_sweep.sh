@@ -24,6 +24,5 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops wandb pandas pyarrow matplotlib transformers huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python notebooks/profile_activations.py &&
-        mv outputs/sae/vmae_layer${SLURM_ARRAY_TASK_ID}_dim_mean.pt outputs/sae/layer${SLURM_ARRAY_TASK_ID}_dim_mean.pt
+        python notebooks/profile_activations.py
     "

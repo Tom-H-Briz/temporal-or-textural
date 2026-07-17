@@ -24,7 +24,7 @@ ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sae import BatchTopKSAE
-from ToT_utils import MODEL_REGISTRY, gather_by_position
+from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, gather_by_position
 
 # ---------------------------------------------------------------------------
 # Output type
@@ -128,8 +128,9 @@ class DFAEngine:
         self._cls_offset = model_cfg["cls_offset"]
         self._num_frames = model_cfg["num_frames"]
 
-        self._processor = model_cfg["processor_class"].from_pretrained(model_cfg["checkpoint"])
-        self._model     = model_cfg["model_class"].from_pretrained(model_cfg["checkpoint"])
+        checkpoint      = CHECKPOINT_REGISTRY[(self.model_flag, "ssv2")]
+        self._processor = model_cfg["processor_class"].from_pretrained(checkpoint)
+        self._model     = model_cfg["model_class"].from_pretrained(checkpoint)
         self._model.to(device).eval()
         for p in self._model.parameters():
             p.requires_grad_(False)

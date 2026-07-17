@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from sae import BatchTopKSAE
 from ToT_utils import (
-    MODEL_REGISTRY, SSv2ClipDataset, _strip_brackets,
+    CHECKPOINT_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset, _strip_brackets,
     load_metadata, make_sae_splice_hook, run_inference,
 )
 
@@ -117,10 +117,11 @@ def main() -> None:
     labels = [label_map[_strip_brackets(c["template"])] for c in all_clips]
     print(f"  {len(all_clips):,} clips (sorted by video ID)")
 
-    dim_mean  = load_dim_mean(CFG, layer)
-    model_cfg = MODEL_REGISTRY[CFG["model_name"]]
-    processor = model_cfg["processor_class"].from_pretrained(model_cfg["checkpoint"])
-    model     = model_cfg["model_class"].from_pretrained(model_cfg["checkpoint"])
+    dim_mean   = load_dim_mean(CFG, layer)
+    model_cfg  = MODEL_REGISTRY[CFG["model_name"]]
+    checkpoint = CHECKPOINT_REGISTRY[(CFG["model_name"], "ssv2")]
+    processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
+    model      = model_cfg["model_class"].from_pretrained(checkpoint)
     model.to(device).eval()
     for p in model.parameters():
         p.requires_grad_(False)

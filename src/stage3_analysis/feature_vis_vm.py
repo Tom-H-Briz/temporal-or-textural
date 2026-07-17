@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
 from sae import BatchTopKSAE
-from ToT_utils import MODEL_REGISTRY, load_metadata, _strip_brackets
+from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, load_metadata, _strip_brackets
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -65,9 +65,10 @@ def _resolve_cfg(cfg: dict) -> dict:
 
 
 def load_model_and_sae(cfg: dict, resolved: dict, device: str):
-    model_cfg = MODEL_REGISTRY[cfg["model_flag"]]
-    processor = model_cfg["processor_class"].from_pretrained(model_cfg["checkpoint"])
-    model     = model_cfg["model_class"].from_pretrained(model_cfg["checkpoint"])
+    model_cfg  = MODEL_REGISTRY[cfg["model_flag"]]
+    checkpoint = CHECKPOINT_REGISTRY[(cfg["model_flag"], "ssv2")]
+    processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
+    model      = model_cfg["model_class"].from_pretrained(checkpoint)
     model.to(device).eval().requires_grad_(False)
     ckpt       = torch.load(resolved["sae_path"], weights_only=True, map_location=device)
     state_dict = ckpt["sae_state_dict"] if "sae_state_dict" in ckpt else ckpt
