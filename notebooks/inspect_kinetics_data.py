@@ -4,25 +4,26 @@ so spliced_accuracy_vm.py's K400 label loading (load_kinetics_metadata — assum
 DeepMind CSV columns + {youtube_id}_{start:06d}_{end:06d}.ext filenames) can be
 specced against real data instead of assumptions. No GPU, no model load.
 
+Stdlib only, deliberately — ToT_utils.py imports torch/transformers/av at module
+level, which fail to install on Isambard's login node (no GPU there); this script
+needs to run on the login node, where /scratch is visible, so it can't depend on it.
+
 Usage:
-    uv run python notebooks/inspect_kinetics_data.py
-    VIDEO_DIR=/scratch/... KINETICS_LABELS_CSV=/path/to/val.csv uv run python notebooks/inspect_kinetics_data.py
+    python3 notebooks/inspect_kinetics_data.py
+    VIDEO_DIR=/scratch/... KINETICS_LABELS_CSV=/path/to/val.csv python3 notebooks/inspect_kinetics_data.py
 """
 
 import csv
 import os
-import sys
 from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(Path(__file__).parent))
-
-from ToT_utils import DATASET_REGISTRY
+# Mirrors DATASET_REGISTRY["kinetics400"]["video_dir"] without importing ToT_utils.
+DEFAULT_VIDEO_DIR = ROOT / "data" / "kinetics400" / "val"
 
 CFG = {
-    "video_dir":  os.environ.get("VIDEO_DIR") or str(DATASET_REGISTRY["kinetics400"]["video_dir"]),
+    "video_dir":  os.environ.get("VIDEO_DIR") or str(DEFAULT_VIDEO_DIR),
     "labels_csv": os.environ.get("KINETICS_LABELS_CSV")
                   or str(ROOT / "data" / "kinetics400" / "annotations" / "val.csv"),
 }
@@ -94,7 +95,7 @@ def probe_filename_matching(labels_csv: Path, video_dir: Path, n: int = 5) -> No
 
 def main() -> None:
     print(f"ROOT: {ROOT}")
-    print(f"DATASET_REGISTRY['kinetics400']: {DATASET_REGISTRY['kinetics400']}")
+    print(f"video_dir default (mirrors DATASET_REGISTRY): {DEFAULT_VIDEO_DIR}")
     video_dir, labels_csv = Path(CFG["video_dir"]), Path(CFG["labels_csv"])
     probe_video_dir(video_dir)
     probe_recursive(video_dir)
