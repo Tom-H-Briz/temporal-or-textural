@@ -200,10 +200,22 @@ class SSv2ClipDataset(Dataset):
         return len(self.clip_paths)
 
     def __getitem__(self, idx: int):
-        path = self.clip_paths[idx]
-        container = av.open(str(path))
-        frames = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
-        container.close()
+        # Kinetics-400's YouTube-sourced download reliably contains some corrupted/
+        # empty clips at ~20k scale; SSv2's curated webm set doesn't hit this, but
+        # a single bad file must not crash an entire epoch — retry with the next
+        # clip (bounded) rather than propagate the decode error.
+        frames = None
+        for _ in range(5):
+            try:
+                container = av.open(str(self.clip_paths[idx]))
+                frames = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
+                container.close()
+                break
+            except Exception as e:
+                print(f"  Warning: unreadable clip {self.clip_paths[idx]} ({e}); trying next")
+                idx = (idx + 1) % len(self.clip_paths)
+        if frames is None:
+            raise RuntimeError(f"5 consecutive unreadable clips starting near idx {idx}")
 
         n = len(frames)
         indices = torch.linspace(0, n - 1, self.num_frames).long().tolist()
