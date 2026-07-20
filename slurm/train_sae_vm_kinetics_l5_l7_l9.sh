@@ -3,7 +3,7 @@
 #SBATCH --output=train_sae_vm_k400_%A_%a.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=02:00:00
+#SBATCH --time=08:00:00
 #SBATCH --array=5,7,9
 
 # Runs: vm_k400_l5_x8k64_7ep, vm_k400_l7_x8k64_7ep, vm_k400_l9_x8k64_7ep
@@ -19,12 +19,13 @@
 #   - val.csv confirmed present alongside the clips, header:
 #     label,youtube_id,time_start,time_end,split,is_cc (matches assumed DeepMind format)
 #
-# 2h ceiling, derived from measured job64 timing (sacct: L5=44min, L9=38min for 5
-# epochs/20k train clips) not the old 12h SBATCH budget, which was itself a pad, not
-# a measurement. Scaled: 7ep @ ~15,905 train clips (80% of 19,881) ~= 49min, plus an
-# estimated ~3.5min for the new spliced-accuracy pass on the held-out 3,976 clips
-# (forward-only, no backward — bounded via 5-epoch clip-pass volume, not measured
-# directly, since this code path hasn't run yet). ~53min total, ~2x slack for margin.
+# 8h ceiling. The original 2h estimate (scaled from job64's SSv2 timing) was wrong —
+# real run (job 5730629) hit only 2-3/7 epochs in 1h40m. Root cause: __getitem__ in
+# ToT_utils.py decodes every frame in the source clip before subsampling to
+# num_frames — SSv2 clips are short, K400 clips are full ~10s YouTube videos, so
+# decode cost per clip is much higher here. 8h is a rough pad on the observed rate
+# (~40-50min/epoch), not a fresh measurement — tighten once a full run completes.
+# RESUME_FROM below makes this script safe to just resubmit as-is if it gets killed.
 #
 # Eval: real clips only (condition R) — no perturbed conditions. WebM/VP8-VP9->h264
 # codec branch for Kinetics mp4s isn't built (future_work.md), so B/A/C aren't
@@ -43,6 +44,14 @@ export SAE_ALPHA=0.03
 export SAE_LOSS_FN=aux
 export SAE_EPOCHS=7
 export SAE_VAL_FRACTION=0.2
+# Self-resuming: if this exact script gets resubmitted after a time-limit kill, pick
+# up from the rolling-latest checkpoint for this layer instead of restarting epoch 1.
+# Safe on a fresh run too — file won't exist yet, so RESUME_FROM just stays unset.
+_CKPT="$HOME/temporal-or-textural/outputs/sae/sae_vmae_kinetics400_k64_x8_l${SLURM_ARRAY_TASK_ID}_job7ep.pt"
+if [ -f "$_CKPT" ]; then
+    export RESUME_FROM="$_CKPT"
+    echo "Found existing checkpoint, resuming: $_CKPT"
+fi
 export SAE_JOB_LABEL=7ep
 # DATASET_REGISTRY["kinetics400"]["video_dir"] default (data/kinetics400/val) does
 # not match the real layout — override explicitly, same as the SSv2 scripts do.

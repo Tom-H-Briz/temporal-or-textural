@@ -69,6 +69,7 @@ for _key, _env, _cast in [
     ("job_label",  "SAE_JOB_LABEL", str),
     ("epochs",     "SAE_EPOCHS",    int),
     ("layer",      "SAE_LAYER",     int),
+    ("resume_from", "RESUME_FROM",  str),
     ("val_fraction", "SAE_VAL_FRACTION", float),
 ]:
     if os.environ.get(_env):
