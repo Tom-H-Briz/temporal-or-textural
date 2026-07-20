@@ -3,7 +3,7 @@
 #SBATCH --output=train_sae_vm_k400_%A_%a.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=08:00:00
+#SBATCH --time=06:00:00
 #SBATCH --array=5,7,9
 
 # Runs: vm_k400_l5_x8k64_7ep, vm_k400_l7_x8k64_7ep, vm_k400_l9_x8k64_7ep
@@ -19,12 +19,13 @@
 #   - val.csv confirmed present alongside the clips, header:
 #     label,youtube_id,time_start,time_end,split,is_cc (matches assumed DeepMind format)
 #
-# 8h ceiling. The original 2h estimate (scaled from job64's SSv2 timing) was wrong —
+# 6h ceiling. The original 2h estimate (scaled from job64's SSv2 timing) was wrong —
 # real run (job 5730629) hit only 2-3/7 epochs in 1h40m. Root cause: __getitem__ in
 # ToT_utils.py decodes every frame in the source clip before subsampling to
 # num_frames — SSv2 clips are short, K400 clips are full ~10s YouTube videos, so
-# decode cost per clip is much higher here. 8h is a rough pad on the observed rate
-# (~40-50min/epoch), not a fresh measurement — tighten once a full run completes.
+# decode cost per clip is much higher here. WandB network-traffic step pattern
+# (checkpoint saves to $HOME) confirms ~45min/epoch -> 7ep ~= 4h55m + ~21min
+# estimated spliced-accuracy pass ~= ~5h15m, 6h leaves modest margin.
 # RESUME_FROM below makes this script safe to just resubmit as-is if it gets killed.
 #
 # Eval: real clips only (condition R) — no perturbed conditions. WebM/VP8-VP9->h264
