@@ -7,6 +7,7 @@ Output: outputs/sae/sae_{model}_k{k}_x{exp}_l{layer}_job{label}.pt
 REMEMBER!!!! set WANDB_API_KEY env var in job script before running!
 """
 
+import json
 import os
 import random
 import sys
@@ -29,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from sae import BatchTopKSAE
 from sae.losses import top_k_auxiliary_loss, reanimation_regularizer
 from ToT_utils import CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset, load_metadata
+from spliced_accuracy_vm import run_spliced_accuracy
 
 CFG = {
     "model_name":      "videomae",   # overridable via MODEL_NAME env var
@@ -40,6 +42,7 @@ CFG = {
     "batch_size":      64,
     "lr":              1e-4,
     "train_clips":     20_000,
+    "val_fraction":    None,  # None -> legacy count-based split; float -> percentage split
     "split_seed":      42,
     "num_workers":     4,
     # Output / tracking
@@ -66,6 +69,7 @@ for _key, _env, _cast in [
     ("job_label",  "SAE_JOB_LABEL", str),
     ("epochs",     "SAE_EPOCHS",    int),
     ("layer",      "SAE_LAYER",     int),
+    ("val_fraction", "SAE_VAL_FRACTION", float),
 ]:
     if os.environ.get(_env):
         CFG[_key] = _cast(os.environ[_env])
@@ -114,6 +118,17 @@ def build_loss_fn(cfg: dict):
     return partial(top_k_auxiliary_loss, penalty=cfg["aux_loss_coeff"])
 
 
+def persist_held_out_clips(val_paths: list[Path], cfg: dict) -> None:
+    # Explicit clip-id list so spliced accuracy reuses exactly this held-out set
+    # (deterministic reshuffle would also work, but a persisted list guards against
+    # video_dir drift between train time and eval time — brief's "same clips serve
+    # both jobs" requirement, made auditable rather than implicit).
+    out_path = Path(cfg["output_dir"]) / f"{cfg['model_name']}_{cfg['dataset_name']}_held_out_val_clips.json"
+    with open(out_path, "w") as f:
+        json.dump([p.name for p in val_paths], f)
+    print(f"  Held-out val clip list -> {out_path}")
+
+
 def build_split(cfg: dict) -> tuple[list[Path], list[Path]]:
     video_dir = Path(cfg["video_dir"])
     if cfg["labels_path"] is not None:
@@ -128,6 +143,13 @@ def build_split(cfg: dict) -> tuple[list[Path], list[Path]]:
 
     rng = random.Random(cfg["split_seed"])
     rng.shuffle(all_paths)
+
+    if cfg["val_fraction"] is not None:
+        n_val = round(len(all_paths) * cfg["val_fraction"])
+        train_paths, val_paths = all_paths[n_val:], all_paths[:n_val]
+        print(f"  Train: {len(train_paths):,}  Val: {len(val_paths):,}  (val_fraction={cfg['val_fraction']})")
+        persist_held_out_clips(val_paths, cfg)
+        return train_paths, val_paths
 
     if len(all_paths) < cfg["train_clips"]:
         print(f"  Warning: fewer clips than train_clips={cfg['train_clips']:,}; using all for train")
@@ -398,7 +420,7 @@ def main() -> None:
         torch.save(ckpt_payload, epoch_ckpt)
         torch.save(ckpt_payload, CFG["checkpoint"])  # rolling latest for resume
 
-        score = metrics["val/r2"] - (metrics["val/dead_features"] / CFG["nb_concepts"])
+        score = metrics["val/r2"] - 1.5 * (metrics["val/dead_features"] / CFG["nb_concepts"])
         wandb.log({"val/score": score, "epoch": epoch + 1}, step=global_step)
         if score > best_score:
             best_score = score
@@ -416,6 +438,24 @@ def main() -> None:
     ax.set_ylabel("Number of features (log scale)")
     wandb.log({"feature_firing_freq": wandb.Image(fig)}, step=global_step)
     plt.close(fig)
+
+    # Score picks the checkpoint to spend spliced-accuracy compute on; it is never
+    # reported as a quality result itself (brief: score and spliced accuracy have
+    # been observed to disagree).
+    eval_clips = None
+    if CFG["val_fraction"] is not None:
+        held_out_path = Path(CFG["output_dir"]) / f"{CFG['model_name']}_{CFG['dataset_name']}_held_out_val_clips.json"
+        eval_clips = json.load(open(held_out_path))
+
+    print(f"\nRunning spliced accuracy on best-score checkpoint ({CFG['best_checkpoint']})...")
+    result = run_spliced_accuracy(
+        sae_checkpoint=CFG["best_checkpoint"], layer=CFG["layer"], model_name=CFG["model_name"],
+        dataset_name=CFG["dataset_name"], eval_clips=eval_clips,
+    )
+    wandb.summary["spliced_accuracy_clip_weighted"]      = result["spliced_accuracy_clip_weighted"]
+    wandb.summary["spliced_accuracy_drop_clip_weighted"] = result["spliced_accuracy_drop_clip_weighted"]
+    print(f"  Spliced accuracy (clip-weighted): {result['spliced_accuracy_clip_weighted']:.4f}  "
+          f"drop={result['spliced_accuracy_drop_clip_weighted']:+.4f}")
 
     wandb.finish()
     print("\nDone.")

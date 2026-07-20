@@ -24,5 +24,6 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops pandas pyarrow transformers huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python notebooks/spliced_accuracy_vm.py --layer $SLURM_ARRAY_TASK_ID --job-label 64
+        python notebooks/spliced_accuracy_vm.py --layer $SLURM_ARRAY_TASK_ID --dataset-name ssv2 \
+            --sae-checkpoint outputs/sae/sae_layer${SLURM_ARRAY_TASK_ID}_job64.pt
     "
