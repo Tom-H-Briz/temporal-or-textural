@@ -3,7 +3,7 @@
 #SBATCH --output=train_sae_vm_ssv2_l5_x8k64_7ep_%A.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=19:00:00
+#SBATCH --time=02:30:00
 
 # Run: vm_ssv2_l5_x8k64_7ep (design brief: SAE Training Sweep — Kinetics L5/7/9 +
 # SSv2 L5 Capacity Test, 20/07/26). Follow-up to the 14/07/26 job64 capacity-vs-
@@ -18,6 +18,12 @@
 #
 # Eval: reuses the existing full SSv2 val set for spliced accuracy — same methodology
 # job64's 9.2pp figure was measured on, for direct comparability.
+#
+# 2.5h ceiling, derived from measured job64 timing (sacct: L5=44min for 5 epochs/20k
+# train clips), not the old 12h SBATCH budget (a pad, not a measurement). Scaled: 7ep
+# ~= 62min, plus an estimated ~22min for the new spliced-accuracy pass over the full
+# 24,777-clip val set x2 (baseline+spliced) — bounded via 5-epoch clip-pass volume,
+# not measured directly, since this code path hasn't run yet. ~84min total, ~1.8x slack.
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 

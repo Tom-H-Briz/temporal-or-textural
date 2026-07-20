@@ -3,7 +3,7 @@
 #SBATCH --output=train_sae_vm_k400_%A_%a.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=19:00:00
+#SBATCH --time=02:00:00
 #SBATCH --array=5,7,9
 
 # Runs: vm_k400_l5_x8k64_7ep, vm_k400_l7_x8k64_7ep, vm_k400_l9_x8k64_7ep
@@ -19,9 +19,12 @@
 #   - val.csv confirmed present alongside the clips, header:
 #     label,youtube_id,time_start,time_end,split,is_cc (matches assumed DeepMind format)
 #
-# 19h estimate, not measured — scaled from the SSv2 12h/5ep budget for 7 epochs plus
-# the now-integrated spliced-accuracy pass on the held-out 20% split. Time budget is
-# a safety ceiling only; Tom watches WandB and decides whether a run needs requeuing.
+# 2h ceiling, derived from measured job64 timing (sacct: L5=44min, L9=38min for 5
+# epochs/20k train clips) not the old 12h SBATCH budget, which was itself a pad, not
+# a measurement. Scaled: 7ep @ ~15,905 train clips (80% of 19,881) ~= 49min, plus an
+# estimated ~3.5min for the new spliced-accuracy pass on the held-out 3,976 clips
+# (forward-only, no backward — bounded via 5-epoch clip-pass volume, not measured
+# directly, since this code path hasn't run yet). ~53min total, ~2x slack for margin.
 #
 # Eval: real clips only (condition R) — no perturbed conditions. WebM/VP8-VP9->h264
 # codec branch for Kinetics mp4s isn't built (future_work.md), so B/A/C aren't

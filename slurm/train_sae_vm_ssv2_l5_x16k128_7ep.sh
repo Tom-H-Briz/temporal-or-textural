@@ -3,7 +3,7 @@
 #SBATCH --output=train_sae_vm_ssv2_l5_x16k128_7ep_%A.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=22:00:00
+#SBATCH --time=03:00:00
 
 # Run: vm_ssv2_l5_x16k128_7ep (design brief: SAE Training Sweep — Kinetics L5/7/9 +
 # SSv2 L5 Capacity Test, 20/07/26). Follow-up to the 14/07/26 job64 capacity-vs-
@@ -12,8 +12,11 @@
 # train_sae_vm_ssv2_l5_x8k64_7ep.sh for the "more training" half of the same test
 # and the decision rule for job64 supersession.
 #
-# 22h estimate, not measured — no prior x16k128-at-L5 timing exists; padded above
-# the x8k64-7ep budget for the larger dictionary's extra encode/decode cost.
+# 3h ceiling, derived the same way as train_sae_vm_ssv2_l5_x8k64_7ep.sh's ~84min
+# estimate (job64 sacct: L5=44min/5ep, plus ~22min bounded estimate for spliced
+# accuracy over the full val set) — backbone forward pass dominates either way, so
+# x16k128's larger dictionary shouldn't add much on top; padded slightly further
+# than the x8k64 script's ceiling since no x16k128-at-L5 timing exists to confirm that.
 #
 # Prereq: outputs/sae/vmae_ssv2_layer5_dim_mean.pt already exists (reused from job64
 # — dim_mean depends on model/dataset/layer only, not expansion/k).
