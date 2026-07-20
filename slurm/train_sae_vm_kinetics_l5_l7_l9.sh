@@ -12,11 +12,12 @@
 # MAE-pretraining artifacts or specifically demanded by SSv2's temporal task.
 #
 # Prereqs:
-#   - compute_dim_mean_vm_kinetics_sweep.sh completed for these layers
-#     (writes outputs/sae/vmae_kinetics400_layer{5,7,9}_dim_mean.pt)
-#   - Kinetics-400 val clips staged at DATASET_REGISTRY["kinetics400"]["video_dir"]
-#   - Kinetics annotation CSV staged at data/kinetics400/annotations/val.csv
-#     (DeepMind format: label,youtube_id,time_start,time_end,split)
+#   - compute_dim_mean_vm_kinetics_sweep.sh completed for these layers, using the
+#     same VIDEO_DIR override as below (writes vmae_kinetics400_layer{5,7,9}_dim_mean.pt)
+#   - VIDEO_DIR confirmed via inspect_kinetics_data.py: flat directory, 19,881 clips,
+#     {youtube_id}_{start:06d}_{end:06d}.mp4 filenames — matches assumed convention
+#   - val.csv confirmed present alongside the clips, header:
+#     label,youtube_id,time_start,time_end,split,is_cc (matches assumed DeepMind format)
 #
 # 19h estimate, not measured — scaled from the SSv2 12h/5ep budget for 7 epochs plus
 # the now-integrated spliced-accuracy pass on the held-out 20% split. Time budget is
@@ -40,9 +41,12 @@ export SAE_LOSS_FN=aux
 export SAE_EPOCHS=7
 export SAE_VAL_FRACTION=0.2
 export SAE_JOB_LABEL=7ep
-# No VIDEO_DIR/LABELS_PATH override — DATASET_REGISTRY["kinetics400"] resolves
-# video_dir; labels come from KINETICS_LABELS_CSV (spliced_accuracy_vm.py default),
-# not LABELS_PATH/VALIDATION_PATH (those are SSv2-only, unused for this dataset).
+# DATASET_REGISTRY["kinetics400"]["video_dir"] default (data/kinetics400/val) does
+# not match the real layout — override explicitly, same as the SSv2 scripts do.
+export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
+# val.csv already lives alongside the clips (the downloader tool's own manifest) —
+# use it directly rather than staging a separate copy under data/kinetics400/.
+export KINETICS_LABELS_CSV="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset/val.csv"
 export DIM_MEAN_PATH="$HOME/temporal-or-textural/outputs/sae/vmae_kinetics400_layer${SLURM_ARRAY_TASK_ID}_dim_mean.pt"
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"

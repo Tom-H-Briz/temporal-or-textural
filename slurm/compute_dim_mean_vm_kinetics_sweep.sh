@@ -6,14 +6,16 @@
 #SBATCH --time=01:30:00
 #SBATCH --array=5,7,9
 
-# Prereq: Kinetics-400 val clips transferred to data/kinetics400/val/ (separate task).
-# No VIDEO_DIR/LABELS_PATH override here — DATASET_REGISTRY["kinetics400"] resolves
-# video_dir, and labels_path is None (no SSv2-style JSON), by design.
+# Prereq: Kinetics-400 val clips staged on scratch (confirmed via
+# inspect_kinetics_data.py: flat directory, 19,881 clips, not under data/kinetics400/val/
+# — DATASET_REGISTRY's default doesn't match, hence the VIDEO_DIR override below).
+# labels_path is None (no SSv2-style JSON) by design; this script never needs labels.
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 
 export MODEL_NAME=videomae
 export DATASET_NAME=kinetics400
+export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
 export SAE_LAYER=$SLURM_ARRAY_TASK_ID
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
