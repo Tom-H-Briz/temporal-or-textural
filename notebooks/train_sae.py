@@ -389,7 +389,16 @@ def main() -> None:
         start_epoch = ckpt["epoch"] + 1
         print(f"  Resumed from {CFG['resume_from']} — starting at epoch {start_epoch}")
 
-    best_score  = float("-inf")
+    # best_score must survive a resume — resume_from is the rolling *latest* epoch,
+    # not the best one, so recover best_score/best_epoch from best_checkpoint
+    # separately, or a post-resume epoch could silently overwrite a genuinely
+    # better pre-kill checkpoint just for starting from -inf again.
+    best_score, best_epoch = float("-inf"), None
+    if CFG["resume_from"] is not None and Path(CFG["best_checkpoint"]).exists():
+        best_ckpt = torch.load(CFG["best_checkpoint"], map_location=CFG["device"], weights_only=True)
+        best_score, best_epoch = best_ckpt.get("score", float("-inf")), best_ckpt["epoch"] + 1
+        print(f"  Recovered best score={best_score:.4f} from epoch {best_epoch}")
+
     global_step = 0
     for epoch in range(start_epoch, CFG["epochs"]):
         print(f"\nEpoch {epoch + 1}/{CFG['epochs']}")
@@ -409,27 +418,29 @@ def main() -> None:
             f"  L0={metrics['val/l0']:.1f}  Dead={metrics['val/dead_features']}"
         )
 
+        score = metrics["val/r2"] - 1.5 * (metrics["val/dead_features"] / CFG["nb_concepts"])
+        wandb.log({"val/score": score, "epoch": epoch + 1}, step=global_step)
+
         ckpt_payload = {
             "epoch":                epoch,
             "sae_state_dict":       sae.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "running_threshold":    sae.running_threshold,
             "sae_k":                SAE_CONFIG["k"],
+            "score":                score,  # lets a resumed run recover best_score/best_epoch
         }
         epoch_ckpt = str(Path(CFG["output_dir"]) / f"{run_name}_epoch{epoch + 1}.pt")
         assert CFG["dataset_name"] in epoch_ckpt and CFG["dataset_name"] in CFG["checkpoint"]
         torch.save(ckpt_payload, epoch_ckpt)
         torch.save(ckpt_payload, CFG["checkpoint"])  # rolling latest for resume
 
-        score = metrics["val/r2"] - 1.5 * (metrics["val/dead_features"] / CFG["nb_concepts"])
-        wandb.log({"val/score": score, "epoch": epoch + 1}, step=global_step)
         if score > best_score:
-            best_score = score
+            best_score, best_epoch = score, epoch + 1
             assert CFG["dataset_name"] in CFG["best_checkpoint"]
             torch.save(ckpt_payload, CFG["best_checkpoint"])
             print(f"  Saved epoch {epoch + 1}  ★ new best (score={score:.4f})")
         else:
-            print(f"  Saved epoch {epoch + 1}  (best score={best_score:.4f})")
+            print(f"  Saved epoch {epoch + 1}  (best score={best_score:.4f} @ epoch {best_epoch})")
 
     val_tokens   = len(val_paths) * CFG["num_patch_tokens"]
     firing_rate  = feature_counts.float() / val_tokens
@@ -442,13 +453,20 @@ def main() -> None:
 
     # Score picks the checkpoint to spend spliced-accuracy compute on; it is never
     # reported as a quality result itself (brief: score and spliced accuracy have
-    # been observed to disagree).
+    # been observed to disagree). Logged here so which checkpoint spliced accuracy
+    # ran against is visible in WandB itself, not only in a SLURM .out log.
+    wandb.summary["best_epoch"] = best_epoch
+    wandb.summary["best_score"] = best_score
+
     eval_clips = None
     if CFG["val_fraction"] is not None:
         held_out_path = Path(CFG["output_dir"]) / f"{CFG['model_name']}_{CFG['dataset_name']}_held_out_val_clips.json"
         eval_clips = json.load(open(held_out_path))
 
-    print(f"\nRunning spliced accuracy on best-score checkpoint ({CFG['best_checkpoint']})...")
+    print(
+        f"\nRunning spliced accuracy on best-score checkpoint: epoch {best_epoch} "
+        f"(score={best_score:.4f}) -> {CFG['best_checkpoint']}"
+    )
     result = run_spliced_accuracy(
         sae_checkpoint=CFG["best_checkpoint"], layer=CFG["layer"], model_name=CFG["model_name"],
         dataset_name=CFG["dataset_name"], eval_clips=eval_clips,
