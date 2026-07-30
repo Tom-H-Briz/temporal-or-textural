@@ -10,6 +10,15 @@
 # SAE retrain cycle. Compute itself is short (~7-8min: 3000/8=375 batches at the
 # ~1.14s/batch rate observed in the earlier full spliced-accuracy run); the 30min
 # ceiling mostly pads for model download + apptainer/pip startup, not the inference.
+#
+# transformers pinned to 5.5.0 — an unpinned install drifted past a breaking change
+# (somewhere between 5.5.0 and 5.8.0) in VideoMAE's attention bias parameter names
+# (q_bias/v_bias -> query.bias/key.bias/value.bias), silently discarding this
+# checkpoint's trained query/value biases on load and replacing them with default
+# init. 5.5.0 confirmed correct (verified against the raw source directly); 5.8.0+
+# confirmed broken. TimeSformer's fused-qkv attention is a different code path,
+# unaffected either way. torch>=2.4 required by 5.5.0 — should be satisfied by
+# this container.
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 
@@ -23,7 +32,7 @@ apptainer exec --nv \
     --bind $SCRATCHDIR:$SCRATCHDIR \
     $SIF \
     bash -c "
-        pip install --quiet av einops transformers huggingface-hub tqdm &&
+        pip install --quiet av einops "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
         python notebooks/check_kinetics_baseline.py --n-clips 3000
     "
