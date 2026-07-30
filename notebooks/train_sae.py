@@ -392,6 +392,16 @@ def main() -> None:
         sae.running_threshold = ckpt.get("running_threshold")
         start_epoch = ckpt["epoch"] + 1
         print(f"  Resumed from {CFG['resume_from']} — starting at epoch {start_epoch}")
+        # A checkpoint at/past CFG["epochs"] means RESUME_FROM points at a stale
+        # run (e.g. leftover from before a code/data fix) being mistaken for
+        # in-progress work, not a real resume — fail loudly here rather than
+        # silently skip the training loop and crash later on an unset variable.
+        assert start_epoch < CFG["epochs"], (
+            f"resume_from checkpoint is already at epoch {start_epoch}/{CFG['epochs']} — "
+            f"nothing to resume. If this is meant to be a fresh run (e.g. after a code "
+            f"fix), delete or move aside the stale checkpoint at {CFG['resume_from']} "
+            f"and the matching _best/_epoch* files, then resubmit."
+        )
 
     # best_score must survive a resume — resume_from is the rolling *latest* epoch,
     # not the best one, so recover best_score/best_epoch from best_checkpoint
