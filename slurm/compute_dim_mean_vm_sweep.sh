@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --time=01:30:00
-#SBATCH --array=5,9
+#SBATCH --array=5,7,9
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 
@@ -12,7 +12,9 @@ export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
 
-export MODEL_NAME=videomae          # VM-only job — prereq for train_sae_vm_l5_l9.sh
+export MODEL_NAME=videomae          # VM-only job — prereq for train_sae_vm_ssv2_l5_l7_l9.sh
+                                     # and train_sae_vm_ssv2_x16k128_l5_l7_l9.sh (both configs
+                                     # share the same dim_mean — expansion/k don't affect it)
 export SAE_LAYER=$SLURM_ARRAY_TASK_ID
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
