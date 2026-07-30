@@ -162,18 +162,30 @@ def load_eval_set(
 
 
 def run_spliced_accuracy(
-    *, sae_checkpoint: str, layer: int, model_name: str, dataset_name: str,
-    eval_clips: list[str] | None = None, cfg: dict = CFG,
+    *, sae_checkpoint: str | None = None, layer: int | None = None, model_name: str,
+    dataset_name: str, eval_clips: list[str] | None = None, baseline_only: bool = False,
+    cfg: dict = CFG,
 ) -> dict:
     """Baseline vs spliced clip-weighted accuracy for one SAE checkpoint. Raw per-clip
     results are written to CSV before the summary scalars are computed (two-stage
     extraction discipline), then baseline/spliced/drop are returned for the caller
-    (e.g. train_sae.py) to log to WandB as a prominent summary metric."""
+    (e.g. train_sae.py) to log to WandB as a prominent summary metric.
+
+    baseline_only=True skips SAE/dim_mean loading and the splice pass entirely —
+    same model loading, same load_eval_set, same frame sampler, just the baseline
+    half. For sanity-checking eval-set/sampling changes against a real baseline
+    number without needing a (possibly not-yet-retrained) SAE checkpoint.
+    """
+    if not baseline_only:
+        assert sae_checkpoint is not None and layer is not None, (
+            "sae_checkpoint and layer are required unless baseline_only=True"
+        )
     device  = cfg["device"]
     out_dir = Path(cfg["output_dir"]); out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Device: {device}  Layer: {layer}  Dataset: {dataset_name}  Checkpoint: {sae_checkpoint}")
+    print(f"Device: {device}  Dataset: {dataset_name}" + (
+        "  (baseline-only)" if baseline_only else f"  Layer: {layer}  Checkpoint: {sae_checkpoint}"
+    ))
 
-    dim_mean   = load_dim_mean(cfg, dataset_name, layer)
     model_cfg  = MODEL_REGISTRY[model_name]
     checkpoint = CHECKPOINT_REGISTRY[(model_name, dataset_name)]
     processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
@@ -194,7 +206,14 @@ def run_spliced_accuracy(
 
     print("Running baseline (no splice)...")
     baseline_preds, _ = run_inference(model, loader, device)
+    n = len(labels)
+    b_overall = sum(p == l for p, l in zip(baseline_preds, labels)) / n
 
+    if baseline_only:
+        print(f"\n  Baseline (clip-weighted): {b_overall:.4f}  (n={n:,})")
+        return {"baseline_accuracy_clip_weighted": b_overall}
+
+    dim_mean = load_dim_mean(cfg, dataset_name, layer)
     print(f"Loading SAE for layer {layer}...")
     sae    = load_sae(cfg, sae_checkpoint, dim_mean)
     hook_h = model_cfg["layer_getter"](model, layer).register_forward_hook(
@@ -208,9 +227,7 @@ def run_spliced_accuracy(
     baseline = per_class_accuracy(baseline_preds, labels, id2label)
     spliced  = per_class_accuracy(spliced_preds,  labels, id2label)
 
-    n = len(labels)
-    b_overall = sum(p == l for p, l in zip(baseline_preds, labels)) / n
-    s_overall = sum(p == l for p, l in zip(spliced_preds,  labels)) / n
+    s_overall = sum(p == l for p, l in zip(spliced_preds, labels)) / n
     print(f"\n  Clip-weighted:  baseline={b_overall:.4f}  spliced={s_overall:.4f}  "
           f"drop={b_overall - s_overall:+.4f}")
 
@@ -238,18 +255,20 @@ def run_spliced_accuracy(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--layer", type=int, required=True)
+    parser.add_argument("--layer", type=int, default=None)
     parser.add_argument("--dataset-name", type=str, required=True, choices=list(DATASET_REGISTRY))
-    parser.add_argument("--sae-checkpoint", type=str, required=True)
+    parser.add_argument("--sae-checkpoint", type=str, default=None)
     parser.add_argument("--eval-clips", type=str, default=None,
                          help="Path to a JSON list of clip filenames (e.g. a held-out "
                               "split); omit to use every clip found for the dataset")
+    parser.add_argument("--baseline-only", action="store_true",
+                         help="Skip SAE/dim_mean loading and the splice pass entirely")
     args = parser.parse_args()
 
     eval_clips = json.load(open(args.eval_clips)) if args.eval_clips else None
     run_spliced_accuracy(
         sae_checkpoint=args.sae_checkpoint, layer=args.layer, model_name=CFG["model_name"],
-        dataset_name=args.dataset_name, eval_clips=eval_clips,
+        dataset_name=args.dataset_name, eval_clips=eval_clips, baseline_only=args.baseline_only,
     )
 
 
