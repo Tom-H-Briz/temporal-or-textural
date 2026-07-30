@@ -20,7 +20,10 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from ToT_utils import CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset, load_metadata
+from ToT_utils import (
+    CHECKPOINT_REGISTRY, DATASET_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY,
+    SSv2ClipDataset, load_metadata,
+)
 
 CFG = {
     "model_name":      "videomae",
@@ -97,7 +100,8 @@ def main():
         paths = paths[: CFG["n_clips"]]
     print(f"  Using {len(paths)} clips")
 
-    dataset = SSv2ClipDataset(paths, processor, CFG["num_frames"])
+    dataset = SSv2ClipDataset(paths, processor, CFG["num_frames"],
+                              frame_sampler=FRAME_SAMPLERS[CFG["dataset_name"]])
     loader  = DataLoader(
         dataset, batch_size=CFG["batch_size"], shuffle=False,
         num_workers=CFG["num_workers"],

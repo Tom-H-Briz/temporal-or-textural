@@ -33,8 +33,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from sae import BatchTopKSAE
 from ToT_utils import (
-    CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset,
-    _strip_brackets, load_metadata, make_sae_splice_hook, run_inference,
+    CHECKPOINT_REGISTRY, DATASET_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY,
+    SSv2ClipDataset, _strip_brackets, load_metadata, make_sae_splice_hook, run_inference,
 )
 
 CFG = {
@@ -187,7 +187,8 @@ def run_spliced_accuracy(
     video_dir = Path(os.environ.get("VIDEO_DIR") or DATASET_REGISTRY[dataset_name]["video_dir"])
     paths, labels, id2label = load_eval_set(cfg, dataset_name, video_dir, model, eval_clips)
 
-    dataset = SSv2ClipDataset(paths, processor, cfg["num_frames"], labels=labels)
+    dataset = SSv2ClipDataset(paths, processor, cfg["num_frames"], labels=labels,
+                              frame_sampler=FRAME_SAMPLERS[dataset_name])
     loader  = DataLoader(dataset, batch_size=cfg["batch_size"],
                          num_workers=cfg["num_workers"], pin_memory=True, shuffle=False)
 

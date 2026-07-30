@@ -29,7 +29,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from sae import BatchTopKSAE
 from sae.losses import top_k_auxiliary_loss, reanimation_regularizer
-from ToT_utils import CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset, load_metadata
+from ToT_utils import (
+    CHECKPOINT_REGISTRY, DATASET_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY,
+    SSv2ClipDataset, load_metadata,
+)
 from spliced_accuracy_vm import run_spliced_accuracy
 
 CFG = {
@@ -165,8 +168,9 @@ def build_split(cfg: dict) -> tuple[list[Path], list[Path]]:
 def build_loaders(
     train_paths: list[Path], val_paths: list[Path], processor, cfg: dict
 ) -> tuple[DataLoader, DataLoader]:
-    train_ds = SSv2ClipDataset(train_paths, processor, cfg["num_frames"])
-    val_ds   = SSv2ClipDataset(val_paths,   processor, cfg["num_frames"])
+    frame_sampler = FRAME_SAMPLERS[cfg["dataset_name"]]
+    train_ds = SSv2ClipDataset(train_paths, processor, cfg["num_frames"], frame_sampler=frame_sampler)
+    val_ds   = SSv2ClipDataset(val_paths,   processor, cfg["num_frames"], frame_sampler=frame_sampler)
 
     train_loader = DataLoader(
         train_ds, batch_size=cfg["batch_size"], shuffle=True,

@@ -175,12 +175,46 @@ def run_inference(
     return all_preds, all_labels
 
 
+def sample_frames_ssv2(n: int, num_frames: int) -> list[int]:
+    """VideoMAE's SSv2 finetuning protocol: num_frames spread evenly across the
+    whole clip (uniform sampling) — matches SSv2's short clips closely."""
+    return torch.linspace(0, n - 1, num_frames).long().tolist()
+
+
+def sample_frames_kinetics(n: int, num_frames: int, frame_sample_rate: int = 4) -> list[int]:
+    """VideoMAE's Kinetics-400 finetuning/eval protocol: dense sampling — a single,
+    deterministic num_frames*frame_sample_rate-frame window (center-positioned),
+    taken from the clip rather than stretched across it. Default 16*4=64 frames
+    (~2.1-2.56s at typical fps). Falls back to sample_frames_ssv2 if the clip is
+    shorter than the window — same clamping behavior as the reference implementation.
+    """
+    window = num_frames * frame_sample_rate
+    if window >= n:
+        return sample_frames_ssv2(n, num_frames)
+    start = (n - window) // 2
+    return torch.linspace(start, start + window - 1, num_frames).long().tolist()
+
+
+# dataset_name -> frame_sampler. Single lookup shared by every caller that builds
+# an SSv2ClipDataset for a specific dataset, so the sampler choice can't drift
+# between train_sae.py / spliced_accuracy_vm.py / profile_activations.py.
+FRAME_SAMPLERS = {
+    "ssv2":         sample_frames_ssv2,
+    "kinetics400":  sample_frames_kinetics,
+}
+
+
 class SSv2ClipDataset(Dataset):
     """
-    Loads SSv2 WebM clips from explicit paths.
+    Loads video clips from explicit paths.
 
     With labels: __getitem__ returns (pixel_values, label) — for classification.
     Without labels: __getitem__ returns pixel_values — for SAE training.
+
+    frame_sampler: (n_decoded_frames, num_frames) -> frame indices to keep. Defaults
+    to sample_frames_ssv2 (uniform, correct for SSv2/TimeSformer callers that predate
+    the dataset axis and never pass one). Kinetics callers must pass
+    sample_frames_kinetics explicitly — getting this wrong is silent, not an error.
     """
 
     def __init__(
@@ -189,12 +223,14 @@ class SSv2ClipDataset(Dataset):
         processor,
         num_frames: int,
         labels: list[int] | None = None,
+        frame_sampler=sample_frames_ssv2,
     ) -> None:
         assert labels is None or len(labels) == len(clip_paths)
         self.clip_paths = clip_paths
         self.processor = processor
         self.num_frames = num_frames
         self.labels = labels
+        self.frame_sampler = frame_sampler
 
     def __len__(self) -> int:
         return len(self.clip_paths)
@@ -218,7 +254,7 @@ class SSv2ClipDataset(Dataset):
             raise RuntimeError(f"5 consecutive unreadable clips starting near idx {idx}")
 
         n = len(frames)
-        indices = torch.linspace(0, n - 1, self.num_frames).long().tolist()
+        indices = self.frame_sampler(n, self.num_frames)
         sampled = [frames[i] for i in indices]
 
         pixel_values = self.processor(sampled, return_tensors="pt")["pixel_values"].squeeze(0)
