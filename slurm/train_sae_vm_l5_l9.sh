@@ -32,7 +32,7 @@ apptainer exec --nv \
     --bind $SCRATCHDIR:$SCRATCHDIR \
     $SIF \
     bash -c "
-        pip install --quiet av einops wandb pandas pyarrow matplotlib transformers huggingface-hub tqdm &&
+        pip install --quiet av einops wandb pandas pyarrow matplotlib "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
         python notebooks/train_sae.py &&
         cp outputs/sae/sae_vmae_ssv2_k64_x8_l${SLURM_ARRAY_TASK_ID}_job64_best.pt outputs/sae/sae_layer${SLURM_ARRAY_TASK_ID}_job64.pt

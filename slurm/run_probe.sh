@@ -18,7 +18,7 @@ apptainer exec --nv \
     --bind $SCRATCHDIR:$SCRATCHDIR \
     $SIF \
     bash -c "
-        pip install --quiet av einops wandb pandas pyarrow matplotlib transformers huggingface-hub tqdm scikit-learn &&
+        pip install --quiet av einops wandb pandas pyarrow matplotlib "transformers==5.5.0" huggingface-hub tqdm scikit-learn &&
         cd $HOME/temporal-or-textural &&
         python notebooks/make_probe_config.py &&
         python notebooks/layer_selector.py

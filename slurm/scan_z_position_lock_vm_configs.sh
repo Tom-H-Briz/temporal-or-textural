@@ -28,7 +28,7 @@ apptainer exec --nv \
     --bind $SCRATCHDIR:$SCRATCHDIR \
     $SIF \
     bash -c "
-        pip install --quiet av einops pandas pyarrow transformers huggingface-hub tqdm &&
+        pip install --quiet av einops pandas pyarrow "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
         python src/stage3_analysis/z_position_lock_extraction.py --model videomae --layer $LAYER --job-label $JOB --sae-k $K
     "

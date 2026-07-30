@@ -22,7 +22,7 @@ apptainer exec --nv \
     --bind $SCRATCHDIR:$SCRATCHDIR \
     $SIF \
     bash -c "
-        pip install --quiet av einops pandas pyarrow transformers huggingface-hub tqdm &&
+        pip install --quiet av einops pandas pyarrow "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
         python notebooks/spliced_accuracy_vm.py --layer $SLURM_ARRAY_TASK_ID --dataset-name ssv2 \
             --sae-checkpoint outputs/sae/sae_layer${SLURM_ARRAY_TASK_ID}_job64.pt

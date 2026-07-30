@@ -18,7 +18,7 @@ apptainer exec --nv \
     --bind $SCRATCHDIR:$SCRATCHDIR \
     $SIF \
     bash -c "
-        pip install --quiet av einops wandb pandas pyarrow matplotlib transformers huggingface-hub tqdm &&
+        pip install --quiet av einops wandb pandas pyarrow matplotlib "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
         echo '=== VideoMAE ===' &&
         python notebooks/train_sae_smoketest.py &&

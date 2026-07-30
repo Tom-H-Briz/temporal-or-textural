@@ -18,7 +18,7 @@ apptainer exec --nv \
     --bind $SCRATCHDIR:$SCRATCHDIR \
     $SIF \
     bash -c "
-        pip install --quiet av einops pandas pyarrow transformers huggingface-hub tqdm &&
+        pip install --quiet av einops pandas pyarrow "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
         echo '=== run_ablation (L5 clean8) ===' &&
         python src/stage3_analysis/run_ablation.py --layer 5 --job-label 64 --sae-k 64 --run-tag l5_clean8_150726 &&

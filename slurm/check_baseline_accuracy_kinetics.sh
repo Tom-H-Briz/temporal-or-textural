@@ -34,5 +34,5 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python notebooks/check_kinetics_baseline.py --n-clips 3000
+        python notebooks/check_baseline_accuracy.py --dataset-name kinetics400 --n-clips 3000
     "

@@ -4,8 +4,11 @@ run_spliced_accuracy pipeline used for the real spliced-accuracy runs (baseline_
 skips SAE/dim_mean loading and the splice pass), so this number is directly
 comparable rather than a separately-reimplemented approximation of it.
 
+Dataset-agnostic — pass --dataset-name (defaults to kinetics400).
+
 Usage:
-    uv run python notebooks/check_kinetics_baseline.py --n-clips 3000
+    uv run python notebooks/check_baseline_accuracy.py --dataset-name kinetics400 --n-clips 3000
+    uv run python notebooks/check_baseline_accuracy.py --dataset-name ssv2 --n-clips 3000
 """
 
 import argparse
