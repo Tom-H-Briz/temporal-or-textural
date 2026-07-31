@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=tot_perturb_acc_vm
-#SBATCH --output=run_perturb_accuracy_vm_%j.out
+#SBATCH --job-name=tot_perturb_acc_vm_ssv2
+#SBATCH --output=run_perturb_accuracy_vm_ssv2_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --time=02:00:00

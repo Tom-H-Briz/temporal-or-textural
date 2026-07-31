@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=tot_dfa_tubelet
-#SBATCH --output=dfa_per_tubelet_mass_%A_%a.out
+#SBATCH --job-name=tot_z_pos_lock_vm_ssv2
+#SBATCH --output=z_position_lock_vm_ssv2_%A_%a.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=04:00:00
+#SBATCH --time=00:30:00
 #SBATCH --array=5,7,9
 
 # SSv2 arm, post-30/07 bias fix + checkpoint-resolution consolidation — all three
 # layers at k=64/x8/job7ep (resolve_sae_checkpoint's defaults), matching the TF
-# array pattern (run_dfa_per_tubelet_mass_tf.sh). This is the first successful
-# end-to-end run for either dataset, not a regression check — see project memory
+# array pattern (run_z_position_lock_tf.sh). This is the first successful end-to-end
+# run for either dataset, not a regression check — see project memory
 # project_dfa_pipeline_first_run_not_regression.md.
 
 source $HOME/.tokens
@@ -27,5 +27,5 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops pandas pyarrow "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python src/stage3_analysis/dfa_per_tubelet_mass.py --model videomae --layer $SLURM_ARRAY_TASK_ID
+        python src/stage3_analysis/z_position_lock_extraction.py --model videomae --layer $SLURM_ARRAY_TASK_ID
     "
