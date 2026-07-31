@@ -8,11 +8,11 @@
 
 # Same three VM SAE configs as scan_dfa_per_tubelet_mass_vm_configs.sh — see that
 # script's comment for why this is indexed rather than a plain layer array.
+# job_label is "7ep" for all post-30/07 checkpoints (epoch-count suffix, no longer
+# k/expansion-encoding like the old "64"/"128_16x" strings) — only sae_k varies here.
 LAYERS=(5 9 7)
-JOBS=(64 64 128_16x)
 KS=(64 64 128)
 LAYER=${LAYERS[$SLURM_ARRAY_TASK_ID]}
-JOB=${JOBS[$SLURM_ARRAY_TASK_ID]}
 K=${KS[$SLURM_ARRAY_TASK_ID]}
 
 source $HOME/.tokens
@@ -30,5 +30,5 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops pandas pyarrow "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python src/stage3_analysis/z_position_lock_extraction.py --model videomae --layer $LAYER --job-label $JOB --sae-k $K
+        python src/stage3_analysis/z_position_lock_extraction.py --model videomae --layer $LAYER --job-label 7ep --sae-k $K
     "

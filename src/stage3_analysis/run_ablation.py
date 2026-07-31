@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT / "notebooks"))
 
 from stage3_analysis.dfa_engine import DFAEngine, _preprocess_clip
 from stage3_analysis.ablation_targets import TARGETS
+from ToT_utils import resolve_sae_checkpoint
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -43,20 +44,6 @@ CFG = {
     "video_dir":   os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "out_dir":     ROOT / "outputs/analysis/scaffold_ablation",
 }
-
-
-def _resolve_cfg(layer: int, job_label: str, sae_k: int) -> dict:
-    """VM SAE checkpoint for the given layer/job_label — layer is a caller
-    argument now (was hardcoded to 7), matching the extraction scripts'
-    _resolve_cfg convention."""
-    sae_path = ROOT / "outputs" / "sae" / f"sae_layer{layer}_job{job_label}.pt"
-    dim_mean = ROOT / "outputs" / "sae" / f"layer{layer}_dim_mean.pt"
-    if not sae_path.exists():
-        raise FileNotFoundError(f"SAE not found: {sae_path}")
-    if not dim_mean.exists():
-        raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean),
-            "sae_k": sae_k, "layer": layer}
 
 
 def _resolve_source_parquet(mass_delta_dir: Path, layer: int, job_label: str, sae_k: int) -> Path:
@@ -129,7 +116,7 @@ def run_clip(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--layer", type=int, default=7)
-    parser.add_argument("--job-label", type=str, default="64")
+    parser.add_argument("--job-label", type=str, default="7ep")
     parser.add_argument("--sae-k", type=int, default=64)
     parser.add_argument("--run-tag", type=str, default=None,
                          help="defaults to l{layer}_job{job-label}_k{sae-k} if omitted")
@@ -140,10 +127,10 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     dry_run = args.dry_run
-    resolved = _resolve_cfg(args.layer, args.job_label, args.sae_k)
+    resolved = resolve_sae_checkpoint("videomae", args.layer, sae_k=args.sae_k, job_label=args.job_label)
     source_parquet = _resolve_source_parquet(CFG["mass_delta_dir"], args.layer, args.job_label, args.sae_k)
     run_tag = args.run_tag or f"l{args.layer}_job{args.job_label}_k{args.sae_k}"
-    cfg = {**CFG, **resolved, "source_parquet": source_parquet, "run_tag": run_tag}
+    cfg = {**CFG, **resolved, "layer": args.layer, "source_parquet": source_parquet, "run_tag": run_tag}
     out_dir: Path = cfg["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT / "notebooks"))
 
 from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
-from ToT_utils import MODEL_REGISTRY, N_SPATIAL, _strip_brackets, load_metadata
+from ToT_utils import MODEL_REGISTRY, N_SPATIAL, _strip_brackets, load_metadata, resolve_sae_checkpoint
 from stage3_analysis.dfa_engine import DFAEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -57,36 +57,6 @@ CFG = {
     "sl_csv_path":     str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
     "output_dir":      str(ROOT / "outputs/analysis/dfa_per_tubelet_mass"),
 }
-
-
-def _resolve_cfg(model_flag: str, layer: int, job_label: str = "64", sae_k_default: int = 64) -> dict:
-    """job_label/sae_k_default only drive the videomae branch — TF's job label is always
-    `layer` by its own established checkpoint-naming convention."""
-    sae_dir = ROOT / "outputs" / "sae"
-    if model_flag == "videomae":
-        sae_path = sae_dir / f"sae_layer{layer}_job{job_label}.pt"
-        dim_mean = sae_dir / f"layer{layer}_dim_mean.pt"
-    else:  # timesformer
-        job_label = str(layer)
-        matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
-        if len(matches) != 1:
-            raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
-        sae_path = matches[0]
-        dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
-    if not sae_path.exists():
-        raise FileNotFoundError(f"{model_flag} SAE not found: {sae_path}")
-    if not dim_mean.exists():
-        raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-
-    # nb_concepts (dict_size) and sae_k always come from the checkpoint's actual weights,
-    # never hardcoded — different job labels can carry different k/expansion (e.g. VM's
-    # job128_16x is k=128 at 16x expansion vs job64's k=64 at 8x).
-    ckpt = torch.load(sae_path, map_location="cpu", weights_only=True)
-    state_dict  = ckpt["sae_state_dict"] if isinstance(ckpt, dict) and "sae_state_dict" in ckpt else ckpt
-    nb_concepts = state_dict["dictionary._weights"].shape[0]
-    ckpt_sae_k  = ckpt.get("sae_k") if isinstance(ckpt, dict) else None
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean),
-            "sae_k": ckpt_sae_k or sae_k_default, "nb_concepts": nb_concepts, "job_label": job_label}
 
 
 def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
@@ -228,11 +198,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=["videomae", "timesformer"], required=True)
     parser.add_argument("--layer", type=int, required=True)
-    parser.add_argument("--job-label", type=str, default="64", help="videomae only")
+    parser.add_argument("--job-label", type=str, default="7ep", help="videomae only")
     parser.add_argument("--sae-k", type=int, default=64, help="videomae fallback if checkpoint lacks sae_k")
     args = parser.parse_args()
 
-    resolved = _resolve_cfg(args.model, args.layer, args.job_label, args.sae_k)
+    # dataset_name left at resolve_sae_checkpoint's default ("ssv2") — K400 clip/label
+    # loading (load_clips below) isn't wired up yet, so a --dataset flag here would be
+    # a footgun; that's separate follow-up work, not part of this consolidation pass.
+    resolved = resolve_sae_checkpoint(args.model, args.layer, sae_k=args.sae_k, job_label=args.job_label)
     cfg      = {**CFG, "model_flag": args.model, "layer": args.layer, **resolved}
 
     num_positions  = MODEL_REGISTRY[args.model]["num_patch_tokens"] // N_SPATIAL

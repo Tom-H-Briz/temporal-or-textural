@@ -57,6 +57,59 @@ CHECKPOINT_REGISTRY: dict[tuple[str, str], str] = {
     ("videomae", "kinetics400"):  "MCG-NJU/videomae-base-finetuned-kinetics",
 }
 
+# k -> expansion. This project has only ever trained these two SAE configs — not a
+# general rule, just the two points this pipeline has data for.
+_SAE_EXPANSION_FOR_K = {64: 8, 128: 16}
+
+
+def resolve_sae_checkpoint(
+    model_flag: str,
+    layer: int,
+    dataset_name: str = "ssv2",
+    sae_k: int = 64,
+    job_label: str = "7ep",
+) -> dict:
+    """Locate an SAE checkpoint + its dim_mean under the current (post-30/07
+    bias-fix) naming scheme, and read nb_concepts/sae_k from the checkpoint's own
+    weights — never hardcoded, since k64/x8 and k128/x16 share no fixed size.
+
+    Was duplicated near-identically across dfa_per_tubelet_mass.py,
+    z_position_lock_extraction.py, dfa_mass_delta_vm.py, and run_ablation.py, all
+    still pointed at the pre-fix filename scheme (now only in outputs/sae/legacy/)
+    — same precedent as gather_by_position: one shared function beats N copies
+    that can go stale in lockstep.
+    """
+    sae_dir = ROOT / "outputs" / "sae"
+    if model_flag == "videomae":
+        expansion = _SAE_EXPANSION_FOR_K[sae_k]
+        sae_path = sae_dir / f"sae_vmae_{dataset_name}_k{sae_k}_x{expansion}_l{layer}_job{job_label}_best.pt"
+        dim_mean = sae_dir / f"vmae_{dataset_name}_layer{layer}_dim_mean.pt"
+    elif model_flag == "timesformer":
+        assert dataset_name == "ssv2", "TimeSformer has no non-SSv2 checkpoints in this project"
+        job_label = str(layer)  # TF's own established convention — layer is the job label
+        matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
+        if len(matches) != 1:
+            raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
+        sae_path = matches[0]
+        dim_mean = sae_dir / f"tf_{dataset_name}_layer{layer}_dim_mean.pt"
+    else:
+        raise ValueError(f"Unknown model_flag: {model_flag!r}")
+
+    if not sae_path.exists():
+        raise FileNotFoundError(f"{model_flag} SAE not found: {sae_path}")
+    if not dim_mean.exists():
+        raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
+
+    ckpt = torch.load(sae_path, map_location="cpu", weights_only=True)
+    state_dict = ckpt["sae_state_dict"] if isinstance(ckpt, dict) and "sae_state_dict" in ckpt else ckpt
+    nb_concepts = state_dict["dictionary._weights"].shape[0]
+    ckpt_sae_k  = ckpt.get("sae_k") if isinstance(ckpt, dict) else None
+    return {
+        "sae_path": str(sae_path), "dim_mean_path": str(dim_mean),
+        "sae_k": ckpt_sae_k or sae_k, "nb_concepts": nb_concepts, "job_label": job_label,
+    }
+
+
 # dataset_name -> backbone-independent dataset paths. labels_path/validation_path
 # are None for datasets without SSv2-style template/label JSON metadata — callers
 # that need a clip list fall back to globbing video_dir directly in that case.

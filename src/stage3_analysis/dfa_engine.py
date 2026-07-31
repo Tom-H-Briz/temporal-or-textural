@@ -24,7 +24,7 @@ ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sae import BatchTopKSAE
-from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, gather_by_position
+from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, gather_by_position, sample_frames_ssv2
 
 # ---------------------------------------------------------------------------
 # Output type
@@ -54,13 +54,13 @@ DFAResult = collections.namedtuple(
 
 
 def _preprocess_clip(
-    clip: Path, num_frames: int, processor, device: str
+    clip: Path, num_frames: int, processor, device: str, frame_sampler=sample_frames_ssv2
 ) -> torch.Tensor:
     container = av.open(str(clip))
     frames = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
     n       = len(frames)
-    indices = torch.linspace(0, n - 1, num_frames).long().tolist()
+    indices = frame_sampler(n, num_frames)
     sampled = [frames[i] for i in indices]
     return processor(sampled, return_tensors="pt")["pixel_values"].to(device)
 
@@ -103,6 +103,7 @@ class DFAEngine:
         layer: int | None = None,
         device: str = "cpu",
         sae_k: int | None = None,
+        dataset_name: str = "ssv2",
     ) -> None:
         self.model_flag = model_flag
         self.sae_path   = Path(sae_path)
@@ -110,6 +111,7 @@ class DFAEngine:
         self._layer  = layer
         self.device  = device
         self._sae_k  = sae_k   # fallback for old checkpoints without sae_k field
+        self.dataset_name = dataset_name  # picks the classification backbone, below
 
         self._model       = None
         self._sae         = None
@@ -128,7 +130,7 @@ class DFAEngine:
         self._cls_offset = model_cfg["cls_offset"]
         self._num_frames = model_cfg["num_frames"]
 
-        checkpoint      = CHECKPOINT_REGISTRY[(self.model_flag, "ssv2")]
+        checkpoint      = CHECKPOINT_REGISTRY[(self.model_flag, self.dataset_name)]
         self._processor = model_cfg["processor_class"].from_pretrained(checkpoint)
         self._model     = model_cfg["model_class"].from_pretrained(checkpoint)
         self._model.to(device).eval()
@@ -191,9 +193,9 @@ class DFAEngine:
         return (out,) + output[1:] if isinstance(output, tuple) else out
 
     def run(self, clip: Path, correct_class_idx: int,
-            return_per_position: bool = False) -> DFAResult:
+            return_per_position: bool = False, frame_sampler=sample_frames_ssv2) -> DFAResult:
         """Forward pass with SAE splice, then backward from correct-class logit."""
-        pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device)
+        pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device, frame_sampler)
         return self.run_pixels(pixel_values, correct_class_idx,
                                return_per_position=return_per_position)
 
@@ -291,9 +293,9 @@ class DFAEngine:
         self._z = None
         return z
 
-    def get_z(self, clip: Path) -> torch.Tensor:
+    def get_z(self, clip: Path, frame_sampler=sample_frames_ssv2) -> torch.Tensor:
         """Forward pass in no_grad — returns z (num_tokens, dict_size) without backward."""
-        pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device)
+        pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device, frame_sampler)
         self._z = None
         with torch.no_grad():
             self._model(pixel_values=pixel_values)

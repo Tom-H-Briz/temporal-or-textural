@@ -9,11 +9,11 @@
 # Three VM SAE configs to confirm scaffold features exist under: L5/L9 (fresh, k=64,
 # 8x) plus the pre-existing L7 k=128/16x checkpoint. Not a uniform layer sweep, so
 # indexed via parallel bash arrays rather than --array=<layers>.
+# job_label is "7ep" for all post-30/07 checkpoints (epoch-count suffix, no longer
+# k/expansion-encoding like the old "64"/"128_16x" strings) — only sae_k varies here.
 LAYERS=(5 9 7)
-JOBS=(64 64 128_16x)
 KS=(64 64 128)
 LAYER=${LAYERS[$SLURM_ARRAY_TASK_ID]}
-JOB=${JOBS[$SLURM_ARRAY_TASK_ID]}
 K=${KS[$SLURM_ARRAY_TASK_ID]}
 
 source $HOME/.tokens
@@ -31,5 +31,5 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops pandas pyarrow "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
-        python src/stage3_analysis/dfa_per_tubelet_mass.py --model videomae --layer $LAYER --job-label $JOB --sae-k $K
+        python src/stage3_analysis/dfa_per_tubelet_mass.py --model videomae --layer $LAYER --job-label 7ep --sae-k $K
     "

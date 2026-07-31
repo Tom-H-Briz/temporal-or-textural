@@ -13,8 +13,8 @@ Outputs (outputs/analysis/dfa_mass_delta_vm_c1/):
     dfa_mass_delta_{layer}_job{job_label}_k{sae_k}.png
 
 Usage:
-    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7 --job-label 64
-    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7 --job-label 128_16x --sae-k 128
+    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7
+    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7 --sae-k 128
 """
 
 import argparse
@@ -36,7 +36,7 @@ sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
 from perturbationA import apply_midpoint_frame
-from ToT_utils import _strip_brackets, load_metadata
+from ToT_utils import _strip_brackets, load_metadata, resolve_sae_checkpoint
 from stage3_analysis.dfa_engine import DFAEngine
 
 SL_COLOURS = {"temporal": "steelblue", "static": "darkorange"}
@@ -53,20 +53,6 @@ CFG = {
     "sl_csv_path":     str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
     "output_dir":      str(ROOT / "outputs/analysis/dfa_mass_delta_vm_c1"),
 }
-
-
-def _resolve_cfg(layer: int, job_label: str = "64", sae_k_default: int = 64) -> dict:
-    sae_dir  = ROOT / "outputs" / "sae"
-    sae_path = sae_dir / f"sae_layer{layer}_job{job_label}.pt"
-    dim_mean = sae_dir / f"layer{layer}_dim_mean.pt"
-    if not sae_path.exists():
-        raise FileNotFoundError(f"VM SAE checkpoint not found: {sae_path}")
-    if not dim_mean.exists():
-        raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    ckpt = torch.load(sae_path, map_location="cpu", weights_only=True)
-    ckpt_sae_k = ckpt.get("sae_k") if isinstance(ckpt, dict) else None
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean),
-            "sae_k": ckpt_sae_k or sae_k_default, "layer": layer, "job_label": job_label}
 
 
 def build_sl_label_map(cfg: dict) -> dict[int, str]:
@@ -185,12 +171,12 @@ def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path, out_su
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--layer", type=int, required=True)
-    parser.add_argument("--job-label", type=str, default="64")
+    parser.add_argument("--job-label", type=str, default="7ep")
     parser.add_argument("--sae-k", type=int, default=64, help="fallback if checkpoint lacks sae_k")
     args = parser.parse_args()
 
-    resolved   = _resolve_cfg(args.layer, args.job_label, args.sae_k)
-    cfg        = {**CFG, **resolved}
+    resolved   = resolve_sae_checkpoint("videomae", args.layer, sae_k=args.sae_k, job_label=args.job_label)
+    cfg        = {**CFG, **resolved, "layer": args.layer}
     out_suffix = f"l{args.layer}_job{args.job_label}_k{resolved['sae_k']}"
     print(f"Device: {cfg['device']}  Layer: {cfg['layer']}")
     print(f"SAE: {Path(cfg['sae_path']).name}  sae_k={cfg['sae_k']}")
