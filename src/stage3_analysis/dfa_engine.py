@@ -44,8 +44,11 @@ DFAResult = collections.namedtuple(
         "token_fire_counts",
         "per_position_abs",     # (num_positions, dict_size) float32 or None
         "per_position_signed",  # (num_positions, dict_size) float32 or None
+        "per_position_raw",     # (num_positions, dict_size) float32 or None — raw
+                                 # SAE activation (z), summed over spatial patches,
+                                 # captured pre-backward — nonneg (post-ReLU/top-k).
     ],
-    defaults=(None, None),
+    defaults=(None, None, None),
 )
 
 # ---------------------------------------------------------------------------
@@ -231,10 +234,13 @@ class DFAEngine:
         # Optional per-position (VM: tubelet, TF: frame) aggregation, OFF BY DEFAULT
         per_position_abs = None
         per_position_signed = None
+        per_position_raw = None
         if return_per_position:
             grouped = gather_by_position(dfa_tensor, self.model_flag)  # (num_positions, N_SPATIAL, dict_size)
             per_position_abs    = grouped.abs().sum(dim=1).detach().float().cpu()
             per_position_signed = grouped.sum(dim=1).detach().float().cpu()
+            per_position_raw = gather_by_position(z_detached, self.model_flag) \
+                .sum(dim=1).detach().float().cpu()
 
         per_feature_summary = (
             dfa_tensor.abs().sum(dim=0).detach().float().cpu()   # (dict_size,), float32
@@ -257,6 +263,7 @@ class DFAEngine:
             token_fire_counts=token_fire_counts,
             per_position_abs=per_position_abs,
             per_position_signed=per_position_signed,
+            per_position_raw=per_position_raw,
         )
 
     def run_ablated(
