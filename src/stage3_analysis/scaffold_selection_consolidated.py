@@ -1,9 +1,15 @@
 """
 Consolidated scaffold membership selection — derives feature membership from
-scratch against a uniform gate, across all 7 VM/TF configs, from existing
-per-clip-derived DFA and z position-lock outputs. No new extraction runs.
+scratch against a uniform gate, across all VM/TF configs (7 SSv2 + 3 K400
+videomae, 31/07/26), from existing per-clip-derived DFA and z position-lock
+outputs. No new extraction runs.
 
-Gate (per feature, must hold in EVERY one of the 32 DFA_CLASSES):
+DFA_CLASSES is SSv2-specific and unused elsewhere in this file — the actual
+per-config class scope always comes from whatever's in that config's CSV (32
+for SSv2, 64 for K400's SL-matched set); collapse_to_feature's min-aggregation
+gate is class-count-agnostic already.
+
+Gate (per feature, must hold in EVERY class the config's CSV covers):
   DFA: share_R/C1/A >= 0.90, frac_clips_matching_mode_R/C1/A == 1.0
   z:   share_R      >= 0.90, frac_clips_matching_mode_R      == 1.0
   (z gated on R only — z C1/A columns don't exist for every config on disk;
@@ -36,13 +42,16 @@ DFA_CLASSES = {0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40,
 # resolved per-config at runtime via resolve_sae_checkpoint, same helper
 # position_lock_extraction.py uses, so this can't drift out of sync with it again.
 CONFIGS = [
-    {"name": "L5_x8k64_VM",   "model": "videomae",    "layer": 5, "sae_k": 64},
-    {"name": "L7_x8k64_VM",   "model": "videomae",    "layer": 7, "sae_k": 64},
-    {"name": "L7_x16k128_VM", "model": "videomae",    "layer": 7, "sae_k": 128},
-    {"name": "L9_x8k64_VM",   "model": "videomae",    "layer": 9, "sae_k": 64},
-    {"name": "L5_x8k64_TF",   "model": "timesformer", "layer": 5, "sae_k": 64},
-    {"name": "L7_x8k64_TF",   "model": "timesformer", "layer": 7, "sae_k": 64},
-    {"name": "L9_x8k64_TF",   "model": "timesformer", "layer": 9, "sae_k": 64},
+    {"name": "L5_x8k64_VM",   "model": "videomae",    "layer": 5, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L7_x8k64_VM",   "model": "videomae",    "layer": 7, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L7_x16k128_VM", "model": "videomae",    "layer": 7, "sae_k": 128, "dataset": "ssv2"},
+    {"name": "L9_x8k64_VM",   "model": "videomae",    "layer": 9, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L5_x8k64_TF",   "model": "timesformer", "layer": 5, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L7_x8k64_TF",   "model": "timesformer", "layer": 7, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L9_x8k64_TF",   "model": "timesformer", "layer": 9, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L5_x8k64_VM_K400", "model": "videomae", "layer": 5, "sae_k": 64,  "dataset": "kinetics400"},
+    {"name": "L7_x8k64_VM_K400", "model": "videomae", "layer": 7, "sae_k": 64,  "dataset": "kinetics400"},
+    {"name": "L9_x8k64_VM_K400", "model": "videomae", "layer": 9, "sae_k": 64,  "dataset": "kinetics400"},
 ]
 
 GATE = {"min_share": 0.90, "exact_frac": 1.0}
@@ -60,12 +69,13 @@ def _resolve_scored_csv(cfg: dict) -> Path | None:
     """Locate the combined position_lock_scores CSV for a config (one file now
     carries both DFA and z quantities — position_lock_extraction.py's 31/07
     merge). Returns None (not raise) if the config hasn't been (re)run yet, so
-    a batch across all 7 configs can skip what's missing instead of crashing."""
+    a batch across all configs can skip what's missing instead of crashing."""
+    dataset = cfg["dataset"]
     try:
-        resolved = resolve_sae_checkpoint(cfg["model"], cfg["layer"], dataset_name="ssv2", sae_k=cfg["sae_k"])
+        resolved = resolve_sae_checkpoint(cfg["model"], cfg["layer"], dataset_name=dataset, sae_k=cfg["sae_k"])
     except FileNotFoundError:
         return None
-    suffix = f"{cfg['model']}_ssv2_l{cfg['layer']}_job{resolved['job_label']}_k{resolved['sae_k']}"
+    suffix = f"{cfg['model']}_{dataset}_l{cfg['layer']}_job{resolved['job_label']}_k{resolved['sae_k']}"
     path = CFG["pos_lock_dir"] / f"position_lock_scores_{suffix}.csv"
     return path if path.exists() else None
 
@@ -251,10 +261,17 @@ def ceiling_check(cfg: dict, members: list[int]) -> dict:
     could achieve, using the actual top-N-by-mass features in the full dict.
     Reuses the 02/07 ceiling-collision method (select_control_features.py's
     ranking) with the self-consistent mass metric (scaffold_mass_pct.py's)."""
+    no_ceiling = {"config": cfg["name"], "n_members": len(members),
+                  "member_combined_mass_R": np.nan, "ceiling_combined_mass_R": np.nan, "pct_of_ceiling": np.nan}
     if not members:
-        return {"config": cfg["name"], "n_members": 0,
-                "member_combined_mass_R": np.nan, "ceiling_combined_mass_R": np.nan, "pct_of_ceiling": np.nan}
-    df = pd.read_parquet(_resolve_mass_delta_parquet(cfg))
+        return no_ceiling
+    try:
+        mass_delta_path = _resolve_mass_delta_parquet(cfg)
+    except FileNotFoundError:
+        # K400 has no dfa_mass_delta_vm.py equivalent (that pipeline reads
+        # SSv2's manifest_SL_subset.json) — no ceiling comparator exists yet.
+        return no_ceiling
+    df = pd.read_parquet(mass_delta_path)
     mat = np.stack(df["signed_vec_R"].to_numpy()).astype(np.float32)
     ranked = np.argsort(_raw_feature_masses(mat))[::-1]
     ceiling_features = ranked[:len(members)].tolist()
