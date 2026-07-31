@@ -5,11 +5,16 @@
 #SBATCH --gpus=1
 #SBATCH --time=02:00:00
 
-# Conditions A/C1 only. No VIDEO_DIR/KINETICS_LABELS_CSV override — DATASET_REGISTRY
-# ["kinetics400"] and CFG's default resolve paths, same convention as
-# train_sae_vm_kinetics.sh.
+# Conditions R/A/C1. VIDEO_DIR/KINETICS_LABELS_CSV must be set explicitly — unlike
+# train_sae_vm_kinetics.sh (which never calls load_kinetics_metadata), this script
+# does, and DATASET_REGISTRY's repo-relative default (data/kinetics400/val) doesn't
+# exist on Isambard at all (data/ is gitignored, never synced). 5848353 failed in
+# 31s on exactly this — confirmed 31/07 the real files live under /scratch.
 
 source $HOME/.tokens
+
+export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
+export KINETICS_LABELS_CSV="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset/val.csv"
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 
