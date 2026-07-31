@@ -18,27 +18,31 @@ Usage:
     uv run python src/stage3_analysis/scaffold_selection_consolidated.py
 """
 
+import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(ROOT / "notebooks"))
+from ToT_utils import resolve_sae_checkpoint
 
 DFA_CLASSES = {0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40,
                41, 42, 44, 57, 59, 83, 84, 123, 126, 142, 143, 145, 164,
                168, 169, 171, 173}
 
-# {config} label is `{layer}_x{expansion}k{k}_{backbone}` — no exact match found
-# elsewhere in the codebase (job labels use "64"/"128_16x"), so this is a newly
-# introduced naming convention, not matched to an existing one.
+# {config} label is `{layer}_x{expansion}k{k}_{backbone}`. job_label is no longer
+# hardcoded here (old "64"/"128_16x" strings predate the 30/07 rename to "7ep") —
+# resolved per-config at runtime via resolve_sae_checkpoint, same helper
+# position_lock_extraction.py uses, so this can't drift out of sync with it again.
 CONFIGS = [
-    {"name": "L5_x8k64_VM",   "model": "videomae",    "layer": 5, "job_label": "64",      "sae_k": 64},
-    {"name": "L7_x8k64_VM",   "model": "videomae",    "layer": 7, "job_label": "64",      "sae_k": 64},
-    {"name": "L7_x16k128_VM", "model": "videomae",    "layer": 7, "job_label": "128_16x", "sae_k": 128},
-    {"name": "L9_x8k64_VM",   "model": "videomae",    "layer": 9, "job_label": "64",      "sae_k": 64},
-    {"name": "L5_x8k64_TF",   "model": "timesformer", "layer": 5, "job_label": None,      "sae_k": None},
-    {"name": "L7_x8k64_TF",   "model": "timesformer", "layer": 7, "job_label": None,      "sae_k": None},
-    {"name": "L9_x8k64_TF",   "model": "timesformer", "layer": 9, "job_label": None,      "sae_k": None},
+    {"name": "L5_x8k64_VM",   "model": "videomae",    "layer": 5, "sae_k": 64},
+    {"name": "L7_x8k64_VM",   "model": "videomae",    "layer": 7, "sae_k": 64},
+    {"name": "L7_x16k128_VM", "model": "videomae",    "layer": 7, "sae_k": 128},
+    {"name": "L9_x8k64_VM",   "model": "videomae",    "layer": 9, "sae_k": 64},
+    {"name": "L5_x8k64_TF",   "model": "timesformer", "layer": 5, "sae_k": 64},
+    {"name": "L7_x8k64_TF",   "model": "timesformer", "layer": 7, "sae_k": 64},
+    {"name": "L9_x8k64_TF",   "model": "timesformer", "layer": 9, "sae_k": 64},
 ]
 
 GATE = {"min_share": 0.90, "exact_frac": 1.0}
@@ -46,38 +50,36 @@ N_NEAR_MISS = 20
 N_CLASS_PROFILE = 5
 
 CFG = {
-    "dfa_dir":        ROOT / "outputs/analysis/dfa_per_tubelet_mass",
-    "z_dir":          ROOT / "outputs/analysis/z_position_lock",
+    "pos_lock_dir":   ROOT / "outputs/analysis/position_lock",
     "mass_delta_dir": ROOT / "outputs/analysis/dfa_mass_delta_vm_c1",
     "out_dir":        ROOT / "outputs/analysis/scaffold_selection",
 }
 
 
-def _resolve_scored_csv(base_dir: Path, prefix: str, cfg: dict) -> Path:
-    """Locate the per-class score CSV for a config — suffixed pattern preferred,
-    falling back to the legacy unsuffixed file only for the original L7/job64/k64
-    baseline (matches scaffold_mass_pct.locate_source's precedent)."""
-    model, layer = cfg["model"], cfg["layer"]
-    if model == "timesformer":
-        path = base_dir / f"{prefix}_timesformer_l{layer}.csv"
-    else:
-        job_label, sae_k = cfg["job_label"], cfg["sae_k"]
-        suffixed = base_dir / f"{prefix}_videomae_l{layer}_job{job_label}_k{sae_k}.csv"
-        if suffixed.exists():
-            return suffixed
-        legacy = base_dir / f"{prefix}.csv"
-        if (layer, job_label, sae_k) == (7, "64", 64) and legacy.exists():
-            path = legacy
-        else:
-            path = suffixed
-    if not path.exists():
-        raise FileNotFoundError(f"No score CSV found for {cfg['name']}: {path}")
-    return path
+def _resolve_scored_csv(cfg: dict) -> Path | None:
+    """Locate the combined position_lock_scores CSV for a config (one file now
+    carries both DFA and z quantities — position_lock_extraction.py's 31/07
+    merge). Returns None (not raise) if the config hasn't been (re)run yet, so
+    a batch across all 7 configs can skip what's missing instead of crashing."""
+    try:
+        resolved = resolve_sae_checkpoint(cfg["model"], cfg["layer"], dataset_name="ssv2", sae_k=cfg["sae_k"])
+    except FileNotFoundError:
+        return None
+    suffix = f"{cfg['model']}_ssv2_l{cfg['layer']}_job{resolved['job_label']}_k{resolved['sae_k']}"
+    path = CFG["pos_lock_dir"] / f"position_lock_scores_{suffix}.csv"
+    return path if path.exists() else None
+
+
+# dfa_mass_delta_vm.py is a separate, untouched pipeline — its outputs are still
+# genuinely named with the pre-30/07 job_label strings, unrelated to the
+# position_lock_extraction.py merge's naming.
+_MASS_DELTA_JOB_LABEL = {64: "64", 128: "128_16x"}
 
 
 def _resolve_mass_delta_parquet(cfg: dict) -> Path:
     """VM only — used for the ceiling check's per-clip signed-vector floor."""
-    layer, job_label, sae_k = cfg["layer"], cfg["job_label"], cfg["sae_k"]
+    layer, sae_k = cfg["layer"], cfg["sae_k"]
+    job_label = _MASS_DELTA_JOB_LABEL[sae_k]
     d = CFG["mass_delta_dir"]
     suffixed = d / f"dfa_mass_delta_vm_c1_l{layer}_job{job_label}_k{sae_k}.parquet"
     if suffixed.exists():
@@ -96,31 +98,30 @@ def _position_col(model: str) -> str:
     return "mode_frame" if model == "timesformer" else "mode_tubelet"
 
 
-def load_dfa(cfg: dict) -> pd.DataFrame:
+def load_dfa(df: pd.DataFrame, model: str) -> pd.DataFrame:
     """Per (class_id, feature_idx) DFA scores, columns normalized to common
     internal names (share_*, consistency_*, position_*) — no model-conditional
-    branching past this point, per project convention."""
-    path = _resolve_scored_csv(CFG["dfa_dir"], "position_lock_scores", cfg)
-    df = pd.read_csv(path)
-    shuf, pos_col = _shuffle_raw_label(cfg["model"]), _position_col(cfg["model"])
-    out = df[["class_id", "feature_idx", "total_abs_R"]].copy()
+    branching past this point, per project convention. df = the one combined
+    position_lock_scores CSV, read once in process_config and shared with load_z."""
+    shuf, pos_col = _shuffle_raw_label(model), _position_col(model)
+    out = df[["class_id", "feature_idx"]].copy()
+    out["total_abs_R"] = df["total_abs_dfa_R"]
     for raw, cond in [("R", "R"), (shuf, "C1"), ("A", "A")]:
-        out[f"share_{cond}"] = df[f"mean_per_clip_share_{raw}"]
-        out[f"consistency_{cond}"] = df[f"frac_clips_matching_mode_{raw}"]
-        out[f"position_{cond}"] = df[f"{pos_col}_{raw}"]
+        out[f"share_{cond}"] = df[f"mean_per_clip_share_dfa_{raw}"]
+        out[f"consistency_{cond}"] = df[f"frac_clips_matching_mode_dfa_{raw}"]
+        out[f"position_{cond}"] = df[f"{pos_col}_dfa_{raw}"]
     return out
 
 
-def load_z(cfg: dict) -> pd.DataFrame:
+def load_z(df: pd.DataFrame, model: str) -> pd.DataFrame:
     """Per (class_id, feature_idx) z scores. Gate uses R only (Tom, 15/07/26) —
-    C1/A columns are populated when present (post-refactor CSVs) and left NaN
-    otherwise (legacy L7/job64 z CSV), never gated on either way."""
-    path = _resolve_scored_csv(CFG["z_dir"], "z_position_lock_scores", cfg)
-    df = pd.read_csv(path)
-    shuf, pos_col = _shuffle_raw_label(cfg["model"]), _position_col(cfg["model"])
+    C1/A columns are populated when present (the merged pipeline always computes
+    all three; NaN fallback kept defensively for older CSVs), never gated on
+    either way."""
+    shuf, pos_col = _shuffle_raw_label(model), _position_col(model)
     out = df[["class_id", "feature_idx"]].copy()
     for raw, cond in [("R", "R"), (shuf, "C1"), ("A", "A")]:
-        share_col, frac_col, p_col = f"mean_per_clip_share_{raw}", f"frac_clips_matching_mode_{raw}", f"{pos_col}_{raw}"
+        share_col, frac_col, p_col = f"mean_per_clip_share_z_{raw}", f"frac_clips_matching_mode_z_{raw}", f"{pos_col}_z_{raw}"
         out[f"share_{cond}"] = df[share_col] if share_col in df.columns else np.nan
         out[f"consistency_{cond}"] = df[frac_col] if frac_col in df.columns else np.nan
         out[f"position_{cond}"] = df[p_col] if p_col in df.columns else np.nan
@@ -273,10 +274,15 @@ FULL_TABLE_COLS = [
 ]
 
 
-def process_config(cfg: dict, out_dir: Path) -> dict:
-    print(f"[{cfg['name']}] loading DFA/z scores…")
-    dfa_per_class = load_dfa(cfg)
-    z_per_class = load_z(cfg)
+def process_config(cfg: dict, out_dir: Path) -> dict | None:
+    path = _resolve_scored_csv(cfg)
+    if path is None:
+        print(f"[{cfg['name']}] SKIP — no position_lock_scores CSV found (not run yet)")
+        return None
+    print(f"[{cfg['name']}] loading DFA/z scores from {path.name}…")
+    df = pd.read_csv(path)
+    dfa_per_class = load_dfa(df, cfg["model"])
+    z_per_class = load_z(df, cfg["model"])
     merged = merge_and_gate(collapse_to_feature(dfa_per_class), collapse_to_feature(z_per_class))
     assert_position_agreement(merged, cfg["name"])
 
@@ -301,7 +307,7 @@ def main() -> None:
     out_dir: Path = CFG["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    ceiling_rows = [process_config(cfg, out_dir) for cfg in CONFIGS]
+    ceiling_rows = [row for cfg in CONFIGS if (row := process_config(cfg, out_dir)) is not None]
 
     ceiling_path = out_dir / "scaffold_selection_ceiling_summary.csv"
     pd.DataFrame(ceiling_rows, columns=[

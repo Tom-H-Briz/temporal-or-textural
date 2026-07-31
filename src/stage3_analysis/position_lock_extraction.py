@@ -33,6 +33,7 @@ import argparse
 import logging
 import os
 import sys
+import zlib
 from collections import defaultdict
 from pathlib import Path
 
@@ -126,6 +127,19 @@ def load_sl_map(cfg: dict, dataset_name: str) -> dict[int, str]:
     return {int(r["matched_model_class_id"]): r["sl_category"] for _, r in df.iterrows()}
 
 
+def _deterministic_seed(clip_id: str) -> int:
+    """RNG seed for shuffle conditions. SSv2 clip_ids are numeric strings —
+    int() used directly, preserving the exact seed already validated against
+    real SSv2 output. K400 clip_ids are YouTube-style strings (e.g.
+    'XAoQRtv6OyA_000088_000098') that int() can't parse — every K400 clip was
+    hitting this and getting skipped (confirmed 31/07 on Isambard). Falls back
+    to a deterministic hash only when int() fails, so SSv2 is untouched."""
+    try:
+        return int(clip_id) % 2**32
+    except ValueError:
+        return zlib.crc32(clip_id.encode()) % 2**32
+
+
 def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int,
                   processor, device: str, frame_sampler) -> torch.Tensor:
     container = av.open(str(clip_path))
@@ -135,7 +149,7 @@ def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int,
     idx     = frame_sampler(n, num_frames)
     sampled = [frames[i] for i in idx]
     pairs   = [(sampled[i], sampled[i + 1]) for i in range(0, num_frames, 2)]
-    order   = np.random.default_rng(int(clip_id) % 2**32).permutation(len(pairs)).tolist()
+    order   = np.random.default_rng(_deterministic_seed(clip_id)).permutation(len(pairs)).tolist()
     result  = [f for i in order for f in pairs[i]]
     return processor(result, return_tensors="pt")["pixel_values"].to(device)
 
@@ -158,7 +172,7 @@ def preprocess_c_tf(clip_path: Path, clip_id: str, num_frames: int,
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
-    frames = apply_shuffle(frames, int(clip_id) % 2**32)
+    frames = apply_shuffle(frames, _deterministic_seed(clip_id))
     n      = len(frames)
     idx    = frame_sampler(n, num_frames)
     return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
