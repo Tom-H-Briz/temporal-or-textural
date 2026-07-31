@@ -1,10 +1,15 @@
 """
 Extract Laura SL temporal/static class subsets, build a filtered JSON manifest,
-and pull per-class TF accuracy for those classes.
+and pull per-class VideoMAE accuracy for those classes.
+
+Accuracy source is VideoMAE (per_class_accuracy_VM_ssv2_R.csv), not TimeSformer —
+a different backbone has no business gating VideoMAE's own class eligibility.
+Was TF-sourced (stage1_class_selection_TF/per_class_accuracy_TF.csv) until 31/07/26;
+switched once perturb_accuracy_vm_ssv2.py produced a fresh post-bias-fix VM number.
 
 Outputs (both to outputs/Laura_SL/):
   - manifest_SL_subset.json  — val clips belonging to SL temporal or static classes
-  - accuracy_SL_subset.csv   — per-class TF accuracy for those classes
+  - accuracy_SL_subset.csv   — per-class VideoMAE accuracy for those classes
 """
 
 import json
@@ -16,7 +21,7 @@ import pandas as pd
 ROOT    = Path(__file__).parent.parent
 SL_DIR  = ROOT / "outputs" / "Laura_SL"
 VAL_JSON    = ROOT / "data" / "ssv2" / "labels" / "validation.json"
-ACC_CSV     = ROOT / "outputs" / "stage1_class_selection_TF" / "per_class_accuracy_TF.csv"
+ACC_CSV     = ROOT / "outputs" / "stage1_class_selection_VM_ssv2" / "per_class_accuracy_VM_ssv2_R.csv"
 ST_CSV      = SL_DIR / "Static_Temporal.csv"
 OUT_JSON    = SL_DIR / "manifest_SL_subset.json"
 OUT_ACC_CSV = SL_DIR / "accuracy_SL_subset.csv"
