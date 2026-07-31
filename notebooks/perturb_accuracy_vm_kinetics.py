@@ -21,6 +21,7 @@ Outputs (outputs/stage1_class_selection_VM_kinetics/):
   per_class_accuracy_VM_kinetics_R.csv
   per_class_accuracy_VM_kinetics_A.csv
   per_class_accuracy_VM_kinetics_C1.csv
+  comparison.csv   (all three, wide format, R as baseline — mirrors perturb_accuracy.py)
 
 Usage: uv run python notebooks/perturb_accuracy_vm_kinetics.py
 """
@@ -126,7 +127,7 @@ def run_condition(model, clip_paths, labels, processor, cfg, condition) -> list[
     return preds
 
 
-def save_csv(preds: list[int], labels: list[int], id2label: dict, out_path: Path) -> None:
+def save_csv(preds: list[int], labels: list[int], id2label: dict, out_path: Path) -> pd.DataFrame:
     # dict-based over whatever class ids actually appear — not range(174) like the
     # SSv2 script, since K400 has 400 classes and a val-clip subset may not hit all.
     acc = per_class_accuracy(preds, labels, id2label)
@@ -135,6 +136,21 @@ def save_csv(preds: list[int], labels: list[int], id2label: dict, out_path: Path
     df.to_csv(out_path, index=False)
     overall = sum(p == l for p, l in zip(preds, labels)) / len(labels)
     print(f"  Overall top-1: {overall:.4f}  -> {out_path.name}")
+    return df  # returned so main() can build the merged comparison without a disk re-read
+
+
+def merge_conditions(dfs: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Wide comparison table, R as baseline — mirrors perturb_accuracy.py's comparison.csv."""
+    merged = dfs["R"][["class_id", "template", "total", "correct", "accuracy"]].rename(
+        columns={"total": "total_R", "correct": "correct_R", "accuracy": "accuracy_R"}
+    )
+    for cond in ("A", "C1"):
+        cols = dfs[cond][["class_id", "correct", "total", "accuracy"]].rename(
+            columns={"correct": f"correct_{cond}", "total": f"total_{cond}", "accuracy": f"accuracy_{cond}"}
+        )
+        merged = merged.merge(cols, on="class_id", how="left")
+        merged[f"delta_{cond}_minus_R"] = merged[f"accuracy_{cond}"] - merged["accuracy_R"]
+    return merged.sort_values("accuracy_R", ascending=False).reset_index(drop=True)
 
 
 def main() -> None:
@@ -156,9 +172,16 @@ def main() -> None:
     out_dir = Path(CFG["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    dfs: dict[str, pd.DataFrame] = {}
     for condition in ("R", "A", "C1"):
         preds = run_condition(model, clip_paths, labels, processor, CFG, condition)
-        save_csv(preds, labels, id2label, out_dir / f"per_class_accuracy_VM_kinetics_{condition}.csv")
+        dfs[condition] = save_csv(
+            preds, labels, id2label, out_dir / f"per_class_accuracy_VM_kinetics_{condition}.csv"
+        )
+
+    comp_path = out_dir / "comparison.csv"
+    merge_conditions(dfs).to_csv(comp_path, index=False)
+    print(f"\nComparison saved: {comp_path}")
 
 
 if __name__ == "__main__":
