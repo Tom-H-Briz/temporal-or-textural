@@ -3,7 +3,7 @@
 #SBATCH --output=position_lock_vm_kinetics_%A_%a.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --array=5,7,9
 
 # Merged DFA + raw-activation extraction (31/07 consolidation) — replaces
@@ -11,6 +11,9 @@
 # K400 class scope = the full SL-matched set (up to 64 classes), not yet filtered
 # to the per-class accuracy >= 40% eligible subset — same pending follow-up noted
 # in the pre-merge scripts. Needs k400_sl_class_mapping.csv present on Isambard.
+# Time budget doubled vs the SSv2 launcher — K400 clips run ~2x longer than SSv2
+# clips, and decode cost scales with clip length even though the model still only
+# samples a fixed 16 frames per clip.
 
 source $HOME/.tokens
 
