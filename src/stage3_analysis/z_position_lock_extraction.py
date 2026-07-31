@@ -37,12 +37,15 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
+from transformers import AutoConfig
+
 from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
 from ToT_utils import (
-    MODEL_REGISTRY, N_SPATIAL, _strip_brackets, gather_by_position, load_metadata,
-    resolve_sae_checkpoint,
+    CHECKPOINT_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY, N_SPATIAL, _strip_brackets,
+    gather_by_position, load_metadata, resolve_sae_checkpoint,
 )
+from spliced_accuracy_vm import load_kinetics_metadata
 from stage3_analysis.dfa_engine import DFAEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -57,12 +60,16 @@ CFG = {
     "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir":       os.environ.get("VIDEO_DIR",        str(ROOT / "data/ssv2/20bn-something-something-v2")),
-    "sl_csv_path":     str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
+    "kinetics_labels_csv": os.environ.get(
+        "KINETICS_LABELS_CSV", str(ROOT / "data/kinetics400/annotations/val.csv")
+    ),
+    "sl_csv_path":      str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
+    "k400_sl_csv_path": str(ROOT / "outputs/Laura_SL/k400_sl_class_mapping.csv"),
     "output_dir":      str(ROOT / "outputs/analysis/z_position_lock"),
 }
 
 
-def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
+def load_clips_ssv2(cfg: dict) -> list[tuple[str, int, Path]]:
     label_map, clips, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
     video_dir = Path(cfg["video_dir"])
     result = []
@@ -73,17 +80,47 @@ def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
         path = video_dir / f"{c['id']}.webm"
         if path.exists():
             result.append((str(c["id"]), cid, path))
-    log.info(f"  {len(result):,} clips across {len(DFA_CLASSES)} classes")
+    log.info(f"  {len(result):,} clips across {len(DFA_CLASSES)} SSv2 DFA classes")
     return result
 
 
+def load_clips_kinetics(cfg: dict, model_flag: str) -> list[tuple[str, int, Path]]:
+    """K400 class scope = the full SL-matched set from k400_sl_mapping.py's output
+    (up to 64 classes) — not yet filtered to an eligible subset (per-class accuracy
+    >= 40%), since that gate needs the still-running perturb_accuracy_vm_kinetics.py
+    R-condition results. Same reasoning as dfa_per_tubelet_mass.py's counterpart."""
+    checkpoint = CHECKPOINT_REGISTRY[(model_flag, "kinetics400")]
+    label2id   = AutoConfig.from_pretrained(checkpoint).label2id
+    eligible   = set(pd.read_csv(cfg["k400_sl_csv_path"])["matched_model_class_id"].dropna().astype(int))
+
+    video_dir = Path(cfg["video_dir"])
+    paths, labels, _ = load_kinetics_metadata(cfg["kinetics_labels_csv"], video_dir, label2id)
+    result = [(p.stem, l, p) for p, l in zip(paths, labels) if l in eligible]
+    log.info(f"  {len(result):,} clips across {len(eligible)} K400 SL-matched classes")
+    return result
+
+
+def load_clips(cfg: dict, dataset_name: str, model_flag: str) -> list[tuple[str, int, Path]]:
+    if dataset_name == "ssv2":
+        return load_clips_ssv2(cfg)
+    return load_clips_kinetics(cfg, model_flag)
+
+
+def load_sl_map(cfg: dict, dataset_name: str) -> dict[int, str]:
+    if dataset_name == "ssv2":
+        return {int(r["class_id"]): r["category"]
+                for _, r in pd.read_csv(cfg["sl_csv_path"]).iterrows()}
+    df = pd.read_csv(cfg["k400_sl_csv_path"]).dropna(subset=["matched_model_class_id"])
+    return {int(r["matched_model_class_id"]): r["sl_category"] for _, r in df.iterrows()}
+
+
 def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int,
-                  processor, device: str) -> torch.Tensor:
+                  processor, device: str, frame_sampler) -> torch.Tensor:
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
     n       = len(frames)
-    idx     = torch.linspace(0, n - 1, num_frames).long().tolist()
+    idx     = frame_sampler(n, num_frames)
     sampled = [frames[i] for i in idx]
     pairs   = [(sampled[i], sampled[i + 1]) for i in range(0, num_frames, 2)]
     order   = np.random.default_rng(int(clip_id) % 2**32).permutation(len(pairs)).tolist()
@@ -92,26 +129,29 @@ def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int,
 
 
 def preprocess_a(clip_path: Path, num_frames: int,
-                 processor, device: str) -> torch.Tensor:
+                 processor, device: str, frame_sampler) -> torch.Tensor:
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
     frames = apply_midpoint_frame(frames)
     n      = len(frames)
-    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
+    idx    = frame_sampler(n, num_frames)
     return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
 
 
 def preprocess_c_tf(clip_path: Path, clip_id: str, num_frames: int,
-                    processor, device: str) -> torch.Tensor:
+                    processor, device: str, frame_sampler) -> torch.Tensor:
     """TF's full-frame shuffle — matches dfa_mass_delta.py's preprocess_c. No tubelet
-    pairing (TF has no tubelet structure to preserve)."""
+    pairing (TF has no tubelet structure to preserve). TF is ssv2-only in this project
+    (resolve_sae_checkpoint asserts this), so frame_sampler is always sample_frames_ssv2
+    here in practice — passed explicitly rather than hardcoded, matching the videomae
+    preprocessors."""
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
     frames = apply_shuffle(frames, int(clip_id) % 2**32)
     n      = len(frames)
-    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
+    idx    = frame_sampler(n, num_frames)
     return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
 
 
@@ -135,16 +175,16 @@ def accumulate(tubelet_z: torch.Tensor, class_id: int, cond: str,
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=["videomae", "timesformer"], required=True)
+    parser.add_argument("--dataset", choices=["ssv2", "kinetics400"], default="ssv2")
     parser.add_argument("--layer", type=int, required=True)
     parser.add_argument("--job-label", type=str, default="7ep", help="videomae only")
     parser.add_argument("--sae-k", type=int, default=64, help="videomae fallback if checkpoint lacks sae_k")
     args = parser.parse_args()
 
-    # dataset_name left at resolve_sae_checkpoint's default ("ssv2") — K400 clip/label
-    # loading (load_clips below) isn't wired up yet; --dataset here would be a footgun
-    # until it is. Separate follow-up, not part of this consolidation pass.
-    resolved  = resolve_sae_checkpoint(args.model, args.layer, sae_k=args.sae_k, job_label=args.job_label)
+    resolved  = resolve_sae_checkpoint(args.model, args.layer, dataset_name=args.dataset,
+                                       sae_k=args.sae_k, job_label=args.job_label)
     cfg       = {**CFG, "model_flag": args.model, "layer": args.layer}
+    frame_sampler = FRAME_SAMPLERS[args.dataset]
     dict_size = resolved["nb_concepts"]   # checkpoint-derived — was hardcoded 6144
     out_dir   = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -155,11 +195,10 @@ def main() -> None:
     shuffle_fn     = SHUFFLE_PREPROCESSOR[args.model]
     # Suffix reflects the checkpoint actually resolved, not raw CLI input — TF's job_label
     # comes back as str(layer) from _resolve_cfg regardless of the (unused) --job-label default.
-    out_suffix     = f"{args.model}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}"
+    out_suffix     = f"{args.model}_{args.dataset}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}"
 
-    sl_map = {int(r["class_id"]): r["category"]
-              for _, r in pd.read_csv(cfg["sl_csv_path"]).iterrows()}
-    clips  = load_clips(cfg)
+    sl_map = load_sl_map(cfg, args.dataset)
+    clips  = load_clips(cfg, args.dataset, args.model)
 
     running_share_sum  = defaultdict(lambda: {c: torch.zeros(dict_size)                  for c in conditions})
     tubelet_occurrence = defaultdict(lambda: {c: torch.zeros(num_positions, dict_size) for c in conditions})
@@ -169,15 +208,15 @@ def main() -> None:
     log.info(f"Scanning {len(clips):,} clips for R/{conditions[1]}/A (get_z, forward pass only)…")
     with DFAEngine(cfg["model_flag"], resolved["sae_path"], resolved["dim_mean_path"],
                    layer=cfg["layer"], device=cfg["device"],
-                   sae_k=resolved["sae_k"]) as engine:
+                   sae_k=resolved["sae_k"], dataset_name=args.dataset) as engine:
 
         for i, (clip_id, class_id, clip_path) in enumerate(clips):
             try:
-                z_r = engine.get_z(clip_path)
+                z_r = engine.get_z(clip_path, frame_sampler=frame_sampler)
                 pv_shuf = shuffle_fn(clip_path, clip_id, engine._num_frames,
-                                     engine._processor, cfg["device"])
+                                     engine._processor, cfg["device"], frame_sampler)
                 pv_a    = preprocess_a(clip_path, engine._num_frames,
-                                       engine._processor, cfg["device"])
+                                       engine._processor, cfg["device"], frame_sampler)
                 z_shuf = engine.get_z_pixels(pv_shuf)
                 z_a    = engine.get_z_pixels(pv_a)
             except Exception as exc:

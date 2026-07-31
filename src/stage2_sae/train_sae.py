@@ -22,10 +22,10 @@ import wandb
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(ROOT / "notebooks"))
 
 from sae import BatchTopKSAE
 from sae.losses import top_k_auxiliary_loss, reanimation_regularizer

@@ -3,13 +3,19 @@
 #SBATCH --output=run_perturb_accuracy_vm_kinetics_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=02:00:00
+#SBATCH --time=03:00:00
 
 # Conditions R/A/C1. VIDEO_DIR/KINETICS_LABELS_CSV must be set explicitly — unlike
 # train_sae_vm_kinetics.sh (which never calls load_kinetics_metadata), this script
 # does, and DATASET_REGISTRY's repo-relative default (data/kinetics400/val) doesn't
 # exist on Isambard at all (data/ is gitignored, never synced). 5848353 failed in
 # 31s on exactly this — confirmed 31/07 the real files live under /scratch.
+#
+# Time budget: each condition measured at ~48min on the full K400 clip set (much
+# slower per-clip than SSv2 — longer clips to decode) — 1hr/condition x 3 conditions,
+# not 2hr flat. R runs first (see main()'s loop order) and its CSV is written to
+# disk before A/C1 start, so even a timeout partway through A/C1 doesn't lose R —
+# the condition Tom needs most right now — but budget for all three regardless.
 
 source $HOME/.tokens
 

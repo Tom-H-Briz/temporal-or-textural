@@ -21,6 +21,7 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(ROOT / "src" / "stage2_sae"))  # train_sae.py, moved out of notebooks/
 
 from sae import BatchTopKSAE
 from ToT_utils import MODEL_REGISTRY, SSv2ClipDataset

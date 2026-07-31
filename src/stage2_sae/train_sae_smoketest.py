@@ -8,8 +8,8 @@ dim_mean is not available pre-training, so a zero tensor is used here.
 This is a connectivity and shape test, not a representation quality test.
 
 Target runtime: ~2 minutes on GH200.
-Usage: uv run python notebooks/train_sae_smoketest.py
-       MODEL_NAME=timesformer uv run python notebooks/train_sae_smoketest.py
+Usage: uv run python src/stage2_sae/train_sae_smoketest.py
+       MODEL_NAME=timesformer uv run python src/stage2_sae/train_sae_smoketest.py
 
 WandB: runs online if WANDB_API_KEY is set (verifies connectivity), disabled otherwise.
 """
@@ -22,10 +22,11 @@ from pathlib import Path
 import torch
 import wandb
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(ROOT / "notebooks"))
+sys.path.insert(0, str(Path(__file__).parent))  # train_sae.py — same dir, post-move
 
 from train_sae import (
     CFG,

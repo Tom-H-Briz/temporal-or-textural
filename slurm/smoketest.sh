@@ -21,7 +21,7 @@ apptainer exec --nv \
         pip install --quiet av einops wandb pandas pyarrow matplotlib "transformers==5.5.0" huggingface-hub tqdm &&
         cd $HOME/temporal-or-textural &&
         echo '=== VideoMAE ===' &&
-        python notebooks/train_sae_smoketest.py &&
+        python src/stage2_sae/train_sae_smoketest.py &&
         echo '=== TimeSformer ===' &&
-        MODEL_NAME=timesformer python notebooks/train_sae_smoketest.py
+        MODEL_NAME=timesformer python src/stage2_sae/train_sae_smoketest.py
     "
