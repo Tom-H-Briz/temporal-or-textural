@@ -245,6 +245,8 @@ def save_outputs(dfa: dict, z: dict, sl_map: dict, out_dir: Path, conditions: li
             if dfa_stats:
                 modes = [dfa_stats[c]["mode"][feat] for c in conditions]
                 row["pos_consistent_dfa"] = bool(modes[0] == modes[1] == modes[2])
+                row["total_abs_dfa_R"] = float(dfa_stats["R"]["mean_mass"][:, feat].sum())
+                row["top_abs_dfa_R"]   = float(dfa_stats["R"]["mean_mass"][:, feat].max())
                 for cond in conditions:
                     row[f"mean_per_clip_share_dfa_{cond}"]      = float(dfa_stats[cond]["share"][feat])
                     row[f"mode_{position_label}_dfa_{cond}"]    = int(dfa_stats[cond]["mode"][feat])
@@ -252,6 +254,8 @@ def save_outputs(dfa: dict, z: dict, sl_map: dict, out_dir: Path, conditions: li
             if z_stats:
                 modes = [z_stats[c]["mode"][feat] for c in conditions]
                 row["pos_consistent_z"] = bool(modes[0] == modes[1] == modes[2])
+                row["total_abs_z_R"] = float(z_stats["R"]["mean_mass"][:, feat].sum())
+                row["top_abs_z_R"]   = float(z_stats["R"]["mean_mass"][:, feat].max())
                 for cond in conditions:
                     row[f"mean_per_clip_share_z_{cond}"]      = float(z_stats[cond]["share"][feat])
                     row[f"mode_{position_label}_z_{cond}"]    = int(z_stats[cond]["mode"][feat])
