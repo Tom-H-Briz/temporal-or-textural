@@ -11,6 +11,8 @@ Usage:
     uv run python src/stage3_analysis/ablation_summary.py
 """
 
+import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -21,12 +23,22 @@ ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from stage3_analysis.ablation_targets import SINGLETON_TARGETS, GROUP_TARGETS, TARGETS
+from stage3_analysis.scaffold_selection_consolidated import _resolve_mass_delta_parquet
 
 CFG = {
-    "source":      ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long_cover_uncover_060726.parquet",
-    "src_glob":    "outputs/analysis/**/dfa_mass_delta_vm_c1.parquet",
-    "out_dir":     ROOT / "outputs/analysis/scaffold_ablation",
+    "out_dir": ROOT / "outputs/analysis/scaffold_ablation",
 }
+
+
+def _parse_run_tag(path: Path) -> tuple[int, int]:
+    """Extract (layer, sae_k) from run_ablation.py's own filename convention:
+    ablation_results_long_l{layer}_job{job_label}_k{sae_k}.parquet — so the
+    matching mass-delta parquet (same layer, same SAE) can be resolved, not
+    whatever unrelated file happens to be hardcoded."""
+    m = re.match(r"ablation_results_long_l(\d+)_job.+_k(\d+)\.parquet$", path.name)
+    if not m:
+        raise ValueError(f"Can't parse layer/sae_k from filename: {path.name}")
+    return int(m.group(1)), int(m.group(2))
 
 CONDITIONS = ["R", "C1"]
 
@@ -69,11 +81,11 @@ def compute_additivity(summary: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def compute_dfa_signed_sums(src_glob: str) -> pd.DataFrame:
-    """Long-format dfa_signed_sum per (clip_id, condition, target) from the source parquet."""
-    matches = list(ROOT.glob(src_glob))
-    assert len(matches) == 1, f"Expected 1 source parquet, found: {matches}"
-    src = pd.read_parquet(matches[0], columns=["clip_id", "signed_vec_R", "signed_vec_C1"])
+def compute_dfa_signed_sums(mass_delta_path: Path) -> pd.DataFrame:
+    """Long-format dfa_signed_sum per (clip_id, condition, target) from the
+    mass-delta parquet matching this run's layer/SAE (resolved by the caller
+    via _resolve_mass_delta_parquet, not a filename glob)."""
+    src = pd.read_parquet(mass_delta_path, columns=["clip_id", "signed_vec_R", "signed_vec_C1"])
     chunks = []
     for cond in CONDITIONS:
         mat = np.stack(src[f"signed_vec_{cond}"].to_numpy()).astype(np.float32)  # (N, 6144)
@@ -106,7 +118,14 @@ def compute_dfa_agreement(ablation_df: pd.DataFrame, dfa_sums: pd.DataFrame) -> 
 
 
 def main() -> None:
-    df = pd.read_parquet(CFG["source"])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("results_parquet", type=Path,
+                        help="path to run_ablation.py's ablation_results_long_l{layer}_job{job}_k{k}.parquet")
+    args = parser.parse_args()
+    layer, sae_k = _parse_run_tag(args.results_parquet)
+    suffix = args.results_parquet.stem.removeprefix("ablation_results_long_")
+
+    df = pd.read_parquet(args.results_parquet)
     print(f"  {len(df):,} rows  |  conditions: {sorted(df['perturbation_condition'].unique())}")
 
     out_dir: Path = CFG["out_dir"]
@@ -114,13 +133,15 @@ def main() -> None:
     did     = compute_diff_in_diff(summary)
     add     = compute_additivity(summary)
 
-    dfa_sums = compute_dfa_signed_sums(CFG["src_glob"])
+    mass_delta_path = _resolve_mass_delta_parquet(
+        {"name": suffix, "layer": layer, "sae_k": sae_k, "dataset": "ssv2"})
+    dfa_sums = compute_dfa_signed_sums(mass_delta_path)
     agree    = compute_dfa_agreement(df, dfa_sums)
 
-    summary.to_csv(out_dir / "ablation_summary.csv", index=False)
-    did.to_csv(out_dir / "ablation_diff_in_diff.csv", index=False)
-    add.to_csv(out_dir / "ablation_additivity.csv", index=False)
-    agree.to_csv(out_dir / "ablation_dfa_agreement.csv", index=False)
+    summary.to_csv(out_dir / f"ablation_summary_{suffix}.csv", index=False)
+    did.to_csv(out_dir / f"ablation_diff_in_diff_{suffix}.csv", index=False)
+    add.to_csv(out_dir / f"ablation_additivity_{suffix}.csv", index=False)
+    agree.to_csv(out_dir / f"ablation_dfa_agreement_{suffix}.csv", index=False)
 
     print(summary.to_string(index=False))
     print()
