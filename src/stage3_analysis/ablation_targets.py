@@ -5,22 +5,24 @@ the output parquet's run_tag is the permanent record of which targets a given
 result used — see ablation_summary_7.py for how a past run's targets are
 recovered after this file has moved on.
 
-L5 all7 — from scaffold_selection_consolidated.py's L5_x8k64_VM.csv (31/07/26,
-post-30/07 bias-fix, job7ep/k64), all 7 gate-passed on both DFA and z. Replaces
-the pre-fix "clean8" set this file held previously (1394/1784/1919/2468/2577/
-3246/3325/6006) — that was from the legacy job64 SAE, a different dictionary;
-those feature indices have no relationship to the current SAE's indices.
+L7 all4 — from scaffold_selection_consolidated.py's L7_x8k64_VM_all_features.csv
+(31/07/26, post-30/07 bias-fix, job7ep/k64): 6021/6032/5165 gate-passed on both
+DFA and z; 3347 is the near-miss — position-locked (tubelet 7, stable across
+R/C1/A) but fails the strict gate on DFA share/consistency at C1 specifically
+(0.891/0.994, just under the 0.90/1.0 thresholds). Included deliberately per
+Tom (31/07/26) to see if it behaves like a member or like a true non-member.
+
+L5's "all7" set (358/449/917/2093/3516/3938/5004) was run and analyzed
+31/07/26 — see ablation_results_long_l5_job7ep_k64.parquet — not repeated here
+since this file holds one layer's targets at a time (see docstring above).
 """
 
 TARGETS: dict[str, list[int]] = {
-    "single_358":  [358],
-    "single_449":  [449],
-    "single_917":  [917],
-    "single_2093": [2093],
-    "single_3516": [3516],
-    "single_3938": [3938],
-    "single_5004": [5004],
-    "all7":        [358, 449, 917, 2093, 3516, 3938, 5004],
+    "single_3347": [3347],
+    "single_5165": [5165],
+    "single_6021": [6021],
+    "single_6032": [6032],
+    "all4":        [3347, 5165, 6021, 6032],
 }
 
 SINGLETON_TARGETS = [k for k in TARGETS if k.startswith("single_")]
