@@ -80,24 +80,34 @@ def _resolve_scored_csv(cfg: dict) -> Path | None:
     return path if path.exists() else None
 
 
-# dfa_mass_delta_vm.py is a separate, untouched pipeline — its outputs are still
-# genuinely named with the pre-30/07 job_label strings, unrelated to the
-# position_lock_extraction.py merge's naming.
-_MASS_DELTA_JOB_LABEL = {64: "64", 128: "128_16x"}
+# Pre-30/07 job_label strings — dfa_mass_delta_vm.py's outputs only ever used
+# these until the 31/07 fresh L5/L7 job7ep reruns. Fallback only, tried after
+# the current "7ep" naming — never preferred (that was the bug: it was the
+# *only* thing tried, silently pairing fresh post-fix members against a
+# stale pre-fix mass-delta floor computed on a different activation distribution).
+_MASS_DELTA_LEGACY_JOB_LABEL = {64: "64", 128: "128_16x"}
 
 
 def _resolve_mass_delta_parquet(cfg: dict) -> Path:
-    """VM only — used for the ceiling check's per-clip signed-vector floor."""
+    """VM + SSv2 only — dfa_mass_delta_vm.py has no K400 equivalent (it reads
+    SSv2's manifest_SL_subset.json), so any other dataset raises immediately.
+    Prefers the current job7ep-suffixed file; falls back to the pre-fix
+    job64/128_16x-suffixed or fully-legacy file only if job7ep isn't there yet."""
+    if cfg["dataset"] != "ssv2":
+        raise FileNotFoundError(f"No mass-delta pipeline for dataset={cfg['dataset']!r} ({cfg['name']})")
     layer, sae_k = cfg["layer"], cfg["sae_k"]
-    job_label = _MASS_DELTA_JOB_LABEL[sae_k]
     d = CFG["mass_delta_dir"]
-    suffixed = d / f"dfa_mass_delta_vm_c1_l{layer}_job{job_label}_k{sae_k}.parquet"
+    current = d / f"dfa_mass_delta_vm_c1_l{layer}_job7ep_k{sae_k}.parquet"
+    if current.exists():
+        return current
+    legacy_label = _MASS_DELTA_LEGACY_JOB_LABEL.get(sae_k)
+    suffixed = d / f"dfa_mass_delta_vm_c1_l{layer}_job{legacy_label}_k{sae_k}.parquet"
     if suffixed.exists():
         return suffixed
     legacy = d / "dfa_mass_delta_vm_c1.parquet"
-    if (layer, job_label, sae_k) == (7, "64", 64) and legacy.exists():
+    if (layer, legacy_label, sae_k) == (7, "64", 64) and legacy.exists():
         return legacy
-    raise FileNotFoundError(f"No mass-delta parquet found for {cfg['name']}: {suffixed}")
+    raise FileNotFoundError(f"No mass-delta parquet found for {cfg['name']}: {current}")
 
 
 def _shuffle_raw_label(model: str) -> str:
