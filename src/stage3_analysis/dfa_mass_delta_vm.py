@@ -9,12 +9,13 @@ e.g. 6144 at 8x expansion vs 12288 at 16x) — feature indices are only meaningf
 within the SAE that produced them, never comparable across configs.
 
 Outputs (outputs/analysis/dfa_mass_delta_vm_c1/):
-    dfa_mass_delta_vm_c1_{layer}_job{job_label}_k{sae_k}.parquet
-    dfa_mass_delta_{layer}_job{job_label}_k{sae_k}.png
+    dfa_mass_delta_vm_c1_{dataset}_l{layer}_job{job_label}_k{sae_k}.parquet
+    dfa_mass_delta_{dataset}_l{layer}_job{job_label}_k{sae_k}.png
 
 Usage:
     uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7
     uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7 --sae-k 128
+    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --dataset kinetics400 --layer 7
 """
 
 import argparse
@@ -35,8 +36,13 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
+from transformers import AutoConfig
+
 from perturbationA import apply_midpoint_frame
-from ToT_utils import _strip_brackets, load_metadata, resolve_sae_checkpoint
+from ToT_utils import (
+    CHECKPOINT_REGISTRY, FRAME_SAMPLERS, _deterministic_seed, _strip_brackets, load_metadata,
+    resolve_sae_checkpoint,
+)
 from stage3_analysis.dfa_engine import DFAEngine
 
 SL_COLOURS = {"temporal": "steelblue", "static": "darkorange"}
@@ -51,22 +57,27 @@ CFG = {
     "video_dir":       os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "manifest_path":   str(ROOT / "outputs/Laura_SL/manifest_SL_subset.json"),
     "sl_csv_path":     str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
+    "k400_manifest_path": str(ROOT / "outputs/Laura_SL/k400_manifest_SL_subset.json"),
+    "k400_sl_csv_path": str(ROOT / "outputs/Laura_SL/k400_sl_class_mapping.csv"),
     "output_dir":      str(ROOT / "outputs/analysis/dfa_mass_delta_vm_c1"),
 }
 
 
-def build_sl_label_map(cfg: dict) -> dict[int, str]:
+def build_sl_label_map(cfg: dict, dataset_name: str) -> dict[int, str]:
+    if dataset_name == "kinetics400":
+        df = pd.read_csv(cfg["k400_sl_csv_path"]).dropna(subset=["matched_model_class_id"])
+        return {int(row["matched_model_class_id"]): row["sl_category"] for _, row in df.iterrows()}
     df = pd.read_csv(cfg["sl_csv_path"])
     return {int(row["class_id"]): row["category"] for _, row in df.iterrows()}
 
 
-def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
+def load_clips_ssv2(cfg: dict) -> list[tuple[str, int, Path]]:
     label_map, _, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
     video_dir = Path(cfg["video_dir"])
     with open(cfg["manifest_path"]) as f:
         manifest = json.load(f)
     result = []
-    for sl_label, entries in manifest.items():
+    for entries in manifest.values():
         for entry in entries:
             cid   = label_map.get(_strip_brackets(entry["template"]))
             path_r = video_dir / f"{entry['id']}.webm"
@@ -76,37 +87,68 @@ def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
     return result
 
 
-def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int, processor, device: str) -> torch.Tensor:
+def load_clips_kinetics(cfg: dict) -> list[tuple[str, int, Path]]:
+    """Mirrors position_lock_extraction.py's load_clips_kinetics: population is the
+    static k400_manifest_SL_subset.json, label->class_id is the one part that still
+    has to be resolved at runtime since it's checkpoint-specific, not population-defining."""
+    checkpoint = CHECKPOINT_REGISTRY[("videomae", "kinetics400")]
+    label2id   = AutoConfig.from_pretrained(checkpoint).label2id
+    with open(cfg["k400_manifest_path"]) as f:
+        manifest = json.load(f)
+    video_dir = Path(cfg["video_dir"])
+    result = []
+    for entries in manifest.values():
+        for entry in entries:
+            cid  = label2id.get(entry["label"])
+            path_r = video_dir / f"{entry['id']}.mp4"
+            if cid is not None and path_r.exists():
+                result.append((entry["id"], cid, path_r))
+    print(f"  {len(result)} clips from K400 SL manifest")
+    return result
+
+
+def load_clips(cfg: dict, dataset_name: str) -> list[tuple[str, int, Path]]:
+    if dataset_name == "kinetics400":
+        return load_clips_kinetics(cfg)
+    return load_clips_ssv2(cfg)
+
+
+def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int, processor, device: str,
+                  frame_sampler) -> torch.Tensor:
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
     n       = len(frames)
-    idx     = torch.linspace(0, n - 1, num_frames).long().tolist()
+    idx     = frame_sampler(n, num_frames)
     sampled = [frames[i] for i in idx]
     pairs   = [(sampled[i], sampled[i + 1]) for i in range(0, num_frames, 2)]
-    order   = np.random.default_rng(int(clip_id) % 2**32).permutation(len(pairs)).tolist()
+    order   = np.random.default_rng(_deterministic_seed(clip_id)).permutation(len(pairs)).tolist()
     result  = [f for i in order for f in pairs[i]]
     return processor(result, return_tensors="pt")["pixel_values"].to(device)
 
 
-def preprocess_a(clip_path: Path, num_frames: int, processor, device: str) -> torch.Tensor:
+def preprocess_a(clip_path: Path, num_frames: int, processor, device: str,
+                 frame_sampler) -> torch.Tensor:
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
     frames = apply_midpoint_frame(frames)
     n      = len(frames)
-    idx    = torch.linspace(0, n - 1, num_frames).long().tolist()
+    idx    = frame_sampler(n, num_frames)
     return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
 
 
-def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict) -> list[dict]:
+def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict,
+             frame_sampler) -> list[dict]:
     records = []
     for i, (clip_id, class_id, path_r) in enumerate(clips):
-        r_result = engine.run(path_r, class_id)
+        r_result = engine.run(path_r, class_id, frame_sampler=frame_sampler)
         if not r_result.correct:
             continue
-        pv_c1    = preprocess_c1(path_r, clip_id, engine._num_frames, engine._processor, cfg["device"])
-        pv_a     = preprocess_a(path_r, engine._num_frames, engine._processor, cfg["device"])
+        pv_c1    = preprocess_c1(path_r, clip_id, engine._num_frames, engine._processor,
+                                 cfg["device"], frame_sampler)
+        pv_a     = preprocess_a(path_r, engine._num_frames, engine._processor,
+                                cfg["device"], frame_sampler)
         c1_result = engine.run_pixels(pv_c1, class_id)
         a_result  = engine.run_pixels(pv_a, class_id)
         s_r  = r_result.signed_feature_summary.numpy().astype(np.float32)
@@ -170,27 +212,30 @@ def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path, out_su
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", choices=["ssv2", "kinetics400"], default="ssv2")
     parser.add_argument("--layer", type=int, required=True)
     parser.add_argument("--job-label", type=str, default="7ep")
     parser.add_argument("--sae-k", type=int, default=64, help="fallback if checkpoint lacks sae_k")
     args = parser.parse_args()
 
-    resolved   = resolve_sae_checkpoint("videomae", args.layer, sae_k=args.sae_k, job_label=args.job_label)
-    cfg        = {**CFG, **resolved, "layer": args.layer}
-    out_suffix = f"l{args.layer}_job{args.job_label}_k{resolved['sae_k']}"
-    print(f"Device: {cfg['device']}  Layer: {cfg['layer']}")
+    resolved   = resolve_sae_checkpoint("videomae", args.layer, dataset_name=args.dataset,
+                                        sae_k=args.sae_k, job_label=args.job_label)
+    cfg           = {**CFG, **resolved, "layer": args.layer}
+    frame_sampler = FRAME_SAMPLERS[args.dataset]
+    out_suffix    = f"{args.dataset}_l{args.layer}_job{args.job_label}_k{resolved['sae_k']}"
+    print(f"Device: {cfg['device']}  Layer: {cfg['layer']}  Dataset: {args.dataset}")
     print(f"SAE: {Path(cfg['sae_path']).name}  sae_k={cfg['sae_k']}")
 
     out_dir = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    sl_map = build_sl_label_map(cfg)
-    clips  = load_clips(cfg)
+    sl_map = build_sl_label_map(cfg, args.dataset)
+    clips  = load_clips(cfg, args.dataset)
 
     with DFAEngine(cfg["model_flag"], cfg["sae_path"], cfg["dim_mean_path"],
                    layer=cfg["layer"], device=cfg["device"],
-                   sae_k=cfg["sae_k"]) as engine:
-        records = run_clips(engine, clips, cfg)
+                   sae_k=cfg["sae_k"], dataset_name=args.dataset) as engine:
+        records = run_clips(engine, clips, cfg, frame_sampler)
 
     save_parquet(records, sl_map, out_dir, out_suffix)
     make_plot(records, sl_map, out_dir, out_suffix)

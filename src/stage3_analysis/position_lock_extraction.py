@@ -30,10 +30,10 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
-import zlib
 from collections import defaultdict
 from pathlib import Path
 
@@ -55,10 +55,9 @@ from transformers import AutoConfig
 from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
 from ToT_utils import (
-    CHECKPOINT_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY, N_SPATIAL, _strip_brackets,
-    load_metadata, resolve_sae_checkpoint,
+    CHECKPOINT_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY, N_SPATIAL, _deterministic_seed,
+    _strip_brackets, load_metadata, resolve_sae_checkpoint,
 )
-from spliced_accuracy_vm import load_kinetics_metadata
 from stage3_analysis.dfa_engine import DFAEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -78,6 +77,7 @@ CFG = {
     ),
     "sl_csv_path":      str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
     "k400_sl_csv_path": str(ROOT / "outputs/Laura_SL/k400_sl_class_mapping.csv"),
+    "k400_manifest_path": str(ROOT / "outputs/Laura_SL/k400_manifest_SL_subset.json"),
     "output_dir":      str(ROOT / "outputs/analysis/position_lock"),
 }
 
@@ -98,18 +98,24 @@ def load_clips_ssv2(cfg: dict) -> list[tuple[str, int, Path]]:
 
 
 def load_clips_kinetics(cfg: dict, model_flag: str) -> list[tuple[str, int, Path]]:
-    """K400 class scope = the full SL-matched set from k400_sl_mapping.py's output
-    (up to 64 classes), not yet filtered to an eligible subset (per-class accuracy
-    >= 40% gate is separate follow-up work, pending perturb_accuracy_vm_kinetics.py's
-    R-condition results)."""
+    """K400 population is the static manifest (outputs/Laura_SL/k400_manifest_SL_subset.json,
+    built once by notebooks/build_k400_sl_manifest.py) rather than re-derived per run —
+    mirrors load_clips_ssv2's split between a fixed clip population and a runtime
+    label->class_id lookup (label2id plays the same role here as SSv2's label_map)."""
     checkpoint = CHECKPOINT_REGISTRY[(model_flag, "kinetics400")]
     label2id   = AutoConfig.from_pretrained(checkpoint).label2id
-    eligible   = set(pd.read_csv(cfg["k400_sl_csv_path"])["matched_model_class_id"].dropna().astype(int))
+    with open(cfg["k400_manifest_path"]) as f:
+        manifest = json.load(f)
 
     video_dir = Path(cfg["video_dir"])
-    paths, labels, _ = load_kinetics_metadata(cfg["kinetics_labels_csv"], video_dir, label2id)
-    result = [(p.stem, l, p) for p, l in zip(paths, labels) if l in eligible]
-    log.info(f"  {len(result):,} clips across {len(eligible)} K400 SL-matched classes")
+    result = []
+    for entries in manifest.values():
+        for entry in entries:
+            cid  = label2id.get(entry["label"])
+            path = video_dir / f"{entry['id']}.mp4"
+            if cid is not None and path.exists():
+                result.append((entry["id"], cid, path))
+    log.info(f"  {len(result):,} clips from K400 SL manifest")
     return result
 
 
@@ -125,19 +131,6 @@ def load_sl_map(cfg: dict, dataset_name: str) -> dict[int, str]:
                 for _, r in pd.read_csv(cfg["sl_csv_path"]).iterrows()}
     df = pd.read_csv(cfg["k400_sl_csv_path"]).dropna(subset=["matched_model_class_id"])
     return {int(r["matched_model_class_id"]): r["sl_category"] for _, r in df.iterrows()}
-
-
-def _deterministic_seed(clip_id: str) -> int:
-    """RNG seed for shuffle conditions. SSv2 clip_ids are numeric strings —
-    int() used directly, preserving the exact seed already validated against
-    real SSv2 output. K400 clip_ids are YouTube-style strings (e.g.
-    'XAoQRtv6OyA_000088_000098') that int() can't parse — every K400 clip was
-    hitting this and getting skipped (confirmed 31/07 on Isambard). Falls back
-    to a deterministic hash only when int() fails, so SSv2 is untouched."""
-    try:
-        return int(clip_id) % 2**32
-    except ValueError:
-        return zlib.crc32(clip_id.encode()) % 2**32
 
 
 def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int,

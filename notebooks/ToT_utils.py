@@ -3,6 +3,7 @@ Shared utilities for temporal-or-textural notebooks.
 """
 
 import json
+import zlib
 from pathlib import Path
 
 import av
@@ -157,6 +158,21 @@ def gather_by_position(tokens: torch.Tensor, model_flag: str) -> torch.Tensor:
 
 def _strip_brackets(template: str) -> str:
     return template.replace("[", "").replace("]", "")
+
+
+def _deterministic_seed(clip_id: str) -> int:
+    """RNG seed for shuffle conditions. SSv2 clip_ids are numeric strings — int()
+    used directly, preserving the exact seed already validated against real SSv2
+    output. K400 clip_ids are YouTube-style strings (e.g. 'XAoQRtv6OyA_000088_000098')
+    that int() can't parse — every K400 clip was hitting this and getting skipped
+    (confirmed 31/07 on Isambard). Falls back to a deterministic hash only when
+    int() fails, so SSv2 is untouched. Moved here from position_lock_extraction.py
+    (03/08) so dfa_mass_delta_vm.py's K400 path can reuse it instead of re-hitting
+    the same bug."""
+    try:
+        return int(clip_id) % 2**32
+    except ValueError:
+        return zlib.crc32(clip_id.encode()) % 2**32
 
 
 def load_metadata(
