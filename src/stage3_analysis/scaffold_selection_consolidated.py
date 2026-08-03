@@ -89,25 +89,31 @@ _MASS_DELTA_LEGACY_JOB_LABEL = {64: "64", 128: "128_16x"}
 
 
 def _resolve_mass_delta_parquet(cfg: dict) -> Path:
-    """VM + SSv2 only — dfa_mass_delta_vm.py has no K400 equivalent (it reads
-    SSv2's manifest_SL_subset.json), so any other dataset raises immediately.
-    Prefers the current job7ep-suffixed file; falls back to the pre-fix
-    job64/128_16x-suffixed or fully-legacy file only if job7ep isn't there yet."""
-    if cfg["dataset"] != "ssv2":
-        raise FileNotFoundError(f"No mass-delta pipeline for dataset={cfg['dataset']!r} ({cfg['name']})")
-    layer, sae_k = cfg["layer"], cfg["sae_k"]
+    """dataset-tokened pattern preferred (what dfa_mass_delta_vm.py writes since
+    03/08's K400 parameterization). ssv2 additionally falls back to the pre-token
+    filenames (all pre-03/08 runs) so existing outputs keep resolving — job7ep
+    suffix preferred, then the pre-fix job64/128_16x-suffixed or fully-legacy
+    file. K400 has no pre-03/08 files, so it only ever checks the tokened
+    pattern — gating the ssv2 fallbacks to dataset=="ssv2" (not just "else")
+    stops a kinetics400 config from silently picking up an ssv2 file of the
+    same layer/sae_k (same bug caught in run_ablation.py's equivalent lookup)."""
+    layer, sae_k, dataset = cfg["layer"], cfg["sae_k"], cfg["dataset"]
     d = CFG["mass_delta_dir"]
-    current = d / f"dfa_mass_delta_vm_c1_l{layer}_job7ep_k{sae_k}.parquet"
-    if current.exists():
-        return current
-    legacy_label = _MASS_DELTA_LEGACY_JOB_LABEL.get(sae_k)
-    suffixed = d / f"dfa_mass_delta_vm_c1_l{layer}_job{legacy_label}_k{sae_k}.parquet"
-    if suffixed.exists():
-        return suffixed
-    legacy = d / "dfa_mass_delta_vm_c1.parquet"
-    if (layer, legacy_label, sae_k) == (7, "64", 64) and legacy.exists():
-        return legacy
-    raise FileNotFoundError(f"No mass-delta parquet found for {cfg['name']}: {current}")
+    tokened = d / f"dfa_mass_delta_vm_c1_{dataset}_l{layer}_job7ep_k{sae_k}.parquet"
+    if tokened.exists():
+        return tokened
+    if dataset == "ssv2":
+        current = d / f"dfa_mass_delta_vm_c1_l{layer}_job7ep_k{sae_k}.parquet"
+        if current.exists():
+            return current
+        legacy_label = _MASS_DELTA_LEGACY_JOB_LABEL.get(sae_k)
+        suffixed = d / f"dfa_mass_delta_vm_c1_l{layer}_job{legacy_label}_k{sae_k}.parquet"
+        if suffixed.exists():
+            return suffixed
+        legacy = d / "dfa_mass_delta_vm_c1.parquet"
+        if (layer, legacy_label, sae_k) == (7, "64", 64) and legacy.exists():
+            return legacy
+    raise FileNotFoundError(f"No mass-delta parquet found for {cfg['name']}: {tokened}")
 
 
 def _shuffle_raw_label(model: str) -> str:
@@ -278,8 +284,8 @@ def ceiling_check(cfg: dict, members: list[int]) -> dict:
     try:
         mass_delta_path = _resolve_mass_delta_parquet(cfg)
     except FileNotFoundError:
-        # K400 has no dfa_mass_delta_vm.py equivalent (that pipeline reads
-        # SSv2's manifest_SL_subset.json) — no ceiling comparator exists yet.
+        # Graceful degrade — the config's mass-delta parquet hasn't been
+        # produced yet (e.g. K400 configs before their Isambard DFA run lands).
         return no_ceiling
     df = pd.read_parquet(mass_delta_path)
     mat = np.stack(df["signed_vec_R"].to_numpy()).astype(np.float32)

@@ -19,12 +19,14 @@ Clip source: SL manifest (same as dfa_mass_delta_vm.py). R-correctness is
 recomputed fresh under the dual-spliced baseline, not reused from either
 single-layer roster — splicing two SAEs at once can shift borderline clips.
 
-Outputs: outputs/analysis/scaffold_ablation/ablation_cross_l5_l7.parquet
+Outputs: outputs/analysis/scaffold_ablation/ablation_cross_l5_l7_{dataset}.parquet
 
 Usage:
     uv run python src/stage3_analysis/ablation_cross_l5_l7.py
+    uv run python src/stage3_analysis/ablation_cross_l5_l7.py --dataset kinetics400
 """
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -37,7 +39,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
-from ToT_utils import MODEL_REGISTRY, resolve_sae_checkpoint
+from ToT_utils import CHECKPOINT_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY, resolve_sae_checkpoint
 from sae import BatchTopKSAE
 from stage3_analysis.dfa_engine import _preprocess_clip
 from stage3_analysis.dfa_mass_delta_vm import build_sl_label_map, load_clips
@@ -53,6 +55,8 @@ CFG = {
     "video_dir":       os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
     "manifest_path":   str(ROOT / "outputs/Laura_SL/manifest_SL_subset.json"),
     "sl_csv_path":     str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
+    "k400_manifest_path": str(ROOT / "outputs/Laura_SL/k400_manifest_SL_subset.json"),
+    "k400_sl_csv_path": str(ROOT / "outputs/Laura_SL/k400_sl_class_mapping.csv"),
     "out_dir":         ROOT / "outputs/analysis/scaffold_ablation",
 }
 
@@ -79,14 +83,13 @@ def make_splice_hook(sae, dim_mean, cls_offset, state):
     return hook
 
 
-def load_model_and_splices(cfg: dict):
+def load_model_and_splices(cfg: dict, dataset_name: str):
     """Loads VideoMAE once, both SAEs (L5, L7), registers both hooks —
     DFAEngine.__enter__'s per-SAE loading (checkpoint, dim_mean, running-
     threshold warmup, freeze) repeated for two layers instead of one."""
-    from ToT_utils import CHECKPOINT_REGISTRY
     model_cfg  = MODEL_REGISTRY[cfg["model_flag"]]
     device     = cfg["device"]
-    checkpoint = CHECKPOINT_REGISTRY[(cfg["model_flag"], "ssv2")]
+    checkpoint = CHECKPOINT_REGISTRY[(cfg["model_flag"], dataset_name)]
     processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
     model      = model_cfg["model_class"].from_pretrained(checkpoint)
     model.to(device).eval()
@@ -95,7 +98,7 @@ def load_model_and_splices(cfg: dict):
 
     states, handles = {}, []
     for layer in [5, 7]:
-        resolved = resolve_sae_checkpoint(cfg["model_flag"], layer, dataset_name="ssv2", sae_k=64, job_label="7ep")
+        resolved = resolve_sae_checkpoint(cfg["model_flag"], layer, dataset_name=dataset_name, sae_k=64, job_label="7ep")
         dim_mean = torch.load(resolved["dim_mean_path"], weights_only=True).to(device)
         ckpt = torch.load(resolved["sae_path"], weights_only=True, map_location=device)
         state_dict = ckpt["sae_state_dict"] if "sae_state_dict" in ckpt else ckpt
@@ -132,14 +135,20 @@ def run_forward(model, pixel_values: torch.Tensor, correct_class_idx: int) -> tu
 
 
 def main() -> None:
-    sl_map = build_sl_label_map(CFG)
-    clips  = load_clips(CFG)
-    model, processor, num_frames, states, handles = load_model_and_splices(CFG)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", choices=["ssv2", "kinetics400"], default="ssv2")
+    args = parser.parse_args()
+
+    frame_sampler = FRAME_SAMPLERS[args.dataset]
+    sl_map = build_sl_label_map(CFG, args.dataset)
+    clips  = load_clips(CFG, args.dataset)
+    model, processor, num_frames, states, handles = load_model_and_splices(CFG, args.dataset)
 
     rows = []
     try:
         for i, (clip_id, class_id, clip_path) in enumerate(clips):
-            pixel_values = _preprocess_clip(clip_path, num_frames, processor, CFG["device"])
+            pixel_values = _preprocess_clip(clip_path, num_frames, processor, CFG["device"],
+                                            frame_sampler=frame_sampler)
             states[5]["ablate_indices"] = []
             states[7]["ablate_indices"] = []
             base_logit, base_pred, base_correct = run_forward(model, pixel_values, class_id)
@@ -164,7 +173,7 @@ def main() -> None:
     df = pd.DataFrame(rows)
     out_dir = CFG["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "ablation_cross_l5_l7.parquet"
+    out_path = out_dir / f"ablation_cross_l5_l7_{args.dataset}.parquet"
     df.to_parquet(out_path, index=False)
     print(f"  {len(df):,} rows → {out_path}")
 

@@ -30,15 +30,17 @@ CFG = {
 }
 
 
-def _parse_run_tag(path: Path) -> tuple[int, int]:
-    """Extract (layer, sae_k) from run_ablation.py's own filename convention:
-    ablation_results_long_l{layer}_job{job_label}_k{sae_k}.parquet — so the
-    matching mass-delta parquet (same layer, same SAE) can be resolved, not
-    whatever unrelated file happens to be hardcoded."""
-    m = re.match(r"ablation_results_long_l(\d+)_job.+_k(\d+)\.parquet$", path.name)
+def _parse_run_tag(path: Path) -> tuple[str, int, int]:
+    """Extract (dataset, layer, sae_k) from run_ablation.py's filename convention:
+    ablation_results_long_{dataset}_l{layer}_job{job_label}_k{sae_k}.parquet —
+    so the matching mass-delta parquet (same dataset, layer, SAE) can be
+    resolved, not whatever unrelated file happens to be hardcoded. Dataset
+    token is optional in the regex — pre-03/08 SSv2 runs have no token in their
+    filename, and defaulting those to "ssv2" keeps existing files resolving."""
+    m = re.match(r"ablation_results_long_(?:(ssv2|kinetics400)_)?l(\d+)_job.+_k(\d+)\.parquet$", path.name)
     if not m:
-        raise ValueError(f"Can't parse layer/sae_k from filename: {path.name}")
-    return int(m.group(1)), int(m.group(2))
+        raise ValueError(f"Can't parse dataset/layer/sae_k from filename: {path.name}")
+    return m.group(1) or "ssv2", int(m.group(2)), int(m.group(3))
 
 CONDITIONS = ["R", "C1"]
 
@@ -122,7 +124,7 @@ def main() -> None:
     parser.add_argument("results_parquet", type=Path,
                         help="path to run_ablation.py's ablation_results_long_l{layer}_job{job}_k{k}.parquet")
     args = parser.parse_args()
-    layer, sae_k = _parse_run_tag(args.results_parquet)
+    dataset, layer, sae_k = _parse_run_tag(args.results_parquet)
     suffix = args.results_parquet.stem.removeprefix("ablation_results_long_")
 
     df = pd.read_parquet(args.results_parquet)
@@ -134,7 +136,7 @@ def main() -> None:
     add     = compute_additivity(summary)
 
     mass_delta_path = _resolve_mass_delta_parquet(
-        {"name": suffix, "layer": layer, "sae_k": sae_k, "dataset": "ssv2"})
+        {"name": suffix, "layer": layer, "sae_k": sae_k, "dataset": dataset})
     dfa_sums = compute_dfa_signed_sums(mass_delta_path)
     agree    = compute_dfa_agreement(df, dfa_sums)
 

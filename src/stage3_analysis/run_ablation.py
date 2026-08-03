@@ -10,6 +10,7 @@ Outputs (outputs/analysis/scaffold_ablation/):
 
 Usage:
     uv run python src/stage3_analysis/run_ablation.py
+    uv run python src/stage3_analysis/run_ablation.py --dataset kinetics400 --layer 7
 """
 
 import argparse
@@ -32,7 +33,7 @@ sys.path.insert(0, str(ROOT / "notebooks"))
 
 from stage3_analysis.dfa_engine import DFAEngine, _preprocess_clip
 from stage3_analysis.ablation_targets import TARGETS
-from ToT_utils import resolve_sae_checkpoint
+from ToT_utils import FRAME_SAMPLERS, _deterministic_seed, resolve_sae_checkpoint
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -46,50 +47,64 @@ CFG = {
 }
 
 
-def _resolve_source_parquet(mass_delta_dir: Path, layer: int, job_label: str, sae_k: int) -> Path:
-    """Per-clip signed-vector source — suffixed pattern preferred, falling back
-    to the legacy unsuffixed file only for the original L7/job64/k64 baseline
-    (matches scaffold_mass_pct.locate_source's precedent)."""
-    suffixed = mass_delta_dir / f"dfa_mass_delta_vm_c1_l{layer}_job{job_label}_k{sae_k}.parquet"
-    if suffixed.exists():
-        return suffixed
-    legacy = mass_delta_dir / "dfa_mass_delta_vm_c1.parquet"
-    if (layer, job_label, sae_k) == (7, "64", 64) and legacy.exists():
-        return legacy
-    raise FileNotFoundError(f"No mass-delta source parquet found: {suffixed}")
+def _resolve_source_parquet(mass_delta_dir: Path, dataset_name: str, layer: int,
+                            job_label: str, sae_k: int) -> Path:
+    """Per-clip signed-vector source. dataset-tokened pattern preferred (what
+    dfa_mass_delta_vm.py writes since 03/08's K400 parameterization); falls back
+    to the pre-token filename (all pre-03/08 SSv2 runs) so existing outputs keep
+    resolving, then to the original unsuffixed legacy file for the L7/job64/k64
+    baseline (matches scaffold_mass_pct.locate_source's precedent)."""
+    tokened = mass_delta_dir / f"dfa_mass_delta_vm_c1_{dataset_name}_l{layer}_job{job_label}_k{sae_k}.parquet"
+    if tokened.exists():
+        return tokened
+    # Untokened files only ever existed for ssv2 runs (pre-03/08) — gating on
+    # dataset_name here stops a kinetics400 request from silently picking up an
+    # ssv2 file of the same layer/job/sae_k just because the name happens to match.
+    if dataset_name == "ssv2":
+        untokened = mass_delta_dir / f"dfa_mass_delta_vm_c1_l{layer}_job{job_label}_k{sae_k}.parquet"
+        if untokened.exists():
+            return untokened
+        legacy = mass_delta_dir / "dfa_mass_delta_vm_c1.parquet"
+        if (layer, job_label, sae_k) == (7, "64", 64) and legacy.exists():
+            return legacy
+    raise FileNotFoundError(f"No mass-delta source parquet found: {tokened}")
 
 
-def load_clips(cfg: dict) -> list[tuple[str, int, str, Path]]:
+def load_clips(cfg: dict, dataset_name: str) -> list[tuple[str, int, str, Path]]:
+    ext = "webm" if dataset_name == "ssv2" else "mp4"
     df = pd.read_parquet(cfg["source_parquet"])
     video_dir = Path(cfg["video_dir"])
     result = []
     for _, row in df.iterrows():
-        path = video_dir / f"{row['clip_id']}.webm"
+        path = video_dir / f"{row['clip_id']}.{ext}"
         if path.exists():
             result.append((str(row["clip_id"]), int(row["class_id"]), row["sl_label"], path))
     log.info(f"  {len(result):,} clips found  ({len(df) - len(result)} missing on disk)")
     return result
 
 
-def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int, processor, device: str) -> torch.Tensor:
+def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int, processor, device: str,
+                  frame_sampler) -> torch.Tensor:
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
     n       = len(frames)
-    idx     = torch.linspace(0, n - 1, num_frames).long().tolist()
+    idx     = frame_sampler(n, num_frames)
     sampled = [frames[i] for i in idx]
     pairs   = [(sampled[i], sampled[i + 1]) for i in range(0, num_frames, 2)]
-    order   = np.random.default_rng(int(clip_id) % 2**32).permutation(len(pairs)).tolist()
+    order   = np.random.default_rng(_deterministic_seed(clip_id)).permutation(len(pairs)).tolist()
     result  = [f for i in order for f in pairs[i]]
     return processor(result, return_tensors="pt")["pixel_values"].to(device)
 
 
 def run_clip(
     engine: DFAEngine, clip_id: str, class_id: int,
-    sl_label: str, clip_path: Path, device: str,
+    sl_label: str, clip_path: Path, device: str, frame_sampler,
 ) -> list[dict]:
-    pv_r  = _preprocess_clip(clip_path, engine._num_frames, engine._processor, device)
-    pv_c1 = preprocess_c1(clip_path, clip_id, engine._num_frames, engine._processor, device)
+    pv_r  = _preprocess_clip(clip_path, engine._num_frames, engine._processor, device,
+                             frame_sampler=frame_sampler)
+    pv_c1 = preprocess_c1(clip_path, clip_id, engine._num_frames, engine._processor, device,
+                          frame_sampler)
     rows  = []
     for cond, pv in [("R", pv_r), ("C1", pv_c1)]:
         z_cache = engine.get_z_pixels(pv)
@@ -115,6 +130,7 @@ def run_clip(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", choices=["ssv2", "kinetics400"], default="ssv2")
     parser.add_argument("--layer", type=int, default=7)
     parser.add_argument("--job-label", type=str, default="7ep")
     parser.add_argument("--sae-k", type=int, default=64)
@@ -127,9 +143,12 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     dry_run = args.dry_run
-    resolved = resolve_sae_checkpoint("videomae", args.layer, sae_k=args.sae_k, job_label=args.job_label)
-    source_parquet = _resolve_source_parquet(CFG["mass_delta_dir"], args.layer, args.job_label, args.sae_k)
-    run_tag = args.run_tag or f"l{args.layer}_job{args.job_label}_k{args.sae_k}"
+    frame_sampler = FRAME_SAMPLERS[args.dataset]
+    resolved = resolve_sae_checkpoint("videomae", args.layer, dataset_name=args.dataset,
+                                      sae_k=args.sae_k, job_label=args.job_label)
+    source_parquet = _resolve_source_parquet(CFG["mass_delta_dir"], args.dataset, args.layer,
+                                             args.job_label, args.sae_k)
+    run_tag = args.run_tag or f"{args.dataset}_l{args.layer}_job{args.job_label}_k{args.sae_k}"
     cfg = {**CFG, **resolved, "layer": args.layer, "source_parquet": source_parquet, "run_tag": run_tag}
     out_dir: Path = cfg["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -137,7 +156,8 @@ def main() -> None:
     (out_dir / "ablation_targets.json").write_text(json.dumps(TARGETS, indent=2))
     log.info(f"Targets ({len(TARGETS)}): {list(TARGETS.keys())}")
 
-    clips = load_clips(cfg)
+    clips = load_clips(cfg, args.dataset)
+    full_clip_count = len(clips)
     if dry_run:
         clips = clips[:10]
         log.info("DRY RUN — 10 clips only")
@@ -145,11 +165,13 @@ def main() -> None:
     all_rows  = []
     clip_times = []
     with DFAEngine(cfg["model_flag"], cfg["sae_path"], cfg["dim_mean_path"],
-                   layer=cfg["layer"], device=cfg["device"], sae_k=cfg["sae_k"]) as engine:
+                   layer=cfg["layer"], device=cfg["device"], sae_k=cfg["sae_k"],
+                   dataset_name=args.dataset) as engine:
         for i, (clip_id, class_id, sl_label, clip_path) in enumerate(clips):
             t0 = time.time()
             try:
-                all_rows.extend(run_clip(engine, clip_id, class_id, sl_label, clip_path, cfg["device"]))
+                all_rows.extend(run_clip(engine, clip_id, class_id, sl_label, clip_path,
+                                         cfg["device"], frame_sampler))
             except Exception as exc:
                 log.warning(f"SKIP {clip_id}: {exc}")
             elapsed = time.time() - t0
@@ -163,7 +185,8 @@ def main() -> None:
     log.info(f"  {len(df):,} rows → {out_path}")
     if dry_run and clip_times:
         mean_s = sum(clip_times) / len(clip_times)
-        log.info(f"  Mean {mean_s:.1f}s/clip → full run estimate: {3558 * mean_s / 3600:.1f} hours")
+        log.info(f"  Mean {mean_s:.1f}s/clip → full run ({full_clip_count} clips) "
+                 f"estimate: {full_clip_count * mean_s / 3600:.1f} hours")
 
 
 if __name__ == "__main__":
