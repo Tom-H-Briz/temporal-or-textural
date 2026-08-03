@@ -71,9 +71,6 @@ CFG = {
     "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir":       os.environ.get("VIDEO_DIR",        str(ROOT / "data/ssv2/20bn-something-something-v2")),
-    "kinetics_labels_csv": os.environ.get(
-        "KINETICS_LABELS_CSV", str(ROOT / "data/kinetics400/annotations/val.csv")
-    ),
     "sl_csv_path":      str(ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv"),
     "k400_sl_csv_path": str(ROOT / "outputs/Laura_SL/k400_sl_class_mapping.csv"),
     "k400_manifest_path": str(ROOT / "outputs/Laura_SL/k400_manifest_SL_subset.json"),
