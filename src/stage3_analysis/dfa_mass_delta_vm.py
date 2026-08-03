@@ -36,13 +36,11 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
-from transformers import AutoConfig
-
 from perturbationA import apply_midpoint_frame
 from ToT_utils import (
-    CHECKPOINT_REGISTRY, FRAME_SAMPLERS, _deterministic_seed, _strip_brackets, load_metadata,
-    resolve_sae_checkpoint,
+    FRAME_SAMPLERS, _deterministic_seed, _strip_brackets, load_metadata, resolve_sae_checkpoint,
 )
+from ToT_utils import load_clips_kinetics as tot_load_clips_kinetics
 from stage3_analysis.dfa_engine import DFAEngine
 
 SL_COLOURS = {"temporal": "steelblue", "static": "darkorange"}
@@ -88,21 +86,11 @@ def load_clips_ssv2(cfg: dict) -> list[tuple[str, int, Path]]:
 
 
 def load_clips_kinetics(cfg: dict) -> list[tuple[str, int, Path]]:
-    """Mirrors position_lock_extraction.py's load_clips_kinetics: population is the
-    static k400_manifest_SL_subset.json, label->class_id is the one part that still
-    has to be resolved at runtime since it's checkpoint-specific, not population-defining."""
-    checkpoint = CHECKPOINT_REGISTRY[("videomae", "kinetics400")]
-    label2id   = AutoConfig.from_pretrained(checkpoint).label2id
-    with open(cfg["k400_manifest_path"]) as f:
-        manifest = json.load(f)
-    video_dir = Path(cfg["video_dir"])
-    result = []
-    for entries in manifest.values():
-        for entry in entries:
-            cid  = label2id.get(entry["label"])
-            path_r = video_dir / f"{entry['id']}.mp4"
-            if cid is not None and path_r.exists():
-                result.append((entry["id"], cid, path_r))
+    """Thin cfg-unpacking wrapper — see ToT_utils.load_clips_kinetics for the
+    shared logic (manifest schema, why label2id is resolved at call time, why
+    no held-out/correctness filtering) and position_lock_extraction.py for the
+    other caller this was consolidated from (03/08)."""
+    result = tot_load_clips_kinetics(cfg["k400_manifest_path"], cfg["video_dir"], "videomae")
     print(f"  {len(result)} clips from K400 SL manifest")
     return result
 

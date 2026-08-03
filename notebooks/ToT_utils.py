@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import (
+    AutoConfig,
     AutoImageProcessor,
     TimesformerForVideoClassification,
     VideoMAEForVideoClassification,
@@ -198,6 +199,51 @@ def load_metadata(
         print(f"  Warning: dropped {n_dropped} clips with templates not in labels.json")
 
     return label_map, clips, id2template
+
+
+def load_clips_kinetics(
+    manifest_path: str, video_dir: str, model_flag: str
+) -> list[tuple[str, int, Path]]:
+    """K400's equivalent of load_metadata() above: given a static SL-subset
+    manifest, return every (clip_id, class_id, video_path) triple ready to feed
+    a DFAEngine run. Shared by position_lock_extraction.py, dfa_mass_delta_vm.py,
+    and ablation_cross_l5_l7.py (03/08) — was duplicated near-identically across
+    the first two, same "one shared function, not N copies" precedent as
+    resolve_sae_checkpoint above.
+
+    manifest_path: outputs/Laura_SL/k400_manifest_SL_subset.json, built once by
+    notebooks/build_k400_sl_manifest.py. Schema: {"temporal": [...], "static": [...]},
+    each entry {"id": <clip filename stem>, "label": <K400 class name>}. This is
+    the ENTIRE clip population — no held-out/train split, no correctness gate,
+    same scope as SSv2's manifest_SL_subset.json (see 03/08 CC brief: SSv2 has
+    never excluded SAE-training clips from analysis, so K400 matches that rather
+    than diverging from it).
+
+    label2id is resolved here, at call time, rather than baked into the manifest,
+    because it's checkpoint-specific (the finetuned model's own output-index
+    space) — not part of "which clips are in the SL population", which is fixed.
+    Keeping the two separate means a checkpoint swap can't silently change which
+    clips are in scope, only how their labels map to logit indices.
+
+    Clips are filtered to ones whose video file actually exists on disk — the
+    manifest is built from val.csv metadata alone, with no guarantee the .mp4 is
+    present locally (K400 clips are Isambard-synced separately, per this
+    project's data-sync convention).
+    """
+    checkpoint = CHECKPOINT_REGISTRY[(model_flag, "kinetics400")]
+    label2id   = AutoConfig.from_pretrained(checkpoint).label2id
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+
+    video_dir_path = Path(video_dir)
+    result = []
+    for entries in manifest.values():
+        for entry in entries:
+            cid  = label2id.get(entry["label"])
+            path = video_dir_path / f"{entry['id']}.mp4"
+            if cid is not None and path.exists():
+                result.append((entry["id"], cid, path))
+    return result
 
 
 def make_sae_splice_hook(

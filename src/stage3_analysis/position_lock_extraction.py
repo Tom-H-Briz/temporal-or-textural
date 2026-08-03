@@ -50,14 +50,13 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
-from transformers import AutoConfig
-
 from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
 from ToT_utils import (
-    CHECKPOINT_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY, N_SPATIAL, _deterministic_seed,
-    _strip_brackets, load_metadata, resolve_sae_checkpoint,
+    FRAME_SAMPLERS, MODEL_REGISTRY, N_SPATIAL, _deterministic_seed, _strip_brackets,
+    load_metadata, resolve_sae_checkpoint,
 )
+from ToT_utils import load_clips_kinetics as tot_load_clips_kinetics
 from stage3_analysis.dfa_engine import DFAEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -98,23 +97,11 @@ def load_clips_ssv2(cfg: dict) -> list[tuple[str, int, Path]]:
 
 
 def load_clips_kinetics(cfg: dict, model_flag: str) -> list[tuple[str, int, Path]]:
-    """K400 population is the static manifest (outputs/Laura_SL/k400_manifest_SL_subset.json,
-    built once by notebooks/build_k400_sl_manifest.py) rather than re-derived per run —
-    mirrors load_clips_ssv2's split between a fixed clip population and a runtime
-    label->class_id lookup (label2id plays the same role here as SSv2's label_map)."""
-    checkpoint = CHECKPOINT_REGISTRY[(model_flag, "kinetics400")]
-    label2id   = AutoConfig.from_pretrained(checkpoint).label2id
-    with open(cfg["k400_manifest_path"]) as f:
-        manifest = json.load(f)
-
-    video_dir = Path(cfg["video_dir"])
-    result = []
-    for entries in manifest.values():
-        for entry in entries:
-            cid  = label2id.get(entry["label"])
-            path = video_dir / f"{entry['id']}.mp4"
-            if cid is not None and path.exists():
-                result.append((entry["id"], cid, path))
+    """Thin cfg-unpacking wrapper — see ToT_utils.load_clips_kinetics for the
+    shared logic (manifest schema, why label2id is resolved at call time, why
+    no held-out/correctness filtering) and dfa_mass_delta_vm.py for the other
+    caller this was consolidated from (03/08)."""
+    result = tot_load_clips_kinetics(cfg["k400_manifest_path"], cfg["video_dir"], model_flag)
     log.info(f"  {len(result):,} clips from K400 SL manifest")
     return result
 
