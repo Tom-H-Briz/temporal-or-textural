@@ -3,7 +3,7 @@
 #SBATCH --output=run_perturb_accuracy_vm_kinetics_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=03:00:00
+#SBATCH --time=04:00:00
 
 # Conditions R/A/C1. VIDEO_DIR/KINETICS_LABELS_CSV must be set explicitly — unlike
 # train_sae_vm_kinetics.sh (which never calls load_kinetics_metadata), this script
