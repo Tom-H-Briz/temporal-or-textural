@@ -1,12 +1,13 @@
 """
 Scaffold ablation extraction — logit-level, R + C1.
 
-For each R-correct clip in the source parquet, runs 10 ablation targets under
-R and C1 conditions using cached z from get_z_pixels. No backward pass.
+For each R-correct clip in the source parquet, runs this (dataset, layer)'s
+ablation targets (ablation_targets.get_targets) under R and C1 conditions
+using cached z from get_z_pixels. No backward pass.
 
 Outputs (outputs/analysis/scaffold_ablation/):
-    ablation_results_long.parquet    — one row per (clip, condition, target)
-    ablation_targets.json            — TARGETS dict dump for manual inspection
+    ablation_results_long_{run_tag}.parquet — one row per (clip, condition, target)
+    ablation_targets_{run_tag}.json         — this run's target set, for manual inspection
 
 Usage:
     uv run python src/stage3_analysis/run_ablation.py
@@ -32,7 +33,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
 from stage3_analysis.dfa_engine import DFAEngine, _preprocess_clip
-from stage3_analysis.ablation_targets import TARGETS
+from stage3_analysis.ablation_targets import get_targets
 from ToT_utils import FRAME_SAMPLERS, _deterministic_seed, resolve_sae_checkpoint
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -99,7 +100,7 @@ def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int, processor, dev
 
 def run_clip(
     engine: DFAEngine, clip_id: str, class_id: int,
-    sl_label: str, clip_path: Path, device: str, frame_sampler,
+    sl_label: str, clip_path: Path, device: str, frame_sampler, targets: dict[str, list[int]],
 ) -> list[dict]:
     pv_r  = _preprocess_clip(clip_path, engine._num_frames, engine._processor, device,
                              frame_sampler=frame_sampler)
@@ -109,7 +110,7 @@ def run_clip(
     for cond, pv in [("R", pv_r), ("C1", pv_c1)]:
         z_cache = engine.get_z_pixels(pv)
         base_logit, _, _, base_all_logits = engine.run_ablated(pv, class_id, [], z_cache)
-        for target_name, indices in TARGETS.items():
+        for target_name, indices in targets.items():
             abl_logit, pred, correct, abl_all_logits = engine.run_ablated(pv, class_id, indices, z_cache)
             rows.append({
                 "clip_id":                clip_id,
@@ -153,8 +154,9 @@ def main() -> None:
     out_dir: Path = cfg["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    (out_dir / "ablation_targets.json").write_text(json.dumps(TARGETS, indent=2))
-    log.info(f"Targets ({len(TARGETS)}): {list(TARGETS.keys())}")
+    targets = get_targets(args.dataset, args.layer)
+    (out_dir / f"ablation_targets_{run_tag}.json").write_text(json.dumps(targets, indent=2))
+    log.info(f"Targets ({len(targets)}): {list(targets.keys())}")
 
     clips = load_clips(cfg, args.dataset)
     full_clip_count = len(clips)
@@ -171,7 +173,7 @@ def main() -> None:
             t0 = time.time()
             try:
                 all_rows.extend(run_clip(engine, clip_id, class_id, sl_label, clip_path,
-                                         cfg["device"], frame_sampler))
+                                         cfg["device"], frame_sampler, targets))
             except Exception as exc:
                 log.warning(f"SKIP {clip_id}: {exc}")
             elapsed = time.time() - t0

@@ -1,6 +1,12 @@
 """
 Cross-layer ablation — L5 and L7 SAEs spliced simultaneously, ablating the
-combined 11-feature set (L5's all7 + L7's all4) in one forward pass.
+combined per-dataset member set (ablation_targets.get_targets's group entry —
+"all_members" for K400, "all7"/"all4" for ssv2's historical configs — for
+L5 + L7) in one forward pass. Indices come from the same accumulating
+registry run_ablation.py uses (04/08 — replaces this file's own hardcoded
+L5_INDICES/L7_INDICES constants, which had the identical race problem the
+registry was built to fix: two hardcoded module constants that only ever held
+one dataset's indices at a time, unsafe to hand-edit between parallel runs).
 
 DFAEngine only supports splicing one layer at a time (one _hook_handle, one
 SAE) — used by ~19 other callers for that exact single-layer behavior, so
@@ -41,11 +47,9 @@ sys.path.insert(0, str(ROOT / "notebooks"))
 
 from ToT_utils import CHECKPOINT_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY, resolve_sae_checkpoint
 from sae import BatchTopKSAE
+from stage3_analysis.ablation_targets import get_targets, group_targets
 from stage3_analysis.dfa_engine import _preprocess_clip
 from stage3_analysis.dfa_mass_delta_vm import build_sl_label_map, load_clips
-
-L5_INDICES = [358, 449, 917, 2093, 3516, 3938, 5004]
-L7_INDICES = [3347, 5165, 6021, 6032]
 
 CFG = {
     "model_flag":      "videomae",
@@ -140,6 +144,15 @@ def main() -> None:
     args = parser.parse_args()
 
     frame_sampler = FRAME_SAMPLERS[args.dataset]
+    # Group key varies by config — ssv2's L5/L7 entries keep their historical
+    # "all7"/"all4" names (baked into already-run parquets), K400's use the
+    # newer uniform "all_members" — group_targets() finds whichever applies
+    # instead of hardcoding one name (same bug already caught in
+    # ablation_summary.py's equivalent lookup).
+    l5_targets = get_targets(args.dataset, 5)
+    l7_targets = get_targets(args.dataset, 7)
+    l5_indices = l5_targets[group_targets(l5_targets)[0]]
+    l7_indices = l7_targets[group_targets(l7_targets)[0]]
     sl_map = build_sl_label_map(CFG, args.dataset)
     clips  = load_clips(CFG, args.dataset)
     model, processor, num_frames, states, handles = load_model_and_splices(CFG, args.dataset)
@@ -154,8 +167,8 @@ def main() -> None:
             base_logit, base_pred, base_correct = run_forward(model, pixel_values, class_id)
             if not base_correct:
                 continue
-            states[5]["ablate_indices"] = L5_INDICES
-            states[7]["ablate_indices"] = L7_INDICES
+            states[5]["ablate_indices"] = l5_indices
+            states[7]["ablate_indices"] = l7_indices
             abl_logit, abl_pred, abl_correct = run_forward(model, pixel_values, class_id)
             rows.append({
                 "clip_id": clip_id, "class_id": class_id,

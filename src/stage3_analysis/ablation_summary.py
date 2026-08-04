@@ -22,7 +22,7 @@ import pandas as pd
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from stage3_analysis.ablation_targets import SINGLETON_TARGETS, GROUP_TARGETS, TARGETS
+from stage3_analysis.ablation_targets import get_targets, group_targets, singleton_targets
 from stage3_analysis.scaffold_selection_consolidated import _resolve_mass_delta_parquet
 
 CFG = {
@@ -65,13 +65,13 @@ def compute_diff_in_diff(summary: pd.DataFrame) -> pd.DataFrame:
     return (temporal - static).reset_index().rename(columns={"mean_delta": "diff_in_diff"})
 
 
-def compute_additivity(summary: pd.DataFrame) -> pd.DataFrame:
+def compute_additivity(summary: pd.DataFrame, singleton: list[str], group_names: list[str]) -> pd.DataFrame:
     overall = summary[summary["sl_label"] == "overall"]
     rows = []
     for cond in CONDITIONS:
         sub = overall[overall["perturbation_condition"] == cond].set_index("ablation_target")["mean_delta"]
-        singleton_sum = float(sub.loc[SINGLETON_TARGETS].sum())
-        for group in GROUP_TARGETS:
+        singleton_sum = float(sub.loc[singleton].sum())
+        for group in group_names:
             group_delta = float(sub.loc[group])
             rows.append({
                 "perturbation_condition": cond,
@@ -83,7 +83,7 @@ def compute_additivity(summary: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def compute_dfa_signed_sums(mass_delta_path: Path) -> pd.DataFrame:
+def compute_dfa_signed_sums(mass_delta_path: Path, targets: dict[str, list[int]]) -> pd.DataFrame:
     """Long-format dfa_signed_sum per (clip_id, condition, target) from the
     mass-delta parquet matching this run's layer/SAE (resolved by the caller
     via _resolve_mass_delta_parquet, not a filename glob)."""
@@ -91,7 +91,7 @@ def compute_dfa_signed_sums(mass_delta_path: Path) -> pd.DataFrame:
     chunks = []
     for cond in CONDITIONS:
         mat = np.stack(src[f"signed_vec_{cond}"].to_numpy()).astype(np.float32)  # (N, 6144)
-        for target_name, indices in TARGETS.items():
+        for target_name, indices in targets.items():
             chunk = src[["clip_id"]].copy()
             chunk["perturbation_condition"] = cond
             chunk["ablation_target"]        = target_name
@@ -127,17 +127,20 @@ def main() -> None:
     dataset, layer, sae_k = _parse_run_tag(args.results_parquet)
     suffix = args.results_parquet.stem.removeprefix("ablation_results_long_")
 
+    targets = get_targets(dataset, layer)
+    singleton, group_names = singleton_targets(targets), group_targets(targets)
+
     df = pd.read_parquet(args.results_parquet)
     print(f"  {len(df):,} rows  |  conditions: {sorted(df['perturbation_condition'].unique())}")
 
     out_dir: Path = CFG["out_dir"]
     summary = compute_summary(df)
     did     = compute_diff_in_diff(summary)
-    add     = compute_additivity(summary)
+    add     = compute_additivity(summary, singleton, group_names)
 
     mass_delta_path = _resolve_mass_delta_parquet(
         {"name": suffix, "layer": layer, "sae_k": sae_k, "dataset": dataset})
-    dfa_sums = compute_dfa_signed_sums(mass_delta_path)
+    dfa_sums = compute_dfa_signed_sums(mass_delta_path, targets)
     agree    = compute_dfa_agreement(df, dfa_sums)
 
     summary.to_csv(out_dir / f"ablation_summary_{suffix}.csv", index=False)
