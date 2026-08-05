@@ -26,8 +26,8 @@ ROOT = Path(__file__).parent.parent.parent
 CFG = {
     "backbone":  "vm",
     "condition": "c1",
-    "classes":   [59, 143],
-    "parquet":   ROOT / "outputs" / "analysis" / "dfa_mass_delta_vm_c1" / "dfa_mass_delta_vm_c1.parquet",
+    "classes":   [0, 6, 27, 28, 30, 32, 41, 59, 83, 123, 143, 164, 169, 171, 173],
+    "parquet":   ROOT / "outputs" / "analysis" / "dfa_mass_delta_vm_c1" / "dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet",
     # TF equivalent: ROOT / "outputs" / "analysis" / "dfa_mass_delta" / "dfa_mass_delta.parquet"
 }
 
