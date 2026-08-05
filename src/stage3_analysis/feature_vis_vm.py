@@ -27,7 +27,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
 from sae import BatchTopKSAE
-from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, load_metadata, _strip_brackets
+from ToT_utils import (
+    CHECKPOINT_REGISTRY, MODEL_REGISTRY, load_metadata, resolve_sae_checkpoint, _strip_brackets,
+)
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -36,8 +38,8 @@ from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, load_metadata, _strip
 CFG = {
     "model_flag":   "videomae",
     "clip_id":      None,        # set to a specific clip ID string, or None to use class_id
-    "class_id":     0,
-    "feature_idx":  5384,
+    "class_id":     6,
+    "feature_idx":  5854,
     "seed":         7,
     "layer":        7,
     "device":       "cuda" if torch.cuda.is_available() else "cpu",
@@ -55,13 +57,7 @@ CFG = {
 # ---------------------------------------------------------------------------
 
 def _resolve_cfg(cfg: dict) -> dict:
-    sae_path = ROOT / "outputs" / "sae" / "sae_layer7_job64.pt"
-    dim_mean = ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"
-    if not sae_path.exists():
-        raise FileNotFoundError(f"VM SAE not found: {sae_path}")
-    if not dim_mean.exists():
-        raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": 64}
+    return resolve_sae_checkpoint("videomae", cfg["layer"], dataset_name="ssv2", sae_k=64)
 
 
 def load_model_and_sae(cfg: dict, resolved: dict, device: str):
@@ -93,7 +89,7 @@ def resolve_clip_id(cfg: dict) -> str:
     if cfg["clip_id"] is not None:
         return str(cfg["clip_id"])
     pq_ids = set(pd.read_parquet(
-        ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1.parquet",
+        ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet",
         columns=["clip_id"]
     )["clip_id"].tolist())
     label_map, clips, _ = load_metadata(
@@ -152,7 +148,7 @@ def extract_z(frames: list, model, processor, sae, dim_mean, cfg: dict, device: 
 
 
 def lookup_dfa_sign(clip_id: str, feat: int) -> float:
-    src = ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1.parquet"
+    src = ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet"
     row = pd.read_parquet(src, columns=["clip_id", "signed_vec_R"]).query("clip_id == @clip_id")
     if row.empty:
         raise KeyError(f"Clip {clip_id} not found in mass delta parquet — is it R-correct and in the SL subset?")

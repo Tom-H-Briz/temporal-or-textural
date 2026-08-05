@@ -22,13 +22,13 @@ from PIL import Image
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "notebooks"))
 
 from stage3_analysis.dfa_engine import DFAEngine
+from ToT_utils import resolve_sae_checkpoint
 
 CFG = {
     "model_flag": "videomae",
-    "sae_path": str(ROOT / "outputs/sae/sae_layer7_job128.pt"),
-    "dim_mean_path": str(ROOT / "outputs/sae/layer7_dim_mean.pt"),
     "layer": 7,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2/20bn-something-something-v2")),
@@ -119,7 +119,8 @@ def save_grid(frames: list[np.ndarray], act_map: np.ndarray, feature_id: int, cl
 
 
 def main() -> None:
-    cfg = CFG
+    resolved = resolve_sae_checkpoint("videomae", CFG["layer"], dataset_name="ssv2", sae_k=64)
+    cfg = {**CFG, **resolved}
     out_dir = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     video_dir = Path(cfg["video_dir"])

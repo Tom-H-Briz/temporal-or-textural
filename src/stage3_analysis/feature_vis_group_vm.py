@@ -26,7 +26,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
 from sae import BatchTopKSAE
-from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, load_metadata, _strip_brackets
+from ToT_utils import (
+    CHECKPOINT_REGISTRY, MODEL_REGISTRY, load_metadata, resolve_sae_checkpoint, _strip_brackets,
+)
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -53,13 +55,7 @@ CFG = {
 # ---------------------------------------------------------------------------
 
 def _resolve_cfg(cfg: dict) -> dict:
-    sae_path = ROOT / "outputs" / "sae" / "sae_layer7_job64.pt"
-    dim_mean = ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"
-    if not sae_path.exists():
-        raise FileNotFoundError(f"VM SAE not found: {sae_path}")
-    if not dim_mean.exists():
-        raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": 64}
+    return resolve_sae_checkpoint("videomae", cfg["layer"], dataset_name="ssv2", sae_k=64)
 
 # ---------------------------------------------------------------------------
 # CLIP LOADING
@@ -160,7 +156,7 @@ def get_decoder_weights(sae) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 def lookup_dfa_sign(clip_id: str, feat: int) -> float:
-    src = ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1.parquet"
+    src = ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet"
     row = pd.read_parquet(src, columns=["clip_id", "signed_vec_R"]).query("clip_id == @clip_id")
     if row.empty:
         raise KeyError(f"Clip {clip_id} not found in mass delta parquet — is it R-correct and in the SL subset?")
@@ -241,7 +237,7 @@ def main():
     all_clip_ids = load_clip_ids(ROOT / cfg["val_path"], ROOT / cfg["labels_path"], cfg["class_id"])
     # Restrict to R-correct clips in the parquet (required for DFA sign lookup)
     pq_ids = set(pd.read_parquet(
-        ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1.parquet",
+        ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet",
         columns=["clip_id"]
     )["clip_id"].tolist())
     all_clip_ids = [c for c in all_clip_ids if c in pq_ids]
