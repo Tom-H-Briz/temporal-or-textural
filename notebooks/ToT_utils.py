@@ -93,7 +93,7 @@ def resolve_sae_checkpoint(
         if len(matches) != 1:
             raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
         sae_path = matches[0]
-        dim_mean = sae_dir / f"tf_{dataset_name}_layer{layer}_dim_mean.pt"
+        dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
     else:
         raise ValueError(f"Unknown model_flag: {model_flag!r}")
 
