@@ -42,6 +42,7 @@ DFA_CLASSES = {0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40,
 # resolved per-config at runtime via resolve_sae_checkpoint, same helper
 # position_lock_extraction.py uses, so this can't drift out of sync with it again.
 CONFIGS = [
+    {"name": "L3_x8k64_VM",   "model": "videomae",    "layer": 3, "sae_k": 64,  "dataset": "ssv2"},
     {"name": "L5_x8k64_VM",   "model": "videomae",    "layer": 5, "sae_k": 64,  "dataset": "ssv2"},
     {"name": "L7_x8k64_VM",   "model": "videomae",    "layer": 7, "sae_k": 64,  "dataset": "ssv2"},
     {"name": "L7_x16k128_VM", "model": "videomae",    "layer": 7, "sae_k": 128, "dataset": "ssv2"},
@@ -49,6 +50,7 @@ CONFIGS = [
     {"name": "L5_x8k64_TF",   "model": "timesformer", "layer": 5, "sae_k": 64,  "dataset": "ssv2"},
     {"name": "L7_x8k64_TF",   "model": "timesformer", "layer": 7, "sae_k": 64,  "dataset": "ssv2"},
     {"name": "L9_x8k64_TF",   "model": "timesformer", "layer": 9, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L3_x8k64_VM_K400", "model": "videomae", "layer": 3, "sae_k": 64,  "dataset": "kinetics400"},
     {"name": "L5_x8k64_VM_K400", "model": "videomae", "layer": 5, "sae_k": 64,  "dataset": "kinetics400"},
     {"name": "L7_x8k64_VM_K400", "model": "videomae", "layer": 7, "sae_k": 64,  "dataset": "kinetics400"},
     {"name": "L9_x8k64_VM_K400", "model": "videomae", "layer": 9, "sae_k": 64,  "dataset": "kinetics400"},
