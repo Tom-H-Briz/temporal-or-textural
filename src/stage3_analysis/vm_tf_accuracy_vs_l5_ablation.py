@@ -89,19 +89,37 @@ def bootstrap_class_paired(vm_correct: np.ndarray, tf_correct: np.ndarray,
     return {"delta_unablated": delta_unablated, "delta_l5": delta_l5, "alignment": alignment}
 
 
-def summarize_class(draws: dict) -> dict:
+def bootstrap_class_independent(vm_correct: np.ndarray, tf_correct: np.ndarray,
+                                 l5_correct: np.ndarray, rng: np.random.Generator) -> dict:
+    """Same k/n per class as bootstrap_class_paired, same RNG stream, only
+    difference is each quantity draws its own independent binomial instead of
+    sharing one resampled clip-index set — isolates the effect of pairing
+    itself, holding the underlying (fresh, not old-CSV) data fixed."""
+    n = len(vm_correct)
+    p_vm = rng.binomial(n, vm_correct.mean(), N_BOOTSTRAP) / n
+    p_tf = rng.binomial(n, tf_correct.mean(), N_BOOTSTRAP) / n
+    p_l5 = rng.binomial(n, l5_correct.mean(), N_BOOTSTRAP) / n
+
+    delta_unablated = p_vm - p_tf
+    delta_l5 = p_l5 - p_vm
+    with np.errstate(divide="ignore", invalid="ignore"):
+        alignment = np.abs(delta_l5) / delta_unablated
+    return {"delta_unablated": delta_unablated, "delta_l5": delta_l5, "alignment": alignment}
+
+
+def summarize_class(draws: dict, prefix: str = "") -> dict:
     """Median + 90% CI per quantity. unstable = the delta_unablated CI straddles
     zero — i.e. we can't even confidently say VM beats TF on this class, so its
     alignment ratio (which divides by that delta) isn't meaningful. This replaces
     the earlier flat point-estimate cutoff with an uncertainty-derived one."""
     lo, hi = CI_PCT
     du = draws["delta_unablated"]
-    out = {"unstable": bool(np.percentile(du, lo) < 0 < np.percentile(du, hi))}
+    out = {f"{prefix}unstable": bool(np.percentile(du, lo) < 0 < np.percentile(du, hi))}
     for name, vals in draws.items():
         finite = vals[np.isfinite(vals)]
-        out[f"{name}_median"] = float(np.median(finite))
-        out[f"{name}_ci_lo"] = float(np.percentile(finite, lo))
-        out[f"{name}_ci_hi"] = float(np.percentile(finite, hi))
+        out[f"{prefix}{name}_median"] = float(np.median(finite))
+        out[f"{prefix}{name}_ci_lo"] = float(np.percentile(finite, lo))
+        out[f"{prefix}{name}_ci_hi"] = float(np.percentile(finite, hi))
     return out
 
 
@@ -113,10 +131,11 @@ def build_table() -> pd.DataFrame:
         vm_correct = grp["vm_correct"].to_numpy()
         tf_correct = grp["tf_correct"].to_numpy()
         l5_correct = grp["l5_ablated_correct"].to_numpy()
-        draws = bootstrap_class_paired(vm_correct, tf_correct, l5_correct, rng)
+        paired = bootstrap_class_paired(vm_correct, tf_correct, l5_correct, rng)
+        indep = bootstrap_class_independent(vm_correct, tf_correct, l5_correct, rng)
         rows.append({"class_id": int(class_id), "n_clips": len(grp),
                      "vm_accuracy": vm_correct.mean(), "tf_accuracy": tf_correct.mean(),
-                     **summarize_class(draws)})
+                     **summarize_class(paired), **summarize_class(indep, prefix="indep_")})
     out = pd.DataFrame(rows)
     templates = pd.read_csv(ROOT / "outputs/stage1_class_selection_VM_ssv2/per_class_accuracy_VM_ssv2_R.csv",
                             usecols=["class_id", "template"])
@@ -131,14 +150,14 @@ def main() -> None:
             "alignment_median", "alignment_ci_lo", "alignment_ci_hi", "unstable"]
     print(out[cols].to_string(index=False))
 
-    unstable = out[out["unstable"]]
-    stable = out[~out["unstable"]]
-    print(f"\n{len(unstable)} classes unstable (90% CI of the VM-TF gap straddles zero): "
-          f"{unstable['class_id'].tolist()}")
-    med = stable["alignment_median"]
-    print(f"Stable n={len(stable)}: across-class median={med.median():.3f}  "
-          f"mean={med.mean():.3f}  std={med.std():.3f}  "
-          f"IQR=[{med.quantile(0.25):.3f}, {med.quantile(0.75):.3f}]")
+    for label, unstable_col, align_col in [("Paired", "unstable", "alignment_median"),
+                                            ("Independent (same data)", "indep_unstable", "indep_alignment_median")]:
+        unstable = out[out[unstable_col]]
+        stable = out[~out[unstable_col]]
+        med = stable[align_col]
+        print(f"\n{label}: {len(unstable)} unstable {unstable['class_id'].tolist()}  |  "
+              f"stable n={len(stable)}: median={med.median():.3f}  mean={med.mean():.3f}  "
+              f"std={med.std():.3f}  IQR=[{med.quantile(0.25):.3f}, {med.quantile(0.75):.3f}]")
 
 
 if __name__ == "__main__":
