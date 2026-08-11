@@ -35,19 +35,28 @@ sys.path.insert(0, str(ROOT / "src"))
 from stage3_analysis.clip_shuffle_disruption import top10_detail
 
 OUT_DIR = ROOT / "outputs" / "analysis" / "shuffle_reduction_composition"
-LAYER_PARQUETS = {
-    3: ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_ssv2_l3_job7ep_k64.parquet",
-    5: ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l5_job7ep_k64.parquet",
-    7: ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet",
-    9: ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l9_job64_k64.parquet",
+MASS_DELTA_DIR = ROOT / "outputs/analysis/dfa_mass_delta_vm_c1"
+DATASETS = {
+    "ssv2": {
+        3: MASS_DELTA_DIR / "dfa_mass_delta_vm_c1_ssv2_l3_job7ep_k64.parquet",
+        5: MASS_DELTA_DIR / "dfa_mass_delta_vm_c1_l5_job7ep_k64.parquet",
+        7: MASS_DELTA_DIR / "dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet",
+        9: MASS_DELTA_DIR / "dfa_mass_delta_vm_c1_l9_job64_k64.parquet",
+    },
+    "kinetics400": {
+        # No L9 extraction exists for K400 — 3 layers only, not silently padded.
+        3: MASS_DELTA_DIR / "dfa_mass_delta_vm_c1_kinetics400_l3_job7ep_k64.parquet",
+        5: MASS_DELTA_DIR / "dfa_mass_delta_vm_c1_kinetics400_l5_job7ep_k64.parquet",
+        7: MASS_DELTA_DIR / "dfa_mass_delta_vm_c1_kinetics400_l7_job7ep_k64.parquet",
+    },
 }
 
 
-def build_layer_detail(layer: int) -> pd.DataFrame:
+def build_layer_detail(dataset: str, layer: int) -> pd.DataFrame:
     """One row per (clip, top-10 feature) for this layer — reuses top10_detail
     unchanged, generalized across layers instead of clip_shuffle_disruption.py's
     L7-only CONFIGS."""
-    dfa_df = pd.read_parquet(LAYER_PARQUETS[layer])
+    dfa_df = pd.read_parquet(DATASETS[dataset][layer])
     rows = []
     for _, clip in dfa_df.iterrows():
         r = np.asarray(clip["signed_vec_R"], dtype=np.float32)
@@ -84,11 +93,11 @@ def best_feature_coverage_per_class(detail: pd.DataFrame, layer: int) -> pd.Data
     return best.sort_values("class_id")[["layer", "class_id", "feature_id", "n_clips_present", "frac_of_class_clips"]]
 
 
-def main() -> None:
+def run_dataset(dataset: str) -> None:
     summary_rows, best_feature_rows = [], []
-    for layer in sorted(LAYER_PARQUETS):
-        print(f"Processing L{layer}...")
-        detail = build_layer_detail(layer)
+    for layer in sorted(DATASETS[dataset]):
+        print(f"Processing {dataset} L{layer}...")
+        detail = build_layer_detail(dataset, layer)
         stats = n_classes_present_stats(detail)
         stats["layer"] = layer
 
@@ -101,11 +110,17 @@ def main() -> None:
     summary = pd.DataFrame(summary_rows)[["layer", "n_unique_features", "median_n_classes_present",
                                           "mean_n_classes_present", "frac_single_class_features",
                                           "mean_best_feature_coverage", "median_best_feature_coverage"]]
-    summary.to_csv(OUT_DIR / "vm_feature_specialization_by_layer.csv", index=False)
+    summary.to_csv(OUT_DIR / f"vm_feature_specialization_by_layer_{dataset}.csv", index=False)
     pd.concat(best_feature_rows, ignore_index=True).to_csv(
-        OUT_DIR / "vm_best_feature_coverage_by_layer_class.csv", index=False)
+        OUT_DIR / f"vm_best_feature_coverage_by_layer_class_{dataset}.csv", index=False)
 
-    print("\n" + summary.to_string(index=False))
+    print(f"\n=== {dataset} ===")
+    print(summary.to_string(index=False))
+
+
+def main() -> None:
+    for dataset in DATASETS:
+        run_dataset(dataset)
 
 
 if __name__ == "__main__":
