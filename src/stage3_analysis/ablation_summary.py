@@ -58,11 +58,25 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([by_sl[cols], overall[cols]], ignore_index=True)
 
 
-def compute_diff_in_diff(summary: pd.DataFrame) -> pd.DataFrame:
+def compute_flip_rate(df: pd.DataFrame) -> pd.DataFrame:
+    """Baseline clips are R-correct by construction (run_ablation.py gates on
+    it), so 1 - correct_ablated.mean() is the fraction flipped off-correct."""
+    grp_cols = ["sl_label", "perturbation_condition", "ablation_target"]
+    flip = lambda s: 1 - s.mean()
+    by_sl = df.groupby(grp_cols, as_index=False).agg(
+        flip_rate=("correct_ablated", flip), n_clips=("correct_ablated", "count"))
+    overall = df.groupby(["perturbation_condition", "ablation_target"], as_index=False).agg(
+        flip_rate=("correct_ablated", flip), n_clips=("correct_ablated", "count"))
+    overall["sl_label"] = "overall"
+    cols = ["sl_label", "perturbation_condition", "ablation_target", "flip_rate", "n_clips"]
+    return pd.concat([by_sl[cols], overall[cols]], ignore_index=True)
+
+
+def compute_diff_in_diff(summary: pd.DataFrame, value_col: str = "mean_delta") -> pd.DataFrame:
     idx = ["perturbation_condition", "ablation_target"]
-    temporal = summary[summary["sl_label"] == "temporal"].set_index(idx)["mean_delta"]
-    static   = summary[summary["sl_label"] == "static"].set_index(idx)["mean_delta"]
-    return (temporal - static).reset_index().rename(columns={"mean_delta": "diff_in_diff"})
+    temporal = summary[summary["sl_label"] == "temporal"].set_index(idx)[value_col]
+    static   = summary[summary["sl_label"] == "static"].set_index(idx)[value_col]
+    return (temporal - static).reset_index().rename(columns={value_col: "diff_in_diff"})
 
 
 def compute_additivity(summary: pd.DataFrame, singleton: list[str], group_names: list[str]) -> pd.DataFrame:
@@ -137,6 +151,8 @@ def main() -> None:
     summary = compute_summary(df)
     did     = compute_diff_in_diff(summary)
     add     = compute_additivity(summary, singleton, group_names)
+    flip    = compute_flip_rate(df)
+    flip_did = compute_diff_in_diff(flip, value_col="flip_rate")
 
     mass_delta_path = _resolve_mass_delta_parquet(
         {"name": suffix, "layer": layer, "sae_k": sae_k, "dataset": dataset})
@@ -147,6 +163,8 @@ def main() -> None:
     did.to_csv(out_dir / f"ablation_diff_in_diff_{suffix}.csv", index=False)
     add.to_csv(out_dir / f"ablation_additivity_{suffix}.csv", index=False)
     agree.to_csv(out_dir / f"ablation_dfa_agreement_{suffix}.csv", index=False)
+    flip.to_csv(out_dir / f"ablation_flip_rate_{suffix}.csv", index=False)
+    flip_did.to_csv(out_dir / f"ablation_flip_rate_diff_in_diff_{suffix}.csv", index=False)
 
     print(summary.to_string(index=False))
     print()
@@ -155,6 +173,10 @@ def main() -> None:
     print(add.to_string(index=False))
     print()
     print(agree.to_string(index=False))
+    print()
+    print(flip.to_string(index=False))
+    print()
+    print(flip_did.to_string(index=False))
 
 
 if __name__ == "__main__":
