@@ -24,6 +24,7 @@ import os
 import sys
 from pathlib import Path
 
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
@@ -164,7 +165,7 @@ def load_eval_set(
 def run_spliced_accuracy(
     *, sae_checkpoint: str | None = None, layer: int | None = None, model_name: str,
     dataset_name: str, eval_clips: list[str] | None = None, baseline_only: bool = False,
-    cfg: dict = CFG,
+    return_per_clip: bool = False, dim_mean_path: str | None = None, cfg: dict = CFG,
 ) -> dict:
     """Baseline vs spliced clip-weighted accuracy for one SAE checkpoint. Raw per-clip
     results are written to CSV before the summary scalars are computed (two-stage
@@ -211,9 +212,19 @@ def run_spliced_accuracy(
 
     if baseline_only:
         print(f"\n  Baseline (clip-weighted): {b_overall:.4f}  (n={n:,})")
-        return {"baseline_accuracy_clip_weighted": b_overall}
+        result = {"baseline_accuracy_clip_weighted": b_overall}
+        if return_per_clip:
+            result["per_clip_df"] = pd.DataFrame({
+                "clip_id": [p.name for p in paths], "class_id": labels,
+                "baseline_correct": [p == l for p, l in zip(baseline_preds, labels)],
+                "spliced_correct": None,
+            })
+        return result
 
-    dim_mean = load_dim_mean(cfg, dataset_name, layer)
+    if dim_mean_path is not None:
+        dim_mean = torch.load(dim_mean_path, weights_only=True).to(device)
+    else:
+        dim_mean = load_dim_mean(cfg, dataset_name, layer)  # VM-only path, hardcoded "vmae" abbrev
     print(f"Loading SAE for layer {layer}...")
     sae    = load_sae(cfg, sae_checkpoint, dim_mean)
     hook_h = model_cfg["layer_getter"](model, layer).register_forward_hook(
@@ -243,14 +254,21 @@ def run_spliced_accuracy(
                         f"{s - b:.6f}", baseline[cid]["total"], layer, ckpt_stem])
         w.writerow([-1, "OVERALL_CLIP_WEIGHTED", f"{b_overall:.6f}", f"{s_overall:.6f}",
                     f"{s_overall - b_overall:.6f}", n, layer, ckpt_stem])
-    print(f"Saved raw per-clip results -> {out_path}")
+    print(f"Saved per-class results -> {out_path}")
 
-    return {
+    result = {
         "baseline_accuracy_clip_weighted":     b_overall,
         "spliced_accuracy_clip_weighted":      s_overall,
         "spliced_accuracy_drop_clip_weighted": b_overall - s_overall,
         "csv_path": str(out_path),
     }
+    if return_per_clip:
+        result["per_clip_df"] = pd.DataFrame({
+            "clip_id": [p.name for p in paths], "class_id": labels,
+            "baseline_correct": [p == l for p, l in zip(baseline_preds, labels)],
+            "spliced_correct":  [p == l for p, l in zip(spliced_preds,  labels)],
+        })
+    return result
 
 
 def main() -> None:
