@@ -1,18 +1,31 @@
 """
-L5 clean8 vs L7 clean7 ablation comparison — R + C1, diff-in-diff, additivity.
+L5 vs L7 ablation comparison — R + C1, diff-in-diff, additivity. Post-fix
+(job7ep) rebuild, 24/08 — the prior clean7/clean8 version predates the 30/07
+bias fix (its own caveat cited the since-retracted 9.2pp splice-accuracy
+figure) and its SINGLETON_TARGETS import no longer even exists in
+ablation_targets.py. Targets now resolved live via get_targets()/
+group_targets() — same accumulating registry ablation_cross_l5_l7.py uses —
+instead of hardcoded pre-fix feature-index lists.
 
-Reuses L7's existing on-record clean7 result (ablation_results_long_clean7_020726.parquet,
-7 singletons + clean7 group) rather than re-running it. L5's clean8 result (8 singletons +
-clean8 group) comes from run_ablation.py --layer 5 (see slurm/run_scaffold_ablation_l5.sh).
+L7's group target ("all4") is 3 gate-passed scaffold members (5165/6021/6032)
+plus one deliberately-included near-miss (3347) — see ablation_targets.py's
+own registry comment. Not the pure 3-member scaffold; flagged, not silently
+conflated (same caveat as sign_flip_results.py's VM_L7 row).
 
-Both tables carry an explicit caveat on L5 rows only: L5's SAE has a 9.2pp splice-accuracy
-hit vs. a much smaller L7 gap (workbook_entry_140726.md #11) — absolute magnitudes aren't
-comparable across layers, only deltas relative to each layer's own spliced baseline are.
+Additivity table now also reports the group's prediction flip rate and
+post-ablation accuracy (24/08, Tom), not just the logit-delta additivity
+gap. flip_rate here is 1 - correct_ablated.mean() (matches sign_flip_
+results.py's convention) — deliberately NOT this file's own "flip" column
+below (baseline-rank1-vs-rank2 margin crossing zero), which answers a
+different question (does ablation overturn the model's own prior top pick,
+not whether it's right against ground truth).
 
 Outputs (outputs/analysis/scaffold_ablation/):
-    ablation_l5_vs_l7_comparison.csv    — layer x target x condition
-    ablation_l5_vs_l7_additivity.csv    — singleton-sum vs group delta, both layers
-    ablation_l5_vs_l7_class_impact.csv  — per-class flip_rate/delta, group ablation, both layers side by side
+    ablation_l5_vs_l7_comparison_job7ep.csv    — layer x target x condition
+    ablation_l5_vs_l7_additivity_job7ep.csv    — singleton-sum vs group delta
+                                                  + group flip_rate/accuracy
+    ablation_l5_vs_l7_class_impact_job7ep.csv  — per-class flip_rate/delta,
+                                                  group ablation, both layers
 
 Usage:
     uv run python src/stage3_analysis/ablation_l5_vs_l7_comparison.py
@@ -29,7 +42,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
 from ToT_utils import load_metadata
-from stage3_analysis.ablation_targets import SINGLETON_TARGETS as L5_SINGLETONS
+from stage3_analysis.ablation_targets import get_targets, group_targets
 
 # Same 4-class exclusion used elsewhere (clean7_ubiquity.py, clean7_effect_summary.py) —
 # R-accuracy < 40%, too noisy to trust class-level numbers from. Note
@@ -38,20 +51,16 @@ from stage3_analysis.ablation_targets import SINGLETON_TARGETS as L5_SINGLETONS
 BAD_CLASSES = {38, 83, 97, 160}
 
 CONDITIONS = ["R", "C1"]
-L5_TARGETS = L5_SINGLETONS + ["clean8"]
-L7_TARGETS = ["single_1842", "single_5578", "single_1996", "single_3513",
-              "single_1990", "single_3558", "single_5552", "clean7"]
-
-L5_CAVEAT = (
-    "L5's SAE has a 9.2pp splice-accuracy hit (clip-weighted) vs. a much smaller gap "
-    "at L7 (workbook_entry_140726.md #11) — absolute magnitudes are not comparable "
-    "across layers. All deltas are ablated-vs-spliced-baseline, relative to each "
-    "layer's own unablated SAE-reconstructed model."
-)
+L5_ALL_TARGETS = get_targets("ssv2", 5)
+L7_ALL_TARGETS = get_targets("ssv2", 7)
+L5_GROUP, L7_GROUP = group_targets(L5_ALL_TARGETS)[0], group_targets(L7_ALL_TARGETS)[0]
+L5_SINGLETONS = [t for t in L5_ALL_TARGETS if t != L5_GROUP]
+L7_SINGLETONS = [t for t in L7_ALL_TARGETS if t != L7_GROUP]
+L5_TARGETS, L7_TARGETS = L5_SINGLETONS + [L5_GROUP], L7_SINGLETONS + [L7_GROUP]
 
 CFG = {
-    "l5_source":  ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long_l5_clean8_150726.parquet",
-    "l7_source":  ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long_clean7_020726.parquet",
+    "l5_source":  ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long_l5_job7ep_k64.parquet",
+    "l7_source":  ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long_l7_job7ep_k64.parquet",
     "acc_csv":    ROOT / "outputs/Laura_SL/accuracy_SL_subset.csv",
     "labels_path": ROOT / "data/ssv2/labels/labels.json",
     "val_path":   ROOT / "data/ssv2/labels/validation.json",
@@ -60,24 +69,31 @@ CFG = {
 
 
 def add_flip_column(df: pd.DataFrame) -> pd.DataFrame:
-    """flip = post-ablation, the baseline's rank-1 class no longer beats the
-    baseline's rank-2 class. Same definition as ablation_margin_sl.py's
-    `flip` column — reused for consistency, not reinvented."""
-    base_mat = np.stack(df["baseline_all_logits"].to_numpy()).astype(np.float32)
-    abl_mat  = np.stack(df["ablated_all_logits"].to_numpy()).astype(np.float32)
-    idx      = np.arange(len(df))
-    ranked   = np.argsort(base_mat, axis=1)[:, ::-1]
-    r1, r2   = ranked[:, 0], ranked[:, 1]
-    margin_abl = abl_mat[idx, r1] - abl_mat[idx, r2]
+    """flip = ablated prediction no longer matches the true class
+    (~correct_ablated). Changed 24/08 (Tom) from the original rank1-vs-rank2
+    baseline-margin definition (does ablation overturn the model's own prior
+    top pick specifically against its own runner-up) — that undercounts real
+    flips where a third-ranked class overtakes rank-1 instead of the
+    runner-up, and disagreed with build_additivity_table's group_flip_rate
+    by a wide margin (9.3% vs 15.5% on SSv2 L5/all7/R) for exactly that
+    reason. Now matches sign_flip_results.py's convention throughout this
+    project. No longer the same definition as ablation_margin_sl.py's `flip`
+    column — that file is unchanged, deliberately out of scope here."""
     out = df.copy()
-    out["flip"] = margin_abl < 0
+    out["flip"] = ~out["correct_ablated"]
     return out
 
 
 def build_comparison_table(df: pd.DataFrame, targets: list[str], layer: int) -> pd.DataFrame:
     """One row per (target, condition): temporal/static logit_drop, mean and
     median (median per ablation_median_summary.py's convention — less
-    distorted by near-zero/outlier clips), diff_in_diff on both, flip rates."""
+    distorted by near-zero/outlier clips), diff_in_diff on both, flip rates.
+
+    flip_rate_overall is computed directly on the full (unsplit) subset, not
+    combined from flip_rate_temporal/flip_rate_static after the fact —
+    temporal and static are different-sized groups, so summing or averaging
+    the two subgroup rates naively does not equal the true combined rate
+    (confirmed 24/08: naive sum overstated it ~2x on SSv2 L5/all7/R)."""
     rows = []
     for target in targets:
         for cond in CONDITIONS:
@@ -94,7 +110,9 @@ def build_comparison_table(df: pd.DataFrame, targets: list[str], layer: int) -> 
                 "diff_in_diff_median":        temporal["delta"].median() - static["delta"].median(),
                 "flip_rate_temporal":         temporal["flip"].mean(),
                 "flip_rate_static":           static["flip"].mean(),
-                "caveat": L5_CAVEAT if layer == 5 else "",
+                "flip_rate_overall":          sub["flip"].mean(),
+                "n_temporal":                 len(temporal),
+                "n_static":                   len(static),
             })
     return pd.DataFrame(rows)
 
@@ -104,14 +122,24 @@ def build_additivity_table(df: pd.DataFrame, singletons: list[str], group: str, 
     ('overall', not split temporal/static) — mean (ablation_summary.py's
     convention) and median (ablation_median_summary.py's convention — median
     is less distorted by near-zero/outlier clips) reported side by side,
-    each with its own synergy pct_increase = group / singleton_sum - 1."""
+    each with its own synergy pct_increase = group / singleton_sum - 1.
+
+    Also reports the group's own prediction flip rate and resulting
+    post-ablation accuracy (24/08, Tom) — logit-delta additivity alone
+    doesn't say how many predictions actually changed or what accuracy looks
+    like with the group ablated. baseline_accuracy is computed from this
+    study's own stored baseline_all_logits (argmax vs class_id), matching
+    sign_flip_results.py's VM convention — self-contained, no external join."""
     rows = []
     for cond in CONDITIONS:
         sub = df[df["perturbation_condition"] == cond]
         by_target = sub[sub["ablation_target"].isin(singletons)].groupby("ablation_target")["delta"]
         mean_sum, median_sum = by_target.mean().sum(), by_target.median().sum()
-        group_sub = sub[sub["ablation_target"] == group]["delta"]
-        mean_group, median_group = group_sub.mean(), group_sub.median()
+        group_sub = sub[sub["ablation_target"] == group]
+        mean_group, median_group = group_sub["delta"].mean(), group_sub["delta"].median()
+        baseline_correct = group_sub.apply(
+            lambda r: np.argmax(r["baseline_all_logits"]) == r["class_id"], axis=1)
+        ablated_accuracy = group_sub["correct_ablated"].mean()
         rows.append({
             "layer": layer, "condition": cond, "group_target": group,
             "singleton_sum": float(mean_sum), "group_delta": float(mean_group),
@@ -119,7 +147,11 @@ def build_additivity_table(df: pd.DataFrame, singletons: list[str], group: str, 
             "pct_increase": float(mean_group / mean_sum - 1) * 100,
             "singleton_median_sum": float(median_sum), "group_median": float(median_group),
             "median_pct_increase": float(median_group / median_sum - 1) * 100,
-            "caveat": L5_CAVEAT if layer == 5 else "",
+            "n_clips": len(group_sub),
+            "group_flip_rate": float(1 - ablated_accuracy),
+            "group_baseline_accuracy": float(baseline_correct.mean()),
+            "group_ablated_accuracy": float(ablated_accuracy),
+            "group_accuracy_drop": float(baseline_correct.mean() - ablated_accuracy),
         })
     return pd.DataFrame(rows)
 
@@ -164,26 +196,25 @@ def main() -> None:
         build_comparison_table(l7, L7_TARGETS, layer=7),
     ], ignore_index=True)
     additivity = pd.concat([
-        build_additivity_table(l5, L5_SINGLETONS, "clean8", layer=5),
-        build_additivity_table(l7, L7_TARGETS[:-1], "clean7", layer=7),
+        build_additivity_table(l5, L5_SINGLETONS, L5_GROUP, layer=5),
+        build_additivity_table(l7, L7_SINGLETONS, L7_GROUP, layer=7),
     ], ignore_index=True)
 
     names   = {v: k for k, v in load_metadata(str(CFG["labels_path"]), str(CFG["val_path"]))[0].items()}
     acc_map = pd.read_csv(CFG["acc_csv"]).set_index("class_id")["accuracy"].to_dict()
     class_impact = build_class_impact_comparison(
-        build_class_impact(l5, "clean8", 5, names, acc_map),
-        build_class_impact(l7, "clean7", 7, names, acc_map),
+        build_class_impact(l5, L5_GROUP, 5, names, acc_map),
+        build_class_impact(l7, L7_GROUP, 7, names, acc_map),
     )
 
-    comparison.to_csv(out_dir / "ablation_l5_vs_l7_comparison.csv", index=False)
-    additivity.to_csv(out_dir / "ablation_l5_vs_l7_additivity.csv", index=False)
-    class_impact.to_csv(out_dir / "ablation_l5_vs_l7_class_impact.csv", index=False)
-    print(comparison.drop(columns="caveat").round(4).to_string(index=False))
+    comparison.to_csv(out_dir / "ablation_l5_vs_l7_comparison_job7ep.csv", index=False)
+    additivity.to_csv(out_dir / "ablation_l5_vs_l7_additivity_job7ep.csv", index=False)
+    class_impact.to_csv(out_dir / "ablation_l5_vs_l7_class_impact_job7ep.csv", index=False)
+    print(comparison.round(4).to_string(index=False))
     print()
-    print(additivity.drop(columns="caveat").round(4).to_string(index=False))
+    print(additivity.round(4).to_string(index=False))
     print()
     print(class_impact.round(4).to_string(index=False))
-    print(f"\n{L5_CAVEAT}")
 
 
 if __name__ == "__main__":
