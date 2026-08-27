@@ -42,7 +42,12 @@ TARGETS_BY_CONFIG: dict[tuple[str, int], dict[str, list[int]]] = {
     # 3347 is the near-miss (position-locked, fails strict gate at C1 only,
     # 0.891/0.994 vs 0.90/1.0) — included deliberately per Tom to see if it
     # behaves like a member or a true non-member.
-    ("ssv2", 7): _make_targets([3347, 5165, 6021, 6032], group_key="all4"),
+    ("ssv2", 7): {**_make_targets([3347, 5165, 6021, 6032], group_key="all4"),
+        # 27/08/26 — VM-L7's actual top 12 features by raw DFA mass (checked
+        # against the TF TOP12 result: same "ablation set == top-mass features"
+        # pattern holds on VM too, all4 members included). Like-for-like with
+        # TF's TOP12 group ablation — group only, no per-feature singles.
+        "VM_TOP12": [1471, 2197, 3347, 3745, 4738, 4983, 5165, 5376, 6021, 6032, 6067, 6090]},
     # 04/08/26 — K400 L5: position_lock_extraction.py's 03/08 manifest-based
     # re-run confirmed all 10, unchanged from the prior provisional set.
     ("kinetics400", 5): _make_targets([647, 729, 3003, 3421, 4152, 4534, 4551, 4887, 5248, 5377]),
