@@ -1443,15 +1443,18 @@ def build_b7_ablated_signflip_overlap() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=B7_COLUMNS)
 
 
-# ==================== TASK 2 (ad hoc): B8 per-class sign-flip / SL alignment ====
+# ==================== TASK 2 (ad hoc): B9 per-class sign-flip / SL alignment ====
+# Named B9, not B8 - outputs/interim_results/B8_matched_mass_control_sets.json
+# already exists (top12_control.py, 27/08, untracked by this script's own
+# manifest) - B9 avoids two unrelated "B8" artifacts sitting in one directory.
 
-B8_COLUMNS = [
+B9_COLUMNS = [
     "backbone", "dataset", "class_id", "template", "frac_sign_flip", "rank",
     "sl_label", "n_clips", "r_accuracy", "pool", "unit", "weighting",
     "condition", "source_file", "source_mtime", "status",
 ]
 
-B8_CONFIGS = [
+B9_CONFIGS = [
     ("VM", "ssv2",
      "outputs/analysis/shuffle_reduction_composition/ssv2_vm_clip_shuffle_disruption.csv",
      "outputs/stage1_class_selection_VM_ssv2/per_class_accuracy_VM_ssv2_R.csv", "SL-33"),
@@ -1462,7 +1465,7 @@ B8_CONFIGS = [
 ]
 
 
-def build_b8_per_class_signflip_ranking() -> pd.DataFrame:
+def build_b9_per_class_signflip_ranking() -> pd.DataFrame:
     """Per-class mean frac_sign_flip, descending - a candidate temporal-
     sensitivity proxy (user, 01/09): does the R-DFA mass carried by shuffle-
     sign-flipping features rank classes the way the SL human-shuffle taxonomy
@@ -1476,7 +1479,7 @@ def build_b8_per_class_signflip_ranking() -> pd.DataFrame:
     """
     labels_ssv2, labels_k400 = _load_taxonomy_labels_ssv2(), _load_taxonomy_labels_k400()
     rows = []
-    for backbone, dataset, disr_relpath, acc_relpath, pool in B8_CONFIGS:
+    for backbone, dataset, disr_relpath, acc_relpath, pool in B9_CONFIGS:
         disr_path, acc_path = ROOT / disr_relpath, ROOT / acc_relpath
         disr = pd.read_csv(disr_path)
         acc = pd.read_csv(acc_path)[["class_id", "template", "accuracy"]]
@@ -1502,7 +1505,7 @@ def build_b8_per_class_signflip_ranking() -> pd.DataFrame:
                 "source_file": str(disr_path), "source_mtime": mtime_date(disr_path),
                 "status": status_for(disr_path, fix_relevant=(backbone == "VM")),
             })
-    return pd.DataFrame(rows, columns=B8_COLUMNS)
+    return pd.DataFrame(rows, columns=B9_COLUMNS)
 
 
 # ================================ TASK 2: appendix ================================
@@ -1749,8 +1752,8 @@ def main():
     b7 = build_b7_ablated_signflip_overlap()
     b7.to_csv(OUT_DIR / "B7_ablated_signflip_overlap.csv", index=False)
 
-    b8 = build_b8_per_class_signflip_ranking()
-    b8.to_csv(OUT_DIR / "B8_per_class_signflip_temporal_proxy.csv", index=False)
+    b9 = build_b9_per_class_signflip_ranking()
+    b9.to_csv(OUT_DIR / "B9_per_class_signflip_temporal_proxy.csv", index=False)
 
     d1 = build_d1_c_vs_c1_vs_tfc()
     d1.to_csv(OUT_DIR / "D1_c_vs_c1_vs_tfc.csv", index=False)
@@ -1793,7 +1796,7 @@ def main():
         "B6_falsifiers": ("B6_taxonomy_falsifiers.csv", b6f),
         "B6_diff_in_diff": ("B6_diff_in_diff.csv", b6d),
         "B7": ("B7_ablated_signflip_overlap.csv", b7),
-        "B8": ("B8_per_class_signflip_temporal_proxy.csv", b8),
+        "B9": ("B9_per_class_signflip_temporal_proxy.csv", b9),
         "D1": ("D1_c_vs_c1_vs_tfc.csv", d1),
         "X1": ("X1_ssv2_per_class.csv", x1),
         "X2": ("X2_k400_per_class.csv", x2),
