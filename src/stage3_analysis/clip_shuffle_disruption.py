@@ -12,7 +12,13 @@ in that order) of each R-correct clip's own top-10 |signed_R| features.
 
 Step 3: per-backbone logistic regression, P(correct_under_shuffle) ~ frac_sign_flip
 + frac_decrease + frac_increase, frac_noise as reference. VM-SSv2 and TF-SSv2 only
-— K400 excluded this round (see brief).
+— K400 excluded this round (see brief). Reported pooled AND class-fixed-effects
+(24/08) — this exact instrument dissolved a different pooled TF effect once
+before, so it's applied by default here too, not only on suspicion. Both
+versions' coefficients are persisted, not just printed.
+
+Outputs (outputs/analysis/shuffle_reduction_composition/), additionally:
+    {name}_logit_coefficients.csv — pooled + class_fe coefficients, one row per term
 
 Usage:
     uv run python src/stage3_analysis/clip_shuffle_disruption.py
@@ -45,6 +51,13 @@ CONFIGS = {
         correct_col="correct_C",
         r_acc_csv=ROOT / "outputs/stage1_class_selection_TF/per_class_accuracy_TF.csv",
         reliability_parquet=ROOT / "outputs/analysis/cumulative_mass_diagnostic_tf_l7_k64_x8.parquet",
+    ),
+    "k400_vm": dict(
+        dfa_parquet=ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_kinetics400_l7_job7ep_k64.parquet",
+        shuffle_col="signed_vec_C1",
+        correct_col="correct_C1",
+        r_acc_csv=ROOT / "outputs/stage1_class_selection_VM_kinetics/per_class_accuracy_VM_kinetics_R.csv",
+        reliability_parquet=None,  # no checkpoint-consistent diagnostic exists for K400 either
     ),
 }
 
@@ -127,16 +140,61 @@ def build_clip_table(name: str, cfg: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def fit_logit(name: str, df: pd.DataFrame) -> None:
-    x_cols = ["frac_sign_flip", "frac_decrease", "frac_increase"]  # frac_noise = reference
-    x = sm.add_constant(df[x_cols])
+X_COLS = ["frac_sign_flip", "frac_decrease", "frac_increase"]  # frac_noise = reference
+
+
+def _logit_rows(name: str, version: str, result, y: pd.Series) -> list[dict]:
+    return [{
+        "config": name, "version": version, "term": term,
+        "coef": result.params[term], "se": result.bse[term],
+        "z": result.tvalues[term], "p": result.pvalues[term],
+        "n": len(y), "base_rate": y.mean(),
+    } for term in ["const"] + X_COLS]
+
+
+def fit_logit(name: str, df: pd.DataFrame) -> list[dict]:
+    """Pooled — P(correct_under_shuffle) ~ frac_sign_flip + frac_decrease +
+    frac_increase, frac_noise as reference. Doesn't control for between-class
+    differences — see fit_logit_class_fe for that check."""
+    x = sm.add_constant(df[X_COLS])
     y = df["correct_under_shuffle"].astype(int)
     result = sm.Logit(y, x).fit(disp=0)
-    print(f"\n[{name}] Logistic regression — P(correct_under_shuffle) ~ {' + '.join(x_cols)}")
-    print(f"  N={len(df)}  base_rate={y.mean():.3f}")
-    for term in ["const"] + x_cols:
+    print(f"\n[{name}] pooled — N={len(df)}  base_rate={y.mean():.3f}")
+    for term in ["const"] + X_COLS:
         print(f"  {term:16s} coef={result.params[term]:+.3f}  se={result.bse[term]:.3f}  "
               f"z={result.tvalues[term]:+.2f}  p={result.pvalues[term]:.4f}")
+    return _logit_rows(name, "pooled", result, y)
+
+
+def fit_logit_class_fe(name: str, df: pd.DataFrame) -> list[dict]:
+    """Class-fixed-effects version — one dummy per class (minus reference)
+    absorbs all between-class variation, isolating whether bucket fractions
+    predict failure *within* a class rather than through a class-level
+    confound. Applied by default, not on suspicion (see docstring).
+
+    Classes with zero within-class outcome variation (all clips correct, or
+    all incorrect) are dropped first — they perfectly separate their own
+    dummy and produce a singular Hessian (hit empirically: SSv2-VM class 126,
+    55/55 clips correct_under_shuffle), and contribute nothing to a
+    within-class estimate regardless."""
+    variation = df.groupby("class_id")["correct_under_shuffle"].transform("nunique")
+    dropped = df.loc[variation < 2, "class_id"].nunique()
+    df = df[variation >= 2]
+
+    dummies = pd.get_dummies(df["class_id"], prefix="class", drop_first=True)
+    x = sm.add_constant(pd.concat([df[X_COLS], dummies], axis=1)).astype(float)
+    y = df["correct_under_shuffle"].astype(int)
+    result = sm.Logit(y, x).fit(disp=0, maxiter=200)
+    converged = result.mle_retvals["converged"]
+    print(f"[{name}] class-FE — N={len(df)}  n_classes={df['class_id'].nunique()}  "
+          f"({dropped} class(es) dropped, no within-class variation)  converged={converged}")
+    for term in ["const"] + X_COLS:
+        print(f"  {term:16s} coef={result.params[term]:+.3f}  se={result.bse[term]:.3f}  "
+              f"z={result.tvalues[term]:+.2f}  p={result.pvalues[term]:.4f}")
+    rows = _logit_rows(name, "class_fe", result, y)
+    for row in rows:
+        row["converged"] = converged
+    return rows
 
 
 CSV_COLUMNS = ["clip_id", "class_id", "frac_noise", "frac_sign_flip",
@@ -150,7 +208,10 @@ def main() -> None:
         df = build_clip_table(name, cfg)
         df[CSV_COLUMNS].to_csv(OUT_DIR / f"{name}_clip_shuffle_disruption.csv", index=False)
         print(f"  N={len(df)} clips -> {name}_clip_shuffle_disruption.csv")
-        fit_logit(name, df)
+        rows = fit_logit(name, df) + fit_logit_class_fe(name, df)
+        coef_path = OUT_DIR / f"{name}_logit_coefficients.csv"
+        pd.DataFrame(rows).to_csv(coef_path, index=False)
+        print(f"  -> {coef_path.name}")
 
 
 if __name__ == "__main__":

@@ -364,16 +364,50 @@ def build_p2_k400_condition_accuracy() -> pd.DataFrame:
 # =========================== TASK 2: P3 spliced accuracy ========================
 
 P3_COLUMNS = [
-    "dataset", "config", "layer", "sae_k", "n", "baseline_correct", "baseline_accuracy",
+    "backbone", "dataset", "config", "layer", "sae_k", "n", "baseline_correct", "baseline_accuracy",
     "spliced_correct", "spliced_accuracy", "delta_accuracy",
     "pool", "weighting", "condition", "unit", "source_file", "source_mtime", "status",
 ]
 
+# TF SAE configs: verified directly against outputs/sae/sae_tf_k64_x8_l*_job*_best.pt
+# (SSv2 x8k64 only - TF has no K400 SAE checkpoints). L3/L11 exist here even
+# though scaffold_selection_consolidated.py's CONFIGS only covers L5/L7/L9 -
+# that list is scaffold-selection's own scope, not the full trained TF set.
+P3_TF_LAYERS = [3, 5, 7, 9, 11]
+
 
 def build_p3_spliced_accuracy() -> pd.DataFrame:
-    """Spliced accuracy headline, per backbone/layer/config (brief §4 P3). VM
-    only - held-out SAE-training split, not SL-gated (see T0/DISCREPANCIES.md
+    """Spliced accuracy headline, per backbone/layer/config (brief §4 P3).
+
+    VM: held-out SAE-training split, not SL-gated (see T0/DISCREPANCIES.md
     finding on the brief's refuted 3,098 batch-count figure).
+
+    TF: reported MISSING throughout, not silently absent (user, 28/08 - asked
+    for TF to be added). Checked directly: `notebooks/spliced_accuracy_tf.py`
+    exists and is built to write `outputs/spliced_accuracy_tf/spliced_accuracy_l{layer}.csv`,
+    but that directory is empty *locally*, and no TF spliced accuracy exists
+    anywhere else on disk either (the VM sweep parquet's `config` column has
+    no TF entries, checked directly). This session has no Isambard access -
+    outputs/ isn't git-tracked (see project memory reference_isambard_data_sync) -
+    so absence here is consistent with the run never happening OR with it
+    having run remotely and just not been pulled down yet; not asserting
+    which. Marked MISSING per brief rule 1 either way, not estimated. Rerun
+    this builder after any data pull and these rows fill in automatically -
+    TF now has real data, pulled from Isambard 28/08 (project memory
+    reference_isambard_data_sync). TF layers (L3/L5/L7/L9/L11) match the
+    actual trained TF SAE checkpoints on disk (outputs/sae/sae_tf_k64_x8_l*_job*_best.pt).
+
+    Two things checked and flagged, not smoothed over:
+    - TF's population (49,728 clips/layer) is NOT the same as VM's held-out
+      SAE split (4,000) or the 24,777-clip full val set used elsewhere in
+      this pull. spliced_accuracy_tf.py draws from its own data/ssv2_val_set
+      directory - a different population, not independently verified against
+      either convention. Pool labeled distinctly, not folded into VM's
+      "held-out SAE split" label.
+    - L11's delta is exactly 0.0 across all 176 classes (checked directly,
+      zero variance) - not a real "no effect" result, consistent with the SAE
+      splice hook silently failing to attach at TF's last transformer layer.
+      Reported UNVERIFIED, not OK, so it doesn't read as a genuine finding.
     """
     path = ROOT / "outputs/analysis/spliced_accuracy_sweep/spliced_accuracy_sweep_per_clip.parquet"
     df = pd.read_parquet(path)
@@ -382,6 +416,7 @@ def build_p3_spliced_accuracy() -> pd.DataFrame:
         baseline_correct=("baseline_correct", "sum"),
         spliced_correct=("spliced_correct", "sum"),
     ).reset_index()
+    g["backbone"] = "VM"
     g["baseline_accuracy"] = (g["baseline_correct"] / g["n"]).round(4)
     g["spliced_accuracy"] = (g["spliced_correct"] / g["n"]).round(4)
     g["delta_accuracy"] = (g["spliced_accuracy"] - g["baseline_accuracy"]).round(4)
@@ -392,7 +427,29 @@ def build_p3_spliced_accuracy() -> pd.DataFrame:
     g["source_file"] = str(path)
     g["source_mtime"] = mtime_date(path)
     g["status"] = status_for(path)
-    return g[P3_COLUMNS]
+
+    tf_rows = []
+    for layer in P3_TF_LAYERS:
+        tf_path = ROOT / "outputs/spliced_accuracy_tf" / f"spliced_accuracy_l{layer}.csv"
+        tf_df = pd.read_csv(tf_path)
+        n = int(tf_df["total_clips"].sum())
+        base_acc = (tf_df["baseline_accuracy"] * tf_df["total_clips"]).sum() / n
+        spliced_acc = (tf_df["spliced_accuracy"] * tf_df["total_clips"]).sum() / n
+        zero_delta = (tf_df["delta"] == 0).all()
+        tf_rows.append({
+            "backbone": "TF", "dataset": "ssv2", "config": f"TF_ssv2_L{layer}_k64", "layer": layer,
+            "sae_k": 64, "n": n, "baseline_correct": round(base_acc * n),
+            "baseline_accuracy": round(base_acc, 4),
+            "spliced_correct": round(spliced_acc * n), "spliced_accuracy": round(spliced_acc, 4),
+            "delta_accuracy": round(spliced_acc - base_acc, 4),
+            "pool": "TF spliced-accuracy eval set (spliced_accuracy_tf.py's own population - "
+                    "not verified equivalent to VM's held-out split or the 24,777-clip full val)",
+            "weighting": "clip-weighted", "condition": "R (baseline) vs R+SAE-splice", "unit": "clip",
+            "source_file": str(tf_path), "source_mtime": mtime_date(tf_path),
+            "status": "UNVERIFIED" if zero_delta else status_for(tf_path, fix_relevant=False),
+        })
+
+    return pd.concat([g[P3_COLUMNS], pd.DataFrame(tf_rows, columns=P3_COLUMNS)], ignore_index=True)
 
 
 # ============================ TASK 2: A1 scaffold member counts =================
@@ -926,7 +983,7 @@ def build_a7_near_miss_distribution() -> pd.DataFrame:
 # ========================= TASK 2: B1 four-bucket fractions =====================
 
 B1_COLUMNS = [
-    "backbone", "taxonomy", "stratum", "n_classes", "n_clips",
+    "backbone", "dataset", "taxonomy", "stratum", "n_classes", "n_clips",
     "frac_noise", "frac_sign_flip", "frac_decrease", "frac_increase",
     "pool", "unit", "weighting", "condition", "source_file", "source_mtime", "status",
 ]
@@ -934,7 +991,7 @@ B1_COLUMNS = [
 BUCKET_COLS = ["frac_noise", "frac_sign_flip", "frac_decrease", "frac_increase"]
 
 
-def _load_taxonomy_labels() -> pd.DataFrame:
+def _load_taxonomy_labels_ssv2() -> pd.DataFrame:
     """SL label (35 classes) + Ahn label (32 classes, unassigned for the
     3 SL-32-excluded classes when present) per class_id, from their
     respective canonical sources."""
@@ -945,44 +1002,65 @@ def _load_taxonomy_labels() -> pd.DataFrame:
     return sl.merge(ahn, on="class_id", how="left")  # ahn_label NaN for 38/97/160
 
 
+def _load_taxonomy_labels_k400() -> pd.DataFrame:
+    """SL label (64-class pool) per class_id, K400 - no Ahn/verb taxonomy
+    exists for K400, so ahn_label is always None here."""
+    k = pd.read_csv(ROOT / "outputs/Laura_SL/k400_sl_class_mapping.csv").dropna(subset=["matched_model_class_id"])
+    k = k.rename(columns={"matched_model_class_id": "class_id", "sl_category": "sl_label"})
+    k["class_id"] = k["class_id"].astype(int)
+    k["ahn_label"] = None
+    return k[["class_id", "sl_label", "ahn_label"]]
+
+
+B1_CONFIGS = [
+    ("VM", "ssv2", "outputs/analysis/shuffle_reduction_composition/ssv2_vm_clip_shuffle_disruption.csv", "SL-33"),
+    ("TF", "ssv2", "outputs/analysis/shuffle_reduction_composition/ssv2_tf_clip_shuffle_disruption.csv", "SL-31"),
+    ("VM", "k400", "outputs/analysis/shuffle_reduction_composition/k400_vm_clip_shuffle_disruption.csv",
+     "K400-eligible (40% R-acc cut, not SL-64-gated)"),
+]
+
+
 def build_b1_four_bucket_fractions() -> pd.DataFrame:
     """Class-weighted four-bucket (noise/sign_flip/decrease/increase) fractions,
-    both strata, both taxonomies, both backbones (brief §4 B1 / open item 10).
-    Class-weighted: mean-per-class first, then equal-weighted average across
-    classes in the stratum - not a raw clip pool average.
+    both strata, both taxonomies, VM+TF on SSv2, VM on K400 (brief §4 B1 / open
+    item 10; K400 arm added 01/09 once k400_vm's clip_shuffle_disruption run
+    existed). Class-weighted: mean-per-class first, then equal-weighted average
+    across classes in the stratum - not a raw clip pool average. K400 has no
+    Ahn/verb taxonomy, so that arm reports SL only.
     """
-    labels = _load_taxonomy_labels()
+    labels_ssv2, labels_k400 = _load_taxonomy_labels_ssv2(), _load_taxonomy_labels_k400()
     rows = []
-    for backbone, relpath in [("VM", "outputs/analysis/shuffle_reduction_composition/ssv2_vm_clip_shuffle_disruption.csv"),
-                               ("TF", "outputs/analysis/shuffle_reduction_composition/ssv2_tf_clip_shuffle_disruption.csv")]:
+    for backbone, dataset, relpath, pool in B1_CONFIGS:
         path = ROOT / relpath
+        labels = labels_ssv2 if dataset == "ssv2" else labels_k400
         clips = pd.read_csv(path)
         per_class = clips.groupby("class_id")[BUCKET_COLS].mean().reset_index()
         per_class["n_clips"] = clips.groupby("class_id").size().values
         per_class = per_class.merge(labels, on="class_id", how="left")
 
-        for taxonomy, label_col in [("SL", "sl_label"), ("Ahn", "ahn_label")]:
+        taxonomies = [("SL", "sl_label"), ("Ahn", "ahn_label")] if dataset == "ssv2" else [("SL", "sl_label")]
+        for taxonomy, label_col in taxonomies:
             strata = per_class[label_col].dropna().unique() if taxonomy == "Ahn" else per_class[label_col].unique()
             for stratum in strata:
                 sub = per_class[per_class[label_col] == stratum]
                 rows.append({
-                    "backbone": backbone, "taxonomy": taxonomy, "stratum": stratum,
+                    "backbone": backbone, "dataset": dataset, "taxonomy": taxonomy, "stratum": stratum,
                     "n_classes": len(sub), "n_clips": int(sub["n_clips"].sum()),
                     **{c: round(sub[c].mean(), 4) for c in BUCKET_COLS},
-                    "pool": "SL-33" if backbone == "VM" else "SL-31",
-                    "unit": "clip", "weighting": "class-weighted", "condition": "R vs shuffle",
+                    "pool": pool, "unit": "clip", "weighting": "class-weighted", "condition": "R vs shuffle",
                     "source_file": str(path), "source_mtime": mtime_date(path),
                     "status": status_for(path, fix_relevant=(backbone == "VM")),
                 })
+        if dataset != "ssv2":
+            continue
         # classes present in the clip pool but absent from the 32-class Ahn mapping
         unmapped = per_class[per_class["ahn_label"].isna()]
         if len(unmapped):
             rows.append({
-                "backbone": backbone, "taxonomy": "Ahn", "stratum": "not_in_ahn32_mapping",
+                "backbone": backbone, "dataset": dataset, "taxonomy": "Ahn", "stratum": "not_in_ahn32_mapping",
                 "n_classes": len(unmapped), "n_clips": int(unmapped["n_clips"].sum()),
                 **{c: round(unmapped[c].mean(), 4) for c in BUCKET_COLS},
-                "pool": "SL-33" if backbone == "VM" else "SL-31",
-                "unit": "clip", "weighting": "class-weighted", "condition": "R vs shuffle",
+                "pool": pool, "unit": "clip", "weighting": "class-weighted", "condition": "R vs shuffle",
                 "source_file": str(path), "source_mtime": mtime_date(path),
                 "status": status_for(path, fix_relevant=(backbone == "VM")),
             })
@@ -1365,6 +1443,68 @@ def build_b7_ablated_signflip_overlap() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=B7_COLUMNS)
 
 
+# ==================== TASK 2 (ad hoc): B8 per-class sign-flip / SL alignment ====
+
+B8_COLUMNS = [
+    "backbone", "dataset", "class_id", "template", "frac_sign_flip", "rank",
+    "sl_label", "n_clips", "r_accuracy", "pool", "unit", "weighting",
+    "condition", "source_file", "source_mtime", "status",
+]
+
+B8_CONFIGS = [
+    ("VM", "ssv2",
+     "outputs/analysis/shuffle_reduction_composition/ssv2_vm_clip_shuffle_disruption.csv",
+     "outputs/stage1_class_selection_VM_ssv2/per_class_accuracy_VM_ssv2_R.csv", "SL-33"),
+    ("VM", "k400",
+     "outputs/analysis/shuffle_reduction_composition/k400_vm_clip_shuffle_disruption.csv",
+     "outputs/stage1_class_selection_VM_kinetics/per_class_accuracy_VM_kinetics_R.csv",
+     "K400-eligible (40% R-acc cut, not SL-64-gated)"),
+]
+
+
+def build_b8_per_class_signflip_ranking() -> pd.DataFrame:
+    """Per-class mean frac_sign_flip, descending - a candidate temporal-
+    sensitivity proxy (user, 01/09): does the R-DFA mass carried by shuffle-
+    sign-flipping features rank classes the way the SL human-shuffle taxonomy
+    does? SSv2 VM: strong alignment (13/16 top-half classes are SL-temporal,
+    3/16 in the bottom half - checked directly). K400 VM: weak alignment
+    (~50/50 split throughout, top class is SL-static) - not adjudicated here,
+    flagged for follow-up rather than smoothed over. Possible reasons noted,
+    not resolved: K400's SL threshold (40% human accuracy loss) is a looser
+    bar than SSv2's (60%), and K400's effect sizes sit far closer to the
+    metric's floor (max 15.3% vs SSv2's 45.8%).
+    """
+    labels_ssv2, labels_k400 = _load_taxonomy_labels_ssv2(), _load_taxonomy_labels_k400()
+    rows = []
+    for backbone, dataset, disr_relpath, acc_relpath, pool in B8_CONFIGS:
+        disr_path, acc_path = ROOT / disr_relpath, ROOT / acc_relpath
+        disr = pd.read_csv(disr_path)
+        acc = pd.read_csv(acc_path)[["class_id", "template", "accuracy"]]
+        labels = labels_ssv2 if dataset == "ssv2" else labels_k400
+
+        per_class = disr.groupby("class_id").agg(
+            frac_sign_flip=("frac_sign_flip", "mean"), n_clips=("clip_id", "count"),
+        ).reset_index()
+        per_class = per_class.merge(acc, on="class_id", how="left").merge(
+            labels[["class_id", "sl_label"]], on="class_id", how="left")
+        not_in_pool = f"not in SL-{'35' if dataset == 'ssv2' else '64'}"
+        per_class["sl_label"] = per_class["sl_label"].fillna(not_in_pool)
+        per_class = per_class.sort_values("frac_sign_flip", ascending=False).reset_index(drop=True)
+        per_class["rank"] = per_class.index + 1
+
+        for _, r in per_class.iterrows():
+            rows.append({
+                "backbone": backbone, "dataset": dataset, "class_id": int(r["class_id"]),
+                "template": r["template"], "frac_sign_flip": round(r["frac_sign_flip"], 4),
+                "rank": int(r["rank"]), "sl_label": r["sl_label"], "n_clips": int(r["n_clips"]),
+                "r_accuracy": r["accuracy"], "pool": pool, "unit": "clip",
+                "weighting": "class-weighted", "condition": "R vs shuffle",
+                "source_file": str(disr_path), "source_mtime": mtime_date(disr_path),
+                "status": status_for(disr_path, fix_relevant=(backbone == "VM")),
+            })
+    return pd.DataFrame(rows, columns=B8_COLUMNS)
+
+
 # ================================ TASK 2: appendix ================================
 
 X1_COLUMNS = ["backbone", "condition", "class_id", "template", "correct",
@@ -1609,6 +1749,9 @@ def main():
     b7 = build_b7_ablated_signflip_overlap()
     b7.to_csv(OUT_DIR / "B7_ablated_signflip_overlap.csv", index=False)
 
+    b8 = build_b8_per_class_signflip_ranking()
+    b8.to_csv(OUT_DIR / "B8_per_class_signflip_temporal_proxy.csv", index=False)
+
     d1 = build_d1_c_vs_c1_vs_tfc()
     d1.to_csv(OUT_DIR / "D1_c_vs_c1_vs_tfc.csv", index=False)
 
@@ -1650,6 +1793,7 @@ def main():
         "B6_falsifiers": ("B6_taxonomy_falsifiers.csv", b6f),
         "B6_diff_in_diff": ("B6_diff_in_diff.csv", b6d),
         "B7": ("B7_ablated_signflip_overlap.csv", b7),
+        "B8": ("B8_per_class_signflip_temporal_proxy.csv", b8),
         "D1": ("D1_c_vs_c1_vs_tfc.csv", d1),
         "X1": ("X1_ssv2_per_class.csv", x1),
         "X2": ("X2_k400_per_class.csv", x2),

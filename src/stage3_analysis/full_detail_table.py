@@ -26,8 +26,8 @@ from stage3_analysis.clip_shuffle_disruption import CONFIGS, eligible_classes, t
 OUT_DIR = ROOT / "outputs" / "analysis" / "shuffle_reduction_composition"
 
 
-def build_full_detail(backbone: str) -> pd.DataFrame:
-    cfg = CONFIGS[f"ssv2_{backbone}"]
+def build_full_detail(config_name: str) -> pd.DataFrame:
+    cfg = CONFIGS[config_name]
     dfa_df = pd.read_parquet(cfg["dfa_parquet"])
     classes = eligible_classes(dfa_df, cfg["r_acc_csv"])
     clips = dfa_df[dfa_df["class_id"].isin(classes)]
@@ -42,16 +42,16 @@ def build_full_detail(backbone: str) -> pd.DataFrame:
         detail["correct_under_shuffle"] = bool(clip[cfg["correct_col"]])
         rows.append(detail)
     out = pd.concat(rows, ignore_index=True).rename(columns={"feature_idx": "feature_id"})
-    print(f"  [{backbone}] {len(classes)} classes, {len(clips)} clips, {len(out)} instance rows")
+    print(f"  [{config_name}] {len(classes)} classes, {len(clips)} clips, {len(out)} instance rows")
     return out
 
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for backbone in ("vm", "tf"):
-        print(f"Processing {backbone}...")
-        df = build_full_detail(backbone)
-        path = OUT_DIR / f"ssv2_{backbone}_full_detail.parquet"
+    for config_name in ("ssv2_vm", "ssv2_tf", "k400_vm"):
+        print(f"Processing {config_name}...")
+        df = build_full_detail(config_name)
+        path = OUT_DIR / f"{config_name}_full_detail.parquet"
         df.to_parquet(path, index=False)
         print(f"  -> {path}")
 
