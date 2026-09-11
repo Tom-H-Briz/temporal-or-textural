@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import gaussian_kde
 
-ROOT = Path(__file__).parent.parent.parent
+ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 SL_COLOURS = {"temporal": "steelblue", "static": "darkorange"}

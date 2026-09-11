@@ -67,6 +67,10 @@ CONFIGS = [
 ]
 
 
+def config_name(cfg: dict) -> str:
+    return f"VM_{cfg['dataset']}_L{cfg['layer']}_k{cfg['sae_k']}"
+
+
 def ensure_ssv2_held_out() -> list[str]:
     """Regenerate + persist the SSv2 held-out val list if it doesn't exist yet, via
     train_sae.py's own build_split()/persist_held_out_clips() — not reimplemented,
@@ -87,7 +91,7 @@ def run_one_config(cfg: dict, eval_clips: dict[str, list[str]]) -> tuple[dict, p
     (summary row, per-clip rows) — the per-class CSV is written as a side effect
     by run_spliced_accuracy itself, redirected into this sweep's own out_dir."""
     layer, sae_k, dataset = cfg["layer"], cfg["sae_k"], cfg["dataset"]
-    name = f"VM_{dataset}_L{layer}_k{sae_k}"
+    name = config_name(cfg)
     resolved = resolve_sae_checkpoint("videomae", layer, dataset_name=dataset, sae_k=sae_k)
     print(f"\n=== {name} === {resolved['sae_path']}")
 
@@ -111,25 +115,62 @@ def run_one_config(cfg: dict, eval_clips: dict[str, list[str]]) -> tuple[dict, p
     return summary, per_clip
 
 
+def per_clip_path_for(cfg: dict) -> Path:
+    return CFG["out_dir"] / "per_clip" / f"{config_name(cfg)}.parquet"
+
+
+def write_per_clip_atomic(per_clip: pd.DataFrame, out_path: Path) -> None:
+    """Write via temp-file-then-rename so a job killed mid-write can never leave a
+    file that *looks* complete to the resume-skip check in main() — rename is
+    atomic on the same filesystem, a partial to_parquet() write is not."""
+    tmp_path = out_path.with_suffix(".tmp.parquet")
+    per_clip.to_parquet(tmp_path)
+    tmp_path.rename(out_path)
+
+
+def combine_outputs() -> None:
+    """Rebuild the master per-clip parquet + summary CSV from whatever per-config
+    parquet files exist on disk. Cheap (thousands of rows, not millions) and pure
+    read-from-disk, so it's safe to call after every config — the combined outputs
+    are then never more than one config stale, and this is also how to recover a
+    summary after a killed job without rerunning anything that already finished."""
+    frames = [pd.read_parquet(p) for p in sorted((CFG["out_dir"] / "per_clip").glob("*.parquet"))]
+    if not frames:
+        return
+    combined = pd.concat(frames, ignore_index=True)
+    combined.to_parquet(CFG["out_dir"] / "spliced_accuracy_sweep_per_clip.parquet")
+    summary = combined.groupby(["config", "dataset", "layer", "sae_k"], as_index=False).agg(
+        n_clips=("clip_id", "count"),
+        baseline_accuracy_clip_weighted=("baseline_correct", "mean"),
+        spliced_accuracy_clip_weighted=("spliced_correct", "mean"),
+    )
+    summary["spliced_accuracy_drop_clip_weighted"] = (
+        summary["baseline_accuracy_clip_weighted"] - summary["spliced_accuracy_clip_weighted"]
+    )
+    summary.to_csv(CFG["out_dir"] / "spliced_accuracy_sweep_summary.csv", index=False)
+
+
 def main() -> None:
-    CFG["out_dir"].mkdir(parents=True, exist_ok=True)
+    (CFG["out_dir"] / "per_clip").mkdir(parents=True, exist_ok=True)
     eval_clips = {
         "ssv2": ensure_ssv2_held_out(),
         "kinetics400": json.load(open(CFG["k400_held_out_path"])),
     }
     print(f"Eval pool sizes: ssv2={len(eval_clips['ssv2'])}  kinetics400={len(eval_clips['kinetics400'])}")
 
-    summaries, per_clip_frames = [], []
+    n_done = 0
     for cfg in CONFIGS:
-        summary, per_clip = run_one_config(cfg, eval_clips)
-        summaries.append(summary)
-        per_clip_frames.append(per_clip)
+        out_path = per_clip_path_for(cfg)
+        if out_path.exists():
+            print(f"Skipping {config_name(cfg)} — already completed (resume)")
+            n_done += 1
+            continue
+        _, per_clip = run_one_config(cfg, eval_clips)
+        write_per_clip_atomic(per_clip, out_path)
+        combine_outputs()  # keeps master parquet/summary current after every config
+        n_done += 1
 
-    pd.concat(per_clip_frames, ignore_index=True).to_parquet(
-        CFG["out_dir"] / "spliced_accuracy_sweep_per_clip.parquet"
-    )
-    pd.DataFrame(summaries).to_csv(CFG["out_dir"] / "spliced_accuracy_sweep_summary.csv", index=False)
-    print(f"\nDone — {len(CONFIGS)} configs -> {CFG['out_dir']}")
+    print(f"\nDone — {n_done}/{len(CONFIGS)} configs -> {CFG['out_dir']}")
 
 
 if __name__ == "__main__":

@@ -1588,7 +1588,8 @@ def build_x3_spliced_accuracy_full() -> pd.DataFrame:
 
 
 X5_COLUMNS = ["feature_idx", "member_status", "share_R_dfa", "consistency_R_dfa",
-              "share_C1_dfa", "pool", "unit", "weighting", "source_file", "source_mtime", "status"]
+              "share_C1_dfa", "share_A_dfa", "consistency_A_dfa",
+              "pool", "unit", "weighting", "source_file", "source_mtime", "status"]
 
 
 def build_x5_l7_near_miss_detail() -> pd.DataFrame:
@@ -1598,8 +1599,11 @@ def build_x5_l7_near_miss_detail() -> pd.DataFrame:
     """
     path = ROOT / "outputs/analysis/scaffold_selection/L7_x8k64_VM.csv"
     df = pd.read_csv(path)
-    out = df[["feature_idx", "status", "dfa_share_R", "dfa_consistency_R", "dfa_share_C1"]].copy()
-    out.columns = ["feature_idx", "member_status", "share_R_dfa", "consistency_R_dfa", "share_C1_dfa"]
+    cols = ["feature_idx", "status", "dfa_share_R", "dfa_consistency_R", "dfa_share_C1",
+            "dfa_share_A", "dfa_consistency_A"]
+    out = df[cols].copy()
+    out.columns = ["feature_idx", "member_status", "share_R_dfa", "consistency_R_dfa",
+                   "share_C1_dfa", "share_A_dfa", "consistency_A_dfa"]
     out["pool"] = "SL-35"
     out["unit"] = "feature"
     out["weighting"] = "n/a"

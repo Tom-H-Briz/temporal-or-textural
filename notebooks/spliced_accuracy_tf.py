@@ -37,8 +37,9 @@ CFG = {
     "sae_abbrev":      "tf",
     "batch_size":      8,
     "num_workers":     4,
-    "device":          "cuda" if torch.cuda.is_available() else "cpu",
-    "output_dir":      str(ROOT / "outputs" / "spliced_accuracy_tf"),
+    "device":          ("cuda" if torch.cuda.is_available()
+                         else "mps" if torch.backends.mps.is_available() else "cpu"),
+    "output_dir":      os.environ.get("OUTPUT_DIR", str(ROOT / "outputs" / "spliced_accuracy_tf")),
     "sae_dir":         str(ROOT / "outputs" / "sae"),
 }
 
@@ -139,6 +140,9 @@ def main() -> None:
         [c for c in clips if (video_dir / f"{c['id']}.webm").exists()],
         key=lambda c: c["id"],
     )
+    max_clips = os.environ.get("MAX_CLIPS")
+    if max_clips:
+        all_clips = all_clips[:int(max_clips)]
     paths  = [video_dir / f"{c['id']}.webm" for c in all_clips]
     labels = [label_map[_strip_brackets(c["template"])] for c in all_clips]
     print(f"  {len(all_clips):,} clips (sorted by video ID)")
