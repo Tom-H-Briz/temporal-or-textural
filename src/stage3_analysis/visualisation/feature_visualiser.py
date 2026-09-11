@@ -19,7 +19,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-ROOT = Path(__file__).parent.parent.parent
+ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "notebooks"))

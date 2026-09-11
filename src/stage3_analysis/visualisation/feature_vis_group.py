@@ -30,8 +30,8 @@ import matplotlib.colors as mcolors
 
 CFG = {
     "model_flag":  "timesformer",
-    "class_id":    6,
-    "features":    [4991, 4380, 4864, 958,182],
+    "class_id":    164,
+    "features":    [1517],
     "n_clips":     3,
     "seed":        11,
     "layer":       7,
@@ -45,7 +45,7 @@ CFG = {
     "n_spatial":   196,    # 14×14 spatial patches per frame
 }
 
-ROOT = Path(__file__).parent.parent.parent
+ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
@@ -59,7 +59,7 @@ from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, load_metadata, _strip
 def _resolve_cfg(cfg: dict) -> dict:
     sae_dir = ROOT / "outputs" / "sae"
     layer   = cfg["layer"]
-    matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job*_best.pt"))
+    matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
     if len(matches) != 1:
         raise FileNotFoundError(
             f"Expected 1 TF checkpoint for layer {layer}, found: {matches}"
@@ -267,6 +267,7 @@ def make_feature_image(
         n_clips, num_frames,
         figsize=(num_frames * 2, n_clips * 2.2),
     )
+    fig.subplots_adjust(right=0.88)
 
     if vmax is None:
         all_vals = np.concatenate([a.flatten() for a in clips_activations])
@@ -300,13 +301,13 @@ def make_feature_image(
         y=1.01,
     )
 
-    # Colourbar
+    # Colourbar - dedicated axis, not ax=axes + tight_layout: tight_layout was
+    # re-expanding the image axes back over the colorbar space afterward.
     sm = cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    fig.colorbar(sm, ax=axes, orientation="vertical", fraction=0.02, pad=0.02,
-                 label="signed activation")
+    cax = fig.add_axes((0.90, 0.15, 0.015, 0.7))
+    fig.colorbar(sm, cax=cax, orientation="vertical", label="signed activation")
 
-    plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

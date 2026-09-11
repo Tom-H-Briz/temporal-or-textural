@@ -24,14 +24,14 @@ import numpy as np
 import pandas as pd
 import torch
 
-ROOT = Path(__file__).parent.parent.parent
+ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
-from ToT_utils import _strip_brackets, load_metadata
+from ToT_utils import _strip_brackets, load_metadata, resolve_sae_checkpoint
 from stage3_analysis.dfa_engine import DFAEngine
-import stage3_analysis.feature_vis_group_vm as vis
+import stage3_analysis.visualisation.feature_vis_group_vm as vis
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -42,9 +42,9 @@ DFA_CLASSES = {0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40,
 
 CFG = {
     "model_flag":      "videomae",
-    "layer":           7,
+    "layer":           5,
     "device":          "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"),
-    "feature_idx":     1990,          # default — overridden by --features
+    "feature_idx":     917,          # default — overridden by --features
     "top_k":           10,
     "labels_path":     os.environ.get("LABELS_PATH",     str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
@@ -53,28 +53,28 @@ CFG = {
 }
 
 
-def _resolve_cfg() -> dict:
-    sae_path = ROOT / "outputs" / "sae" / "sae_layer7_job64.pt"
-    dim_mean = ROOT / "outputs" / "sae" / "layer7_dim_mean.pt"
-    if not sae_path.exists():
-        raise FileNotFoundError(f"VM SAE not found: {sae_path}")
-    if not dim_mean.exists():
-        raise FileNotFoundError(f"dim_mean not found: {dim_mean}")
-    return {"sae_path": str(sae_path), "dim_mean_path": str(dim_mean), "sae_k": 64}
+def _resolve_cfg(cfg: dict) -> dict:
+    # was hardcoded to the L7 checkpoint regardless of cfg["layer"] - silently
+    # wrong for any other layer, since the SAE dictionary is layer-specific.
+    return resolve_sae_checkpoint("videomae", cfg["layer"], dataset_name="ssv2", sae_k=64)
 
 
 def load_clips(cfg: dict) -> list[tuple[str, int, Path]]:
+    # Gated to R-correct clips (same population every other DFA/sign script in
+    # this pipeline uses) - the per-clip sign lookup in render_vis only exists
+    # for R-correct clips, so an ungated scan can rank a clip it can't render.
     label_map, clips, _ = load_metadata(cfg["labels_path"], cfg["validation_path"])
     video_dir = Path(cfg["video_dir"])
+    pq_ids = set(pd.read_parquet(vis.mass_delta_path(cfg["layer"]), columns=["clip_id"])["clip_id"])
     result = []
     for c in clips:
         cid = label_map.get(_strip_brackets(c["template"]))
-        if cid not in DFA_CLASSES:
+        if cid not in DFA_CLASSES or str(c["id"]) not in pq_ids:
             continue
         path = video_dir / f"{c['id']}.webm"
         if path.exists():
             result.append((str(c["id"]), cid, path))
-    log.info(f"  {len(result):,} clips across {len(DFA_CLASSES)} classes")
+    log.info(f"  {len(result):,} R-correct clips across {len(DFA_CLASSES)} classes")
     return result
 
 
@@ -117,15 +117,14 @@ def render_vis(top: pd.DataFrame, feat_idx: int, cfg: dict, resolved: dict,
         "num_tubelets": 8,
         "n_spatial":    196,
     }
-    W_dec = vis.get_decoder_weights(sae)
     for _, row in top.iterrows():
         clip_path = Path(row["clip_path"])
         clip_id   = row["clip_id"]
         frames    = vis.load_video_frames(clip_id, clip_path.parent, vis_cfg["num_frames"])
         z         = vis.extract_activations(frames, model, processor, sae, dim_mean,
                                             vis_cfg, cfg["device"])
-        acts      = vis.signed_activation_map(z, feat_idx, W_dec,
-                                               vis_cfg["num_tubelets"], vis_cfg["n_spatial"])
+        acts      = vis.signed_activation_map(z, feat_idx, clip_id,
+                                               vis_cfg["num_tubelets"], vis_cfg["n_spatial"], cfg["layer"])
         vis.make_feature_image(
             clips_activations=[acts],
             clips_frames=[frames[::2]],
@@ -167,7 +166,7 @@ def main() -> None:
 
     features = args.features if args.features else [CFG["feature_idx"]]
     cfg      = CFG
-    resolved = _resolve_cfg()
+    resolved = _resolve_cfg(cfg)
 
     log.info(f"Device: {cfg['device']}  Features: {features}")
     sl_map = {int(r["class_id"]): r["category"]

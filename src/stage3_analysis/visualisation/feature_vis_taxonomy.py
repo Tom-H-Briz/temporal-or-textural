@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-ROOT = Path(__file__).parent.parent.parent
+ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "notebooks"))
 sys.path.insert(0, str(ROOT / "src"))
@@ -206,7 +206,7 @@ def make_figure(maps: dict, frames_by_cond: dict, backbone: str, backbone_cfg: d
     conditions = ["R", "shuffle", "A"]
     n_t = len(frames_by_cond["R"])
     fig, axes = plt.subplots(4, n_t, figsize=(n_t * 2, 9))
-    fig.subplots_adjust(left=0.08, right=0.91, hspace=0.05, wspace=0.03, top=0.88)
+    fig.subplots_adjust(left=0.08, right=0.88, hspace=0.05, wspace=0.03, top=0.88)
 
     for col, frame in enumerate(frames_by_cond["R"]):
         axes[0, col].imshow(frame)
@@ -231,7 +231,11 @@ def make_figure(maps: dict, frames_by_cond: dict, backbone: str, backbone_cfg: d
     sm = plt.cm.ScalarMappable(cmap=maps["cmap"], norm=maps["norm"])
     sm.set_array([])
     vmax = maps["norm"].vmax
-    cbar = fig.colorbar(sm, ax=axes, orientation="vertical", fraction=0.015, pad=0.01)
+    # Dedicated colorbar axis, not ax=axes - same fix as feature_vis_vm.py:
+    # that auto-layout encroached on the last column instead of respecting
+    # the margin freed by subplots_adjust above.
+    cax = fig.add_axes((0.91, 0.15, 0.015, 0.7))
+    cbar = fig.colorbar(sm, cax=cax, orientation="vertical")
     cbar.set_ticks([-vmax, 0, vmax])
     cbar.set_ticklabels([f"{-vmax:.1f}", "0", f"{vmax:.1f}"])
     cbar.set_label("signed activation", fontsize=9)

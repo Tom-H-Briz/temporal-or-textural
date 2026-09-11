@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 
-ROOT = Path(__file__).parent.parent.parent
+ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
@@ -37,11 +37,11 @@ from ToT_utils import (
 
 CFG = {
     "model_flag":   "videomae",
-    "clip_id":      None,        # set to a specific clip ID string, or None to use class_id
-    "class_id":     6,
-    "feature_idx":  5854,
+    "clip_id":      None,        # random draw from class_id
+    "class_id":     168,
+    "feature_idx":  1517,
     "seed":         7,
-    "layer":        7,
+    "layer":        5,
     "device":       "cuda" if torch.cuda.is_available() else "cpu",
     "video_dir":    Path("data/ssv2/20bn-something-something-v2"),
     "labels_path":  Path("data/ssv2/labels/labels.json"),
@@ -89,7 +89,7 @@ def resolve_clip_id(cfg: dict) -> str:
     if cfg["clip_id"] is not None:
         return str(cfg["clip_id"])
     pq_ids = set(pd.read_parquet(
-        ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet",
+        ROOT / f"outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l{cfg['layer']}_job7ep_k64.parquet",
         columns=["clip_id"]
     )["clip_id"].tolist())
     label_map, clips, _ = load_metadata(
@@ -147,20 +147,24 @@ def extract_z(frames: list, model, processor, sae, dim_mean, cfg: dict, device: 
     return z.detach().cpu()
 
 
-def lookup_dfa_sign(clip_id: str, feat: int) -> float:
-    src = ROOT / "outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l7_job7ep_k64.parquet"
-    row = pd.read_parquet(src, columns=["clip_id", "signed_vec_R"]).query("clip_id == @clip_id")
+def lookup_dfa_sign(clip_id: str, feat: int, layer: int, condition: str) -> float:
+    # Reads the DFA sign for the condition actually being plotted - previously
+    # always read signed_vec_R and reused it for C1/A too, so a genuine sign
+    # flip (a real, different quantity per condition) never showed up visually.
+    src = ROOT / f"outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_l{layer}_job7ep_k64.parquet"
+    col = f"signed_vec_{condition}"
+    row = pd.read_parquet(src, columns=["clip_id", col]).query("clip_id == @clip_id")
     if row.empty:
         raise KeyError(f"Clip {clip_id} not found in mass delta parquet — is it R-correct and in the SL subset?")
-    val = float(np.asarray(row.iloc[0]["signed_vec_R"])[feat])
+    val = float(np.asarray(row.iloc[0][col])[feat])
     sign = np.sign(val)
-    print(f"  DFA sign for f{feat} clip {clip_id}: signed_vec_R={val:.4f}  sign={int(sign):+d}")
+    print(f"  DFA sign for f{feat} clip {clip_id} [{condition}]: {col}={val:.4f}  sign={int(sign):+d}")
     return float(sign) or 1.0
 
 
-def activation_map(z: torch.Tensor, feat: int, cfg: dict, clip_id: str) -> np.ndarray:
+def activation_map(z: torch.Tensor, feat: int, cfg: dict, clip_id: str, condition: str) -> np.ndarray:
     override = cfg.get("sign_override")
-    dec_sign = float(override) if override is not None else lookup_dfa_sign(clip_id, feat)
+    dec_sign = float(override) if override is not None else lookup_dfa_sign(clip_id, feat, cfg["layer"], condition)
     signed   = z[:, feat] * dec_sign
     spatial  = int(cfg["n_spatial"] ** 0.5)
     return signed.numpy().reshape(cfg["num_tubelets"], spatial, spatial)
@@ -184,7 +188,7 @@ def make_figure(maps: dict, frames_by_cond: dict, cfg: dict, clip_id: str, norm,
     conditions = ["R", "C1", "A"]
     n_t = cfg["num_tubelets"]
     fig, axes = plt.subplots(4, n_t, figsize=(n_t * 2, 9))
-    fig.subplots_adjust(left=0.08, right=0.91, hspace=0.05, wspace=0.03)
+    fig.subplots_adjust(left=0.08, right=0.88, hspace=0.05, wspace=0.03)
 
     # Row 0 — raw clip, no overlay
     for col, frame in enumerate(frames_by_cond["R"][::2]):
@@ -213,7 +217,11 @@ def make_figure(maps: dict, frames_by_cond: dict, cfg: dict, clip_id: str, norm,
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     vmax = norm.vmax
-    cbar = fig.colorbar(sm, ax=axes, orientation="vertical", fraction=0.015, pad=0.01)
+    # Dedicated colorbar axis, not ax=axes - that auto-layout was the actual
+    # overlap: it can encroach on the last column instead of respecting the
+    # margin already freed by subplots_adjust above.
+    cax = fig.add_axes((0.91, 0.15, 0.015, 0.7))
+    cbar = fig.colorbar(sm, cax=cax, orientation="vertical")
     cbar.set_ticks([-vmax, 0, vmax])
     cbar.set_ticklabels([f"{-vmax:.1f}", "0", f"{vmax:.1f}"])
     cbar.set_label("signed activation", fontsize=9)
@@ -243,7 +251,7 @@ def main() -> None:
     maps = {}
     for cond, frames in frames_by_cond.items():
         z = extract_z(frames, model, processor, sae, dim_mean, CFG, device)
-        maps[cond] = activation_map(z, CFG["feature_idx"], CFG, clip_id)
+        maps[cond] = activation_map(z, CFG["feature_idx"], CFG, clip_id, cond)
 
     # Scale anchored to R's 99th percentile — C1 and A render dimmer relative to R
     vmax = float(np.percentile(np.abs(maps["R"]), 99))
