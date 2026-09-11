@@ -16,13 +16,18 @@ Usage:
 """
 
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
 
 ROOT        = Path(__file__).parent.parent
 SL_DIR      = ROOT / "outputs" / "Laura_SL"
-VAL_CSV     = ROOT / "data" / "kinetics400" / "annotations" / "val.csv"
+# Same env var / default as position_lock_extraction.py and the existing
+# run_position_lock_vm_kinetics.sh launcher — Isambard's val.csv lives under a
+# scratch path, not this repo-relative default.
+VAL_CSV     = Path(os.environ.get("KINETICS_LABELS_CSV",
+                                  str(ROOT / "data" / "kinetics400" / "annotations" / "val.csv")))
 MAPPING_CSV = SL_DIR / "k400_sl_class_mapping.csv"
 OUT_JSON    = SL_DIR / "k400_manifest_SL_subset.json"
 
