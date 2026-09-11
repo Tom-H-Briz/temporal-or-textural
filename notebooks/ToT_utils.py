@@ -16,6 +16,8 @@ from transformers import (
     TimesformerForVideoClassification,
     VideoMAEForVideoClassification,
     VideoMAEImageProcessor,
+    VivitForVideoClassification,
+    VivitImageProcessor,
 )
 
 ROOT = Path(__file__).parent.parent
@@ -49,6 +51,16 @@ MODEL_REGISTRY: dict[str, dict] = {
         "num_patch_tokens": 1568,
         "position_label":   "frame",
     },
+    "vivit": {
+        "model_class":      VivitForVideoClassification,
+        "num_frames":       32,
+        "processor_class":  VivitImageProcessor,
+        "cls_offset":       1,
+        "layer_getter":     lambda model, i: model.vivit.encoder.layer[i],
+        "hidden_dim":       768,
+        "num_patch_tokens": 3136,
+        "position_label":   "tubelet",
+    },
 }
 
 # (model_name, dataset_name) -> HF checkpoint string. The only place a finetuned
@@ -57,6 +69,7 @@ CHECKPOINT_REGISTRY: dict[tuple[str, str], str] = {
     ("videomae", "ssv2"):         "MCG-NJU/videomae-base-finetuned-ssv2",
     ("timesformer", "ssv2"):      "facebook/timesformer-base-finetuned-ssv2",
     ("videomae", "kinetics400"):  "MCG-NJU/videomae-base-finetuned-kinetics",
+    ("vivit", "kinetics400"):     "google/vivit-b-16x2-kinetics400",
 }
 
 # k -> expansion. This project has only ever trained these two SAE configs — not a
@@ -94,6 +107,11 @@ def resolve_sae_checkpoint(
             raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
         sae_path = matches[0]
         dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
+    elif model_flag == "vivit":
+        assert dataset_name == "kinetics400", "ViViT has no non-Kinetics-400 checkpoints in this project"
+        expansion = _SAE_EXPANSION_FOR_K[sae_k]
+        sae_path = sae_dir / f"sae_vivit_{dataset_name}_k{sae_k}_x{expansion}_l{layer}_job{job_label}_best.pt"
+        dim_mean = sae_dir / f"vivit_{dataset_name}_layer{layer}_dim_mean.pt"
     else:
         raise ValueError(f"Unknown model_flag: {model_flag!r}")
 
@@ -153,6 +171,9 @@ def gather_by_position(tokens: torch.Tensor, model_flag: str) -> torch.Tensor:
     elif model_flag == "timesformer":
         grouped = tokens.reshape(N_SPATIAL, num_positions, *tokens.shape[1:])
         return grouped.transpose(0, 1)
+    elif model_flag == "vivit":
+        # conv3d tubelet embedding flattens (T, H, W) time-major — same layout as VM
+        return tokens.reshape(num_positions, N_SPATIAL, *tokens.shape[1:])
     else:
         raise ValueError(f"No position-gather rule registered for model_flag={model_flag!r}")
 
@@ -201,6 +222,24 @@ def load_metadata(
     return label_map, clips, id2template
 
 
+def resolve_k400_label2id(model_flag: str) -> dict[str, int]:
+    """label2id for a Kinetics-400 checkpoint. Most finetuned checkpoints carry real
+    class names in their config, but google/vivit-b-16x2-kinetics400 ships generic
+    LABEL_N placeholders (id2label is LABEL_0..LABEL_399) — resolving from the
+    config there yields a map where every real class name lookup misses. Fall back
+    to the canonical alphabetical 400-class list (notebooks/k400_label_names.json,
+    extracted from the VM-kinetics checkpoint config — verified alphabetical), which
+    is the ordering both conversions follow. Correctness is gated downstream by the
+    known-clip smoke test / baseline accuracy (right map ~60%+ top-1, wrong ~0.25%).
+    """
+    checkpoint = CHECKPOINT_REGISTRY[(model_flag, "kinetics400")]
+    label2id = AutoConfig.from_pretrained(checkpoint).label2id
+    if not any(k.startswith("LABEL_") for k in label2id):
+        return label2id
+    names = json.loads((Path(__file__).parent / "k400_label_names.json").read_text())
+    return {name: i for i, name in enumerate(names)}
+
+
 def load_clips_kinetics(
     manifest_path: str, video_dir: str, model_flag: str
 ) -> list[tuple[str, int, Path]]:
@@ -231,7 +270,7 @@ def load_clips_kinetics(
     project's data-sync convention).
     """
     checkpoint = CHECKPOINT_REGISTRY[(model_flag, "kinetics400")]
-    label2id   = AutoConfig.from_pretrained(checkpoint).label2id
+    label2id   = resolve_k400_label2id(model_flag)
     with open(manifest_path) as f:
         manifest = json.load(f)
 
