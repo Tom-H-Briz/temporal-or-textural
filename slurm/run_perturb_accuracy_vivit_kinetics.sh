@@ -3,13 +3,14 @@
 #SBATCH --output=run_perturb_accuracy_vivit_kinetics_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=12:00:00
+#SBATCH --time=04:00:00
 
 # Conditions R/A/C1 for ViViT-B/16x2 (32 frames/clip, 2x the VM tokens per forward).
-# Walltime: VM-kinetics measured 48:14/condition (job 5849391, 2486 batches); ViViT
-# worst case 2x that = ~1.7h/condition = ~5h compute, PLUS loading overhead (pip
-# install + ~500MB checkpoint fetch inside the container each run) — so 2x the
-# kinetics job's 4h budget + overhead headroom = 12h. Isambard cap is 24h.
+# Walltime: ViViT-kinetics R measured 49:59/condition on the stride-4 run — ~2.5h
+# for 3 conditions + ~10min container/checkpoint load = ~3h estimate; 4h for
+# safety headroom. R lands first regardless of any timeout.
+# This re-run fixes the stride: frame_sample_rate 4 -> 2 (paper §4.1 protocol),
+# replacing the stride-4 numbers (R top-1 0.5687, recorded in the stride-4 .out).
 # R doubles as the label-map validation gate: ~0.25% top-1 means the canonical
 # alphabetical fallback is wrong, ~60%+ means it's right (kill early if you see it).
 #

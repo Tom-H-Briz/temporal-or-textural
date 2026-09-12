@@ -4,6 +4,7 @@ Shared utilities for temporal-or-textural notebooks.
 
 import json
 import zlib
+from functools import partial
 from pathlib import Path
 
 import av
@@ -60,6 +61,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         "hidden_dim":       768,
         "num_patch_tokens": 3136,
         "position_label":   "tubelet",
+        "frame_sample_rate": 2,  # paper §4.1: 32 frames at stride 2 (VM's kinetics protocol is 4)
     },
 }
 
@@ -356,6 +358,19 @@ FRAME_SAMPLERS = {
     "ssv2":         sample_frames_ssv2,
     "kinetics400":  sample_frames_kinetics,
 }
+
+
+def get_frame_sampler(dataset_name: str, model_cfg: dict):
+    """Dataset sampler with the model's own frame_sample_rate applied. The rate is
+    a backbone property (VM's kinetics protocol: 4; ViViT: 2 per paper §4.1), so it
+    lives in MODEL_REGISTRY and is partial-applied here — one shared construction
+    point so validation, SAE training and DFA stages can't drift onto different
+    strides. Datasets whose sampler takes no rate (ssv2) get the plain sampler.
+    """
+    sampler = FRAME_SAMPLERS[dataset_name]
+    if dataset_name == "kinetics400":
+        return partial(sampler, frame_sample_rate=model_cfg.get("frame_sample_rate", 4))
+    return sampler
 
 
 class SSv2ClipDataset(Dataset):

@@ -16,8 +16,11 @@ fallback) instead of model.config.label2id — a wrong mapping shows up here as
 ~0.25% top-1 on R, a correct one as ~60%+ (paper: ViViT-B/16x2 K400 ~65%).
 
 K400 uses a different frame sampler than SSv2 (sample_frames_kinetics: a dense,
-center-positioned window, not a full-clip linspace) — dispatched via FRAME_SAMPLERS
-rather than hardcoded. With num_frames=32 the window is 32*4=128 frames.
+center-positioned window, not a full-clip linspace) — dispatched via
+get_frame_sampler, which applies ViViT's own frame_sample_rate=2 (paper §4.1;
+VM's kinetics protocol is rate 4), so the window is 32*2=64 frames and C1's
+frame pairs are truly consecutive native frames. Single center view, same as
+the VM-K400 protocol in this pipeline (no multi-view logit averaging).
 
 Outputs (outputs/stage1_class_selection_VIVIT_kinetics/):
   per_class_accuracy_VIVIT_kinetics_R.csv
@@ -48,8 +51,8 @@ from perturbationA import apply_midpoint_frame
 from perturb_accuracy_vm import apply_shuffle_pairs
 from spliced_accuracy_vm import load_kinetics_metadata, per_class_accuracy
 from ToT_utils import (
-    CHECKPOINT_REGISTRY, DATASET_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY,
-    resolve_k400_label2id,
+    CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY,
+    get_frame_sampler, resolve_k400_label2id,
 )
 
 CFG = {
@@ -66,7 +69,7 @@ CFG = {
 
 _model_cfg        = MODEL_REGISTRY[CFG["model_name"]]
 CFG["num_frames"] = _model_cfg["num_frames"]  # 32
-CFG["frame_sampler"] = FRAME_SAMPLERS[CFG["dataset_name"]]  # sample_frames_kinetics
+CFG["frame_sampler"] = get_frame_sampler(CFG["dataset_name"], _model_cfg)  # rate 2 -> 64-frame window
 
 
 class PerturbedKineticsDataset(Dataset):
