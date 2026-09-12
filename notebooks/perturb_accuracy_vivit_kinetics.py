@@ -13,7 +13,12 @@ order — same semantics as the VM variant, at double the positions.
 google/vivit-b-16x2-kinetics400 ships generic LABEL_N placeholders in its config,
 so label2id comes from resolve_k400_label2id (canonical alphabetical 400-class
 fallback) instead of model.config.label2id — a wrong mapping shows up here as
-~0.25% top-1 on R, a correct one as ~60%+ (paper: ViViT-B/16x2 K400 ~65%).
+~0.25% top-1 on R. The checkpoint's preprocessor config ALSO double-normalizes
+under the pinned transformers (offset-rescale -> [-1,1], then normalize 0.5/0.5
+-> [-3,+1]; a live upstream bug), so the processor comes from get_processor with
+do_normalize=False. Both prior runs (R 0.5687 stride-4, 0.5648 stride-2) are
+PRE-FIX artifacts of exactly this — expect R in the high-70s now (paper 80.0 is
+4-view; this pipeline is single-view like VM-K400).
 
 K400 uses a different frame sampler than SSv2 (sample_frames_kinetics: a dense,
 center-positioned window, not a full-clip linspace) — dispatched via
@@ -52,7 +57,7 @@ from perturb_accuracy_vm import apply_shuffle_pairs
 from spliced_accuracy_vm import load_kinetics_metadata, per_class_accuracy
 from ToT_utils import (
     CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY,
-    get_frame_sampler, resolve_k400_label2id,
+    get_frame_sampler, get_processor, resolve_k400_label2id,
 )
 
 CFG = {
@@ -167,7 +172,7 @@ def main() -> None:
 
     model_cfg  = MODEL_REGISTRY[CFG["model_name"]]
     checkpoint = CHECKPOINT_REGISTRY[(CFG["model_name"], CFG["dataset_name"])]
-    processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
+    processor  = get_processor(model_cfg, checkpoint)  # do_normalize=False — see docstring
     model      = model_cfg["model_class"].from_pretrained(checkpoint)
     model.to(device).eval()
 

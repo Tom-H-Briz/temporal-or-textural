@@ -62,6 +62,11 @@ MODEL_REGISTRY: dict[str, dict] = {
         "num_patch_tokens": 3136,
         "position_label":   "tubelet",
         "frame_sample_rate": 2,  # paper §4.1: 32 frames at stride 2 (VM's kinetics protocol is 4)
+        # Live upstream bug: under the offset-rescale logic (transformers >= PR #25209,
+        # incl. the pinned 5.5.0), rescale alone maps frames to [-1,1] — the checkpoint
+        # config's do_normalize + 0.5/0.5 double-applies -> [-3,+1]. Unreconciled since
+        # the Aug-2023 partial config fix (hub discussion #2 on this checkpoint).
+        "processor_overrides": {"do_normalize": False},
     },
 }
 
@@ -371,6 +376,18 @@ def get_frame_sampler(dataset_name: str, model_cfg: dict):
     if dataset_name == "kinetics400":
         return partial(sampler, frame_sample_rate=model_cfg.get("frame_sample_rate", 4))
     return sampler
+
+
+def get_processor(model_cfg: dict, checkpoint: str):
+    """Processor with per-model overrides applied. The one shared construction
+    point — same precedent as get_frame_sampler: validation, SAE training and DFA
+    stages can't drift onto different preprocessing. Models without overrides
+    (videomae, timesformer) load identically to plain from_pretrained.
+    """
+    processor = model_cfg["processor_class"].from_pretrained(checkpoint)
+    for key, value in model_cfg.get("processor_overrides", {}).items():
+        setattr(processor, key, value)
+    return processor
 
 
 class SSv2ClipDataset(Dataset):

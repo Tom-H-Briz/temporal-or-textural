@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from ToT_utils import (
     CHECKPOINT_REGISTRY, DATASET_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY,
-    resolve_k400_label2id,
+    get_processor, resolve_k400_label2id,
 )
 
 CFG = {
@@ -62,7 +62,7 @@ def pick_clips(n_clips: int) -> list[dict]:
 def main() -> None:
     model_cfg  = MODEL_REGISTRY[CFG["model_name"]]
     checkpoint = CHECKPOINT_REGISTRY[(CFG["model_name"], "kinetics400")]
-    processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
+    processor  = get_processor(model_cfg, checkpoint)  # do_normalize=False — same fix as the accuracy job
     model      = model_cfg["model_class"].from_pretrained(checkpoint).eval()
 
     label2id = resolve_k400_label2id(CFG["model_name"])
