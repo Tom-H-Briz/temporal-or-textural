@@ -379,10 +379,12 @@ class ResidualDFAEngine:
         cls_offset = self._cls_offset
         cls        = hidden[:, :cls_offset]
         patches    = hidden[:, cls_offset:]
+        B, T, D    = patches.shape
 
-        z = patches.detach().requires_grad_(True)
+        z = patches.reshape(B * T, D).detach().requires_grad_(True)
         self._z = z
-        out = torch.cat([cls, z], dim=1) if cls_offset else z
+        recon = z.reshape(B, T, D).to(hidden.dtype)
+        out = torch.cat([cls, recon], dim=1) if cls_offset else recon
         return (out,) + output[1:] if isinstance(output, tuple) else out
 
     def run(self, clip: Path, correct_class_idx: int,
