@@ -57,7 +57,7 @@ from ToT_utils import (
     load_metadata, resolve_sae_checkpoint,
 )
 from ToT_utils import load_clips_kinetics as tot_load_clips_kinetics
-from stage3_analysis.dfa_engine import DFAEngine
+from stage3_analysis.dfa_engine import DFAEngine, ResidualDFAEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -267,21 +267,24 @@ def main() -> None:
     parser.add_argument("--model", choices=["videomae", "timesformer"], required=True)
     parser.add_argument("--dataset", choices=["ssv2", "kinetics400"], default="ssv2")
     parser.add_argument("--layer", type=int, required=True)
-    parser.add_argument("--job-label", type=str, default="7ep", help="videomae only")
-    parser.add_argument("--sae-k", type=int, default=64, help="videomae fallback if checkpoint lacks sae_k")
+    parser.add_argument("--source", choices=["sae", "residual"], default="sae",
+                        help="sae: splice a trained SAE (default). residual: identity-splice the raw residual stream, no SAE")
+    parser.add_argument("--job-label", type=str, default="7ep", help="videomae only, sae source")
+    parser.add_argument("--sae-k", type=int, default=64, help="videomae fallback if checkpoint lacks sae_k, sae source")
     args = parser.parse_args()
 
-    resolved = resolve_sae_checkpoint(args.model, args.layer, dataset_name=args.dataset,
-                                      sae_k=args.sae_k, job_label=args.job_label)
+    resolved = None if args.source == "residual" else resolve_sae_checkpoint(
+        args.model, args.layer, dataset_name=args.dataset, sae_k=args.sae_k, job_label=args.job_label)
     cfg           = {**CFG, "model_flag": args.model, "layer": args.layer}
     frame_sampler = FRAME_SAMPLERS[args.dataset]
-    dict_size     = resolved["nb_concepts"]   # checkpoint-derived, never hardcoded
+    dict_size     = MODEL_REGISTRY[args.model]["hidden_dim"] if resolved is None else resolved["nb_concepts"]
 
     num_positions  = MODEL_REGISTRY[args.model]["num_patch_tokens"] // N_SPATIAL
     position_label = MODEL_REGISTRY[args.model]["position_label"]
     conditions     = ["R", SHUFFLE_LABEL[args.model], "A"]
     shuffle_fn     = SHUFFLE_PREPROCESSOR[args.model]
-    out_suffix     = f"{args.model}_{args.dataset}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}"
+    out_suffix     = (f"{args.model}_{args.dataset}_l{args.layer}_residual" if resolved is None else
+                      f"{args.model}_{args.dataset}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}")
 
     out_dir = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -302,9 +305,13 @@ def main() -> None:
     tubelet_occ_z   = defaultdict(lambda: {c: torch.zeros(num_positions, dict_size) for c in conditions})
     running_count_z = defaultdict(int)
 
-    with DFAEngine(cfg["model_flag"], resolved["sae_path"], resolved["dim_mean_path"],
-                   layer=args.layer, device=cfg["device"],
-                   sae_k=resolved["sae_k"], dataset_name=args.dataset) as engine:
+    engine_cm = (ResidualDFAEngine(cfg["model_flag"], layer=args.layer,
+                                   device=cfg["device"], dataset_name=args.dataset)
+                if resolved is None else
+                DFAEngine(cfg["model_flag"], resolved["sae_path"], resolved["dim_mean_path"],
+                         layer=args.layer, device=cfg["device"],
+                         sae_k=resolved["sae_k"], dataset_name=args.dataset))
+    with engine_cm as engine:
 
         for i, (clip_id, class_id, clip_path) in enumerate(clips):
             try:

@@ -321,3 +321,141 @@ class DFAEngine:
         del self._model, self._sae, self._dim_mean
         self._model = self._sae = self._dim_mean = None
         torch.cuda.empty_cache()
+
+
+class ResidualDFAEngine:
+    """
+    Context manager: loads the backbone only (no SAE) on enter. Splices an
+    identity hook at layer L's raw residual output so DFA can backprop to it
+    directly — same attach point DFAEngine uses for its SAE latent, minus
+    encode/decode, so gradients and DFA read the backbone's own activations
+    instead of an SAE reconstruction.
+    """
+
+    def __init__(
+        self,
+        model_flag: str,
+        layer: int,
+        device: str = "cpu",
+        dataset_name: str = "ssv2",
+    ) -> None:
+        self.model_flag    = model_flag
+        self._layer        = layer
+        self.device        = device
+        self.dataset_name  = dataset_name
+
+        self._model       = None
+        self._processor   = None
+        self._hook_handle = None
+        self._cls_offset: int            = 0
+        self._num_frames:  int           = 16
+        self._z:           torch.Tensor | None = None
+
+    def __enter__(self) -> "ResidualDFAEngine":
+        model_cfg        = MODEL_REGISTRY[self.model_flag]
+        device           = self.device
+        self._cls_offset = model_cfg["cls_offset"]
+        self._num_frames = model_cfg["num_frames"]
+
+        checkpoint      = CHECKPOINT_REGISTRY[(self.model_flag, self.dataset_name)]
+        self._processor = model_cfg["processor_class"].from_pretrained(checkpoint)
+        self._model     = model_cfg["model_class"].from_pretrained(checkpoint)
+        self._model.to(device).eval()
+        for p in self._model.parameters():
+            p.requires_grad_(False)
+
+        self._hook_handle = model_cfg["layer_getter"](self._model, self._layer) \
+            .register_forward_hook(self._splice_hook)
+        return self
+
+    def _splice_hook(self, module, input, output):
+        """
+        Identity splice: detaches the layer's raw patch output, sets
+        requires_grad_(True), and passes it straight through unchanged. No
+        encode/decode — the forward pass sees the real activation, but it is
+        now a leaf DFA can backprop to and read grad*activation from.
+        """
+        hidden     = output[0] if isinstance(output, tuple) else output
+        cls_offset = self._cls_offset
+        cls        = hidden[:, :cls_offset]
+        patches    = hidden[:, cls_offset:]
+
+        z = patches.detach().requires_grad_(True)
+        self._z = z
+        out = torch.cat([cls, z], dim=1) if cls_offset else z
+        return (out,) + output[1:] if isinstance(output, tuple) else out
+
+    def run(self, clip: Path, correct_class_idx: int,
+            return_per_position: bool = False, frame_sampler=sample_frames_ssv2) -> DFAResult:
+        """Forward pass with identity splice, then backward from correct-class logit."""
+        pixel_values = _preprocess_clip(clip, self._num_frames, self._processor, self.device, frame_sampler)
+        return self.run_pixels(pixel_values, correct_class_idx,
+                               return_per_position=return_per_position)
+
+    def run_pixels(self, pixel_values: torch.Tensor, correct_class_idx: int,
+                   return_per_position: bool = False) -> DFAResult:
+        """Same as run() but accepts pre-computed pixel_values."""
+        self._z = None
+        model_output = self._model(pixel_values=pixel_values)
+        logits = model_output.logits.squeeze(0)
+
+        if self._z is None:
+            raise RuntimeError(
+                f"Residual hook did not fire — check layer={self._layer} for {self.model_flag}"
+            )
+
+        predicted_class = int(logits.argmax().item())
+        correct = predicted_class == correct_class_idx
+        correct_class_logit_val = float(logits[correct_class_idx].detach().item())
+        entropy_norm = compute_entropy_normalised(logits)
+
+        all_logits = logits.detach().cpu().float()
+        top2_vals = all_logits.topk(2).values
+        logit_margin = correct_class_logit_val - top2_vals[1].item()
+
+        self._z.grad = None
+        logits[correct_class_idx].backward()
+
+        grad_z = self._z.grad                               # (T, hidden_dim), signed
+        z_detached = self._z.detach()
+        dfa_tensor = grad_z * z_detached                     # (T, hidden_dim), signed
+
+        per_position_abs = None
+        per_position_signed = None
+        per_position_raw = None
+        if return_per_position:
+            grouped = gather_by_position(dfa_tensor, self.model_flag)  # (num_positions, N_SPATIAL, hidden_dim)
+            per_position_abs    = grouped.abs().sum(dim=1).detach().float().cpu()
+            per_position_signed = grouped.sum(dim=1).detach().float().cpu()
+            # residual channels are dense and signed (unlike a top-k SAE's
+            # nonneg z), so raw-activation "mass" also needs abs() per token
+            # before summing within a tubelet — a raw sum could cancel out
+            # on a channel that is genuinely locked.
+            per_position_raw = gather_by_position(z_detached, self.model_flag) \
+                .abs().sum(dim=1).detach().float().cpu()
+
+        self._z.grad = None
+        self._z = None
+
+        return DFAResult(
+            per_feature_summary=dfa_tensor.abs().sum(dim=0).detach().float().cpu(),
+            correct_class_logit=correct_class_logit_val,
+            correct=correct,
+            predicted_class=predicted_class,
+            entropy_normalised=entropy_norm,
+            logit_margin=logit_margin,
+            all_logits=all_logits,
+            signed_feature_summary=dfa_tensor.sum(dim=0).detach().float().cpu(),
+            token_fire_counts=(z_detached > 0).sum(dim=0).cpu().to(torch.int32),
+            per_position_abs=per_position_abs,
+            per_position_signed=per_position_signed,
+            per_position_raw=per_position_raw,
+        )
+
+    def __exit__(self, *args) -> None:
+        if self._hook_handle is not None:
+            self._hook_handle.remove()
+            self._hook_handle = None
+        del self._model
+        self._model = None
+        torch.cuda.empty_cache()
