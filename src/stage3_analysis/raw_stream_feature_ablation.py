@@ -77,6 +77,9 @@ def sample_clips(cfg: dict, n_clips: int) -> list[tuple[str, int, Path]]:
     present = [(str(r["clip_id"]), int(r["class_id"]), video_dir / f"{r['clip_id']}.webm")
                for _, r in df.iterrows()
                if (video_dir / f"{r['clip_id']}.webm").exists()]
+    if n_clips <= 0:                       # full population, no sampling
+        print(f"  {len(present):,} R-correct clips on disk -> using all")
+        return present
     rng = np.random.default_rng(cfg["seed"])
     picked = rng.choice(len(present), size=min(n_clips, len(present)), replace=False)
     print(f"  {len(present):,} R-correct clips on disk -> sampling {len(picked)}")
@@ -163,7 +166,11 @@ def run_clip(model, pixel_values: torch.Tensor, class_id: int,
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n-clips", type=int, default=CFG["n_clips"])
+    parser.add_argument("--n-clips", type=int, default=CFG["n_clips"],
+                        help="0 or less uses the full population")
+    parser.add_argument("--no-activations", action="store_true",
+                        help="skip the per-clip h_raw/z dump — 3.5MB/clip, only "
+                             "needed for fingerprint work, not for logit deltas")
     args = parser.parse_args()
     cfg, device = CFG, CFG["device"]
 
@@ -193,8 +200,9 @@ def main() -> None:
     for i, (clip_id, class_id, clip_path) in enumerate(clips):
         pixel_values = _preprocess_clip(clip_path, model_cfg["num_frames"], processor, device)
         clip_rows, snapshot = run_clip(model, pixel_values, class_id, conditions, state, capture)
-        torch.save({**snapshot, "clip_id": clip_id, "class_id": class_id},
-                   act_dir / f"{clip_id}.pt")
+        if not args.no_activations:
+            torch.save({**snapshot, "clip_id": clip_id, "class_id": class_id},
+                       act_dir / f"{clip_id}.pt")
         for r in clip_rows:
             rows.append({"clip_id": clip_id, "class_id": class_id, **r})
         print(f"  [{i+1}/{len(clips)}] {clip_id}  {(time.time()-t0)/(i+1):.1f}s/clip")
