@@ -117,8 +117,10 @@ def make_l5_hook(sae, dim_mean, dictionary, cls_offset: int, state: dict, captur
             # overlapping atoms re-supply. Subtraction under-removes (neighbours
             # cover the direction); this over-removes (takes mass other features
             # need). The pair brackets the feature's true contribution.
+            # state["dirs"] overrides the dictionary rows for the random-subspace
+            # controls, which have no feature indices of their own.
             base = flat if mode == "raw_project" else sae.decode(z) + dim_mean
-            Dk = dictionary[idx]                                  # (k, 768)
+            Dk = state["dirs"] if state.get("dirs") is not None else dictionary[idx]
             coef = torch.linalg.solve(Dk @ Dk.T, (base @ Dk.T).T).T
             new = base - coef @ Dk
         else:
@@ -139,16 +141,40 @@ def build_conditions(features: list[int]) -> list[tuple[str, str, list[int]]]:
     modes = ("raw_minus", "recon_minus", "raw_project", "recon_project")
     for target, idx in [(f"single_{f}", [f]) for f in features] + [("all7", features)]:
         conds += [(m, target, idx) for m in modes]
+    # Subspace controls — projection only. "Subtract" has no meaning without a
+    # z_i to scale by, and for projection a control feature's firing rate is
+    # irrelevant: all mass along the direction is removed whatever its source.
+    for target in ("rand_dict7", "rand_iso7"):
+        conds += [("raw_project", target, []), ("recon_project", target, [])]
     return conds
 
 
+def draw_control_dirs(target: str, dictionary: torch.Tensor, exclude: list[int],
+                      rng: np.random.Generator) -> torch.Tensor:
+    """Drawn fresh per clip, so the null is averaged over the whole population
+    rather than resting on one lucky draw. rand_dict7 = 7 other SAE directions
+    (holds "data-aligned" constant, varies which ones); rand_iso7 = 7 arbitrary
+    orthonormal directions (the floor — is any 7-of-768 subspace this costly?)."""
+    k, dim = len(exclude), dictionary.shape[1]
+    if target == "rand_dict7":
+        pool = np.setdiff1d(np.arange(dictionary.shape[0]), np.asarray(exclude))
+        return dictionary[rng.choice(pool, size=k, replace=False).tolist()]
+    gen = torch.Generator().manual_seed(int(rng.integers(2**31)))
+    return torch.linalg.qr(torch.randn(dim, k, generator=gen)).Q.T.to(
+        dictionary.device, dictionary.dtype)
+
+
 def run_clip(model, pixel_values: torch.Tensor, class_id: int,
-             conditions: list[tuple[str, int | None]], state: dict, capture: dict) -> tuple[list[dict], dict]:
+             conditions: list[tuple[str, str, list[int]]], state: dict, capture: dict,
+             dictionary: torch.Tensor, scaffold: list[int],
+             rng: np.random.Generator) -> tuple[list[dict], dict]:
     """h_raw and z are identical across all conditions (L5's input depends only on
     layers 0-4, which nothing here touches), so the snapshot is taken once."""
     rows, snapshot = [], {}
     for mode, target, indices in conditions:
         state["mode"], state["indices"] = mode, indices
+        state["dirs"] = (draw_control_dirs(target, dictionary, scaffold, rng)
+                         if target.startswith("rand_") else None)
         with torch.no_grad():
             logits = model(pixel_values=pixel_values).logits.squeeze(0)
         if not snapshot:
@@ -188,7 +214,8 @@ def main() -> None:
     sae, dim_mean = load_sae(cfg["model_flag"], cfg["layer"], cfg["sae_k"], device)
     dictionary = sae.dictionary.get_dictionary().detach()
 
-    state, capture = {"mode": "raw", "indices": []}, {}
+    state, capture = {"mode": "raw", "indices": [], "dirs": None}, {}
+    rng = np.random.default_rng(cfg["seed"])
     model_cfg["layer_getter"](model, cfg["layer"]).register_forward_hook(
         make_l5_hook(sae, dim_mean, dictionary, model_cfg["cls_offset"], state, capture))
 
@@ -199,7 +226,8 @@ def main() -> None:
     rows, t0 = [], time.time()
     for i, (clip_id, class_id, clip_path) in enumerate(clips):
         pixel_values = _preprocess_clip(clip_path, model_cfg["num_frames"], processor, device)
-        clip_rows, snapshot = run_clip(model, pixel_values, class_id, conditions, state, capture)
+        clip_rows, snapshot = run_clip(model, pixel_values, class_id, conditions, state,
+                                       capture, dictionary, features, rng)
         if not args.no_activations:
             torch.save({**snapshot, "clip_id": clip_id, "class_id": class_id},
                        act_dir / f"{clip_id}.pt")

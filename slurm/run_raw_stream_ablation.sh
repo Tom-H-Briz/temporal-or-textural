@@ -3,18 +3,25 @@
 #SBATCH --output=raw_stream_ablation_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=06:00:00
+#SBATCH --time=04:00:00
 
 # Full 4,450-clip population — n=500 resolved the main effect (0.228 raw,
 # p=4e-11) but not the temporal/static interaction (gap +0.018, CI spanning
 # zero) and gives only ~15 clips/class, so no per-class breakdown is possible.
 # That is what this run is for; see 220926_workbook.md finding 5.
 #
-# 34 forward passes per clip (raw + recon baselines, then subtract/project x
-# raw/recon x 7 singles + the all7 group) — ~17x run_ablation_l5.sh's 2-pass
-# workload, hence 6h not 2h. Measured 5.0-5.5s/clip on local MPS, but the 34
-# passes reuse one decode, so GPU should land nearer 2s/clip (~2.5h) — decode
-# is CPU-bound and will not scale, which is what the headroom covers.
+# 38 forward passes per clip: raw + recon baselines, subtract/project x
+# raw/recon x (7 singles + all7), then the two subspace controls under
+# projection only (rand_dict7, rand_iso7, raw + recon each). Measured
+# 5.4s/clip on local MPS — the extra passes cost almost nothing because all
+# 38 reuse one clip decode and decode dominates. GPU should land near
+# 2s/clip; decode is CPU-bound and will not scale, which is what the
+# headroom covers.
+#
+# Controls draw fresh per clip (seeded from CFG["seed"]), so the null is
+# averaged over the whole population rather than resting on one draw. Nothing
+# in the L5 ablation line has had a subspace control before — ablation
+# results carry only all7 and the singles.
 #
 # --no-activations: the per-clip h_raw/z dump is 3.5MB/clip = ~15.6GB over the
 # full set, and is only needed for fingerprint work (already done at n=100).
