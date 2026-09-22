@@ -9,7 +9,7 @@ Usage:
     uv run python src/stage3_analysis/ablation_rival_analysis.py
 """
 
-from pathlib import Path
+from pathlib import Path1
 import pandas as pd
 
 ROOT    = Path(__file__).parent.parent.parent
