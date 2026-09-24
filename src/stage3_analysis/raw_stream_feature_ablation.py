@@ -10,19 +10,21 @@ error-term-preserving ablation. This removes SAE reconstruction fidelity from
 the argument entirely: the SAE only supplies the direction to cut.
 
 Conditions per clip, all at L5, same cached z:
-    raw           — untouched forward pass, no hook intervention
-    raw_minus     — h_raw - delta_i, surgical removal from the real stream
-    raw_project   — h_raw with span(d_i) projected out entirely
-    recon         — full SAE reconstruction spliced in (the existing baseline)
-    recon_minus   — reconstruction with z[:, i] zeroed (what run_ablation.py did)
-    recon_project — reconstruction with span(d_i) projected out
+    raw               — untouched forward pass, no hook intervention
+    raw_minus         — h_raw - delta_i, surgical removal from the real stream
+    raw_meanproject   — h_raw with the span(d_i) component set to the dataset mean
+    recon             — full SAE reconstruction spliced in (the existing baseline)
+    recon_minus       — reconstruction with z[:, i] zeroed (what run_ablation.py did)
+    recon_meanproject — reconstruction with the span(d_i) component set to the mean
 
-minus vs project brackets the contribution: because the dictionary is
+minus vs meanproject brackets the contribution: because the dictionary is
 non-orthogonal, ablating a feature leaves mass along its own direction that
 overlapping atoms re-supply (measured: up to 43% for feature 3516). Subtraction
-therefore under-removes and projection over-removes, so the feature's true
-causal contribution lies between them — in superposition it is an interval,
-not a point.
+therefore under-removes and mean projection removes all variation along the
+directions, so the feature's causal contribution lies between them — in
+superposition it is an interval, not a point. Zero projection was dropped
+(24/09): no precedent, and it adds an off-distribution shift the controls
+depend on.
 
 raw vs raw_minus is the skeptic-facing comparison (no reconstruction anywhere).
 recon vs recon_minus bridges back to ablation_summary_l5_job7ep_k64.csv.
@@ -65,6 +67,13 @@ CFG = {
     "video_dir": ROOT / "data/ssv2/20bn-something-something-v2",
     "source_parquet": ROOT / "outputs/analysis/scaffold_ablation/ablation_results_long_l5_job7ep_k64.parquet",
     "out_dir": ROOT / "outputs/analysis/raw_stream_ablation",
+    # rand_dict7 control: per clip, 7 non-scaffold features drawn from the clip's
+    # top-N by activation mass, rejection-sampled to match the scaffold's total
+    # mass (method of select_control_features.py). Top-50 matched 149/150 clips
+    # within 10% in a pilot; top-200 only 108/150.
+    "control_pool_n": 50,
+    "control_mass_tol": 0.10,
+    "control_max_tries": 2000,
 }
 
 
@@ -112,16 +121,16 @@ def make_l5_hook(sae, dim_mean, dictionary, cls_offset: int, state: dict, captur
             z_abl = z.clone()
             z_abl[:, idx] = 0.0
             new = sae.decode(z_abl) + dim_mean
-        elif mode in ("raw_project", "recon_project"):
-            # Upper bound: remove ALL mass along span(d_idx), including what
-            # overlapping atoms re-supply. Subtraction under-removes (neighbours
-            # cover the direction); this over-removes (takes mass other features
-            # need). The pair brackets the feature's true contribution.
-            # state["dirs"] overrides the dictionary rows for the random-subspace
-            # controls, which have no feature indices of their own.
-            base = flat if mode == "raw_project" else sae.decode(z) + dim_mean
+        elif mode in ("raw_meanproject", "recon_meanproject"):
+            # Mean projection (Dobrzeniecka et al. 2025): set the component along
+            # span(d_idx) to the overall dataset mean's (dim_mean), removing all
+            # variation there including what overlapping atoms re-supply. Overall,
+            # not per-tubelet: a per-position mean would restore the positional
+            # signal. state["dirs"] overrides the dictionary rows for rand_iso7,
+            # which has no feature indices of its own.
+            base = flat if mode.startswith("raw") else sae.decode(z) + dim_mean
             Dk = state["dirs"] if state.get("dirs") is not None else dictionary[idx]
-            coef = torch.linalg.solve(Dk @ Dk.T, (base @ Dk.T).T).T
+            coef = torch.linalg.solve(Dk @ Dk.T, ((base - dim_mean) @ Dk.T).T).T
             new = base - coef @ Dk
         else:
             raise ValueError(f"unknown mode: {mode}")
@@ -138,30 +147,51 @@ def build_conditions(features: list[int]) -> list[tuple[str, str, list[int]]]:
     (reference delta 0.487 vs ~0.02-0.05 per feature) — the singles are below
     the noise floor at 100 clips."""
     conds: list[tuple[str, str, list[int]]] = [("raw", "none", []), ("recon", "none", [])]
-    modes = ("raw_minus", "recon_minus", "raw_project", "recon_project")
+    modes = ("raw_minus", "recon_minus", "raw_meanproject", "recon_meanproject")
     for target, idx in [(f"single_{f}", [f]) for f in features] + [("all7", features)]:
         conds += [(m, target, idx) for m in modes]
-    # Subspace controls — projection only. "Subtract" has no meaning without a
-    # z_i to scale by, and for projection a control feature's firing rate is
-    # irrelevant: all mass along the direction is removed whatever its source.
-    for target in ("rand_dict7", "rand_iso7"):
-        conds += [("raw_project", target, []), ("recon_project", target, [])]
+    # Controls. rand_dict7 = 7 mass-matched SAE features, run under every
+    # operation the scaffold gets, so subtraction and projection share one
+    # control. rand_iso7 = 7 arbitrary directions: projection only, since
+    # subtraction needs a z_i that arbitrary directions do not have.
+    conds += [(m, "rand_dict7", []) for m in modes]
+    conds += [(m, "rand_iso7", []) for m in ("raw_meanproject", "recon_meanproject")]
     return conds
 
 
-def draw_control_dirs(target: str, dictionary: torch.Tensor, exclude: list[int],
-                      rng: np.random.Generator) -> torch.Tensor:
-    """Drawn fresh per clip, so the null is averaged over the whole population
-    rather than resting on one lucky draw. rand_dict7 = 7 other SAE directions
-    (holds "data-aligned" constant, varies which ones); rand_iso7 = 7 arbitrary
-    orthonormal directions (the floor — is any 7-of-768 subspace this costly?)."""
-    k, dim = len(exclude), dictionary.shape[1]
+def draw_mass_matched(z: torch.Tensor, scaffold: list[int], rng: np.random.Generator,
+                      cfg: dict) -> tuple[list[int], float]:
+    """7 non-scaffold features whose total activation mass in THIS clip is within
+    tolerance of the scaffold's. Unmatched random features carry ~4% of the
+    scaffold's mass, so subtracting them would be a trivially weak control.
+    Falls back to the closest draw; the achieved ratio is returned for audit."""
+    mass = z.abs().sum(dim=0).cpu()
+    target = float(mass[scaffold].sum())
+    ranked = mass.clone()
+    ranked[scaffold] = -1.0
+    pool = torch.argsort(ranked, descending=True)[:cfg["control_pool_n"]].numpy()
+    best, best_ratio = None, None
+    for _ in range(cfg["control_max_tries"]):
+        pick = rng.choice(pool, size=len(scaffold), replace=False)
+        ratio = float(mass[pick].sum()) / target
+        if best is None or abs(ratio - 1) < abs(best_ratio - 1):
+            best, best_ratio = pick, ratio
+        if abs(ratio - 1) <= cfg["control_mass_tol"]:
+            break
+    return best.tolist(), best_ratio
+
+
+def draw_control(target: str, z: torch.Tensor, dictionary: torch.Tensor,
+                 scaffold: list[int], rng: np.random.Generator, cfg: dict) -> dict:
+    """Drawn once per clip and shared by every operation, so subtraction and
+    projection are tested against the same random features. rand_iso7 = 7
+    arbitrary orthonormal directions (the floor — any 7-of-768 subspace)."""
     if target == "rand_dict7":
-        pool = np.setdiff1d(np.arange(dictionary.shape[0]), np.asarray(exclude))
-        return dictionary[rng.choice(pool, size=k, replace=False).tolist()]
+        idx, ratio = draw_mass_matched(z, scaffold, rng, cfg)
+        return {"indices": idx, "dirs": None, "mass_ratio": ratio}
     gen = torch.Generator().manual_seed(int(rng.integers(2**31)))
-    return torch.linalg.qr(torch.randn(dim, k, generator=gen)).Q.T.to(
-        dictionary.device, dictionary.dtype)
+    dirs = torch.linalg.qr(torch.randn(dictionary.shape[1], len(scaffold), generator=gen)).Q.T
+    return {"indices": [], "dirs": dirs.to(dictionary.device, dictionary.dtype), "mass_ratio": None}
 
 
 def run_clip(model, pixel_values: torch.Tensor, class_id: int,
@@ -170,11 +200,16 @@ def run_clip(model, pixel_values: torch.Tensor, class_id: int,
              rng: np.random.Generator) -> tuple[list[dict], dict]:
     """h_raw and z are identical across all conditions (L5's input depends only on
     layers 0-4, which nothing here touches), so the snapshot is taken once."""
-    rows, snapshot = [], {}
+    rows, snapshot, drawn = [], {}, {}
     for mode, target, indices in conditions:
-        state["mode"], state["indices"] = mode, indices
-        state["dirs"] = (draw_control_dirs(target, dictionary, scaffold, rng)
-                         if target.startswith("rand_") else None)
+        # controls come after the "raw" pass, so capture["z"] already holds this
+        # clip's latents (identical every pass — L5's input is never touched)
+        if target.startswith("rand_") and target not in drawn:
+            drawn[target] = draw_control(target, capture["z"], dictionary, scaffold, rng, CFG)
+        ctl = drawn.get(target, {})
+        state["mode"] = mode
+        state["indices"] = ctl.get("indices", indices)
+        state["dirs"] = ctl.get("dirs")
         with torch.no_grad():
             logits = model(pixel_values=pixel_values).logits.squeeze(0)
         if not snapshot:
@@ -186,7 +221,8 @@ def run_clip(model, pixel_values: torch.Tensor, class_id: int,
         pred = int(logits.argmax())
         rows.append({"mode": mode, "ablation_target": target,
                      "correct_class_logit": float(logits[class_id]),
-                     "predicted_class": pred, "correct": pred == class_id})
+                     "predicted_class": pred, "correct": pred == class_id,
+                     "control_mass_ratio": ctl.get("mass_ratio")})
     return rows, snapshot
 
 

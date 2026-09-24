@@ -10,18 +10,22 @@
 # zero) and gives only ~15 clips/class, so no per-class breakdown is possible.
 # That is what this run is for; see 220926_workbook.md finding 5.
 #
-# 38 forward passes per clip: raw + recon baselines, subtract/project x
-# raw/recon x (7 singles + all7), then the two subspace controls under
-# projection only (rand_dict7, rand_iso7, raw + recon each). Measured
-# 5.4s/clip on local MPS — the extra passes cost almost nothing because all
-# 38 reuse one clip decode and decode dominates. GPU should land near
-# 2s/clip; decode is CPU-bound and will not scale, which is what the
-# headroom covers.
+# 40 forward passes per clip: raw + recon baselines; subtract and mean-project
+# (Dobrzeniecka et al. 2025) x raw/recon for the 7 singles, all7 and
+# rand_dict7; mean-project x raw/recon for rand_iso7. Zero projection dropped
+# 24/09 (no precedent; adds an off-distribution shift). Measured 5.7s/clip on
+# local MPS. All passes reuse one clip decode, which is CPU-bound and
+# dominates; GPU should land near 2s/clip (~2.5h), so 4h is comfortable.
 #
-# Controls draw fresh per clip (seeded from CFG["seed"]), so the null is
-# averaged over the whole population rather than resting on one draw. Nothing
-# in the L5 ablation line has had a subspace control before — ablation
-# results carry only all7 and the singles.
+# Controls are drawn once per clip and shared by every operation, so
+# subtraction and mean projection face the same random features. rand_dict7 is
+# mass-matched per clip (7 non-scaffold features from the clip's top-50 by
+# activation mass, within 10% of the scaffold's total) — unmatched random
+# features carry ~4% of the scaffold's mass and would make a trivially weak
+# subtraction control. Each row records control_mass_ratio for audit.
+#
+# Overwrites raw_stream_ablation_l5_n4450.parquet. The old rand_dict7 figures
+# (unmatched, projection only) are NOT comparable to the new ones.
 #
 # --no-activations: the per-clip h_raw/z dump is 3.5MB/clip = ~15.6GB over the
 # full set, and is only needed for fingerprint work (already done at n=100).

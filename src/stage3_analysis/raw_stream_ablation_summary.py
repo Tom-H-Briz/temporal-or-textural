@@ -33,7 +33,8 @@ CFG = {
     "out_dir": ROOT / "outputs/analysis/raw_stream_ablation",
     "layer": 5,
 }
-INTERVENTION = {"minus": "subtract z_i*d_i", "project": "project out span(d_i)"}
+INTERVENTION = {"minus": "subtract z_i*d_i", "project": "project out span(d_i)",
+                "meanproject": "set span(d_i) component to dataset mean"}
 
 
 def load_paired(in_path: Path) -> tuple[pd.DataFrame, int, int]:
