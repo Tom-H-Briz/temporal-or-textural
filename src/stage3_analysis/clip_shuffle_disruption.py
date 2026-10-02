@@ -59,7 +59,19 @@ CONFIGS = {
         r_acc_csv=ROOT / "outputs/stage1_class_selection_VM_kinetics/per_class_accuracy_VM_kinetics_R.csv",
         reliability_parquet=None,  # no checkpoint-consistent diagnostic exists for K400 either
     ),
+    # TF-K400 (02/10): mirrors the ssv2_tf entry — raw-shuffle C, per-layer entries
+    # for L5/L7/L9 (L7 is the like-for-like cell vs ssv2_tf and k400_vm).
+    # r_acc_csv = full-val per-class R accuracy (perturb_accuracy_tf_kinetics.py),
+    # NOT the 3k Job-0 sample — ~7.5 clips/class is too noisy for a 40% cut.
 }
+for _l in (5, 7, 9):
+    CONFIGS[f"k400_tf_l{_l}"] = dict(
+        dfa_parquet=ROOT / f"outputs/analysis/dfa_mass_delta_tf/dfa_mass_delta_tf_kinetics400_l{_l}_job7ep_k64.parquet",
+        shuffle_col="signed_vec_C",
+        correct_col="correct_C",
+        r_acc_csv=ROOT / "outputs/stage1_class_selection_TF_kinetics/per_class_accuracy_TF_kinetics_R.csv",
+        reliability_parquet=ROOT / f"outputs/analysis/cumulative_mass_diagnostic_tf_kinetics400_l{_l}.parquet",
+    )
 
 
 def eligible_classes(dfa_df: pd.DataFrame, r_acc_csv: Path) -> list[int]:
@@ -202,8 +214,16 @@ CSV_COLUMNS = ["clip_id", "class_id", "frac_noise", "frac_sign_flip",
 
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--only", type=str, default=None,
+                        help="substring filter on config names — run a subset (e.g. --only k400_tf)")
+    args = parser.parse_args()
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for name, cfg in CONFIGS.items():
+        if args.only and args.only not in name:
+            continue
         print(f"Processing {name}...")
         df = build_clip_table(name, cfg)
         df[CSV_COLUMNS].to_csv(OUT_DIR / f"{name}_clip_shuffle_disruption.csv", index=False)
