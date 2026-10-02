@@ -37,11 +37,11 @@ from ToT_utils import (
 
 CFG = {
     "model_flag":   "videomae",
-    "clip_id":      None,        # random draw from class_id
-    "class_id":     168,
-    "feature_idx":  1517,
+    "clip_id":      "130528",    # non-scaffold L7 exemplar: high-importance, NOT position-locked (share ~40%) — "uncovering toy figure"
+    "class_id":     171,
+    "feature_idx":  4738,
     "seed":         7,
-    "layer":        5,
+    "layer":        7,
     "device":       "cuda" if torch.cuda.is_available() else "cpu",
     "video_dir":    Path("data/ssv2/20bn-something-something-v2"),
     "labels_path":  Path("data/ssv2/labels/labels.json"),
