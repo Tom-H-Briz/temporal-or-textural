@@ -34,8 +34,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from sae import BatchTopKSAE
 from ToT_utils import (
-    CHECKPOINT_REGISTRY, DATASET_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY,
-    SSv2ClipDataset, _strip_brackets, load_metadata, make_sae_splice_hook, run_inference,
+    CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY,
+    SSv2ClipDataset, _strip_brackets, get_frame_sampler, load_metadata, make_sae_splice_hook,
+    run_inference,
 )
 
 CFG = {
@@ -188,6 +189,12 @@ def run_spliced_accuracy(
     ))
 
     model_cfg  = MODEL_REGISTRY[model_name]
+    # Per-call model fields from the registry, not this module's VM-default CFG —
+    # module CFG bakes in videomae's num_frames=16/cls_offset=0, which would sample
+    # 16 frames and splice CLS as a patch for a timesformer call. VM calls are
+    # bit-identical (same registry values).
+    cfg = {**cfg, "num_frames": model_cfg["num_frames"], "cls_offset": model_cfg["cls_offset"],
+           "hidden_dim": model_cfg["hidden_dim"], "num_patch_tokens": model_cfg["num_patch_tokens"]}
     checkpoint = CHECKPOINT_REGISTRY[(model_name, dataset_name)]
     processor  = model_cfg["processor_class"].from_pretrained(checkpoint)
     model      = model_cfg["model_class"].from_pretrained(checkpoint)
@@ -201,7 +208,7 @@ def run_spliced_accuracy(
     paths, labels, id2label = load_eval_set(cfg, dataset_name, video_dir, model, eval_clips)
 
     dataset = SSv2ClipDataset(paths, processor, cfg["num_frames"], labels=labels,
-                              frame_sampler=FRAME_SAMPLERS[dataset_name])
+                              frame_sampler=get_frame_sampler(dataset_name, model_cfg))
     loader  = DataLoader(dataset, batch_size=cfg["batch_size"],
                          num_workers=cfg["num_workers"], pin_memory=True, shuffle=False)
 
@@ -274,19 +281,25 @@ def run_spliced_accuracy(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--layer", type=int, default=None)
+    parser.add_argument("--model-name", type=str, default=CFG["model_name"],
+                        choices=list(MODEL_REGISTRY))
     parser.add_argument("--dataset-name", type=str, required=True, choices=list(DATASET_REGISTRY))
     parser.add_argument("--sae-checkpoint", type=str, default=None)
+    parser.add_argument("--dim-mean-path", type=str, default=None,
+                        help="Explicit dim_mean path — required for non-VM models "
+                             "(the default loader hardcodes the vmae abbrev)")
     parser.add_argument("--eval-clips", type=str, default=None,
-                         help="Path to a JSON list of clip filenames (e.g. a held-out "
-                              "split); omit to use every clip found for the dataset")
+                        help="Path to a JSON list of clip filenames (e.g. a held-out "
+                             "split); omit to use every clip found for the dataset")
     parser.add_argument("--baseline-only", action="store_true",
                          help="Skip SAE/dim_mean loading and the splice pass entirely")
     args = parser.parse_args()
 
     eval_clips = json.load(open(args.eval_clips)) if args.eval_clips else None
     run_spliced_accuracy(
-        sae_checkpoint=args.sae_checkpoint, layer=args.layer, model_name=CFG["model_name"],
+        sae_checkpoint=args.sae_checkpoint, layer=args.layer, model_name=args.model_name,
         dataset_name=args.dataset_name, eval_clips=eval_clips, baseline_only=args.baseline_only,
+        dim_mean_path=args.dim_mean_path,
     )
 
 

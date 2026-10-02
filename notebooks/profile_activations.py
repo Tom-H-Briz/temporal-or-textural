@@ -21,8 +21,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ToT_utils import (
-    CHECKPOINT_REGISTRY, DATASET_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY,
-    SSv2ClipDataset, load_metadata,
+    CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY,
+    SSv2ClipDataset, get_frame_sampler, load_metadata,
 )
 
 CFG = {
@@ -100,8 +100,10 @@ def main():
         paths = paths[: CFG["n_clips"]]
     print(f"  Using {len(paths)} clips")
 
+    # dim_mean must be computed under the SAME sampler the SAE will train under —
+    # model-aware dispatch so a TF-K400 dim_mean uses the 64-frame window, not VM's.
     dataset = SSv2ClipDataset(paths, processor, CFG["num_frames"],
-                              frame_sampler=FRAME_SAMPLERS[CFG["dataset_name"]])
+                              frame_sampler=get_frame_sampler(CFG["dataset_name"], model_cfg))
     loader  = DataLoader(
         dataset, batch_size=CFG["batch_size"], shuffle=False,
         num_workers=CFG["num_workers"],

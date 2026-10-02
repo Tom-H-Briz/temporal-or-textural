@@ -53,8 +53,8 @@ sys.path.insert(0, str(ROOT / "notebooks"))
 from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
 from ToT_utils import (
-    FRAME_SAMPLERS, MODEL_REGISTRY, N_SPATIAL, _deterministic_seed, _strip_brackets,
-    load_metadata, resolve_sae_checkpoint,
+    MODEL_REGISTRY, N_SPATIAL, _deterministic_seed, _strip_brackets,
+    get_frame_sampler, load_metadata, resolve_sae_checkpoint,
 )
 from ToT_utils import load_clips_kinetics as tot_load_clips_kinetics
 from stage3_analysis.dfa_engine import DFAEngine, ResidualDFAEngine
@@ -144,8 +144,8 @@ def preprocess_a(clip_path: Path, num_frames: int,
 
 def preprocess_c_tf(clip_path: Path, clip_id: str, num_frames: int,
                     processor, device: str, frame_sampler) -> torch.Tensor:
-    """TF's full-frame shuffle — matches dfa_mass_delta.py's preprocess_c. TF is
-    ssv2-only in this project (resolve_sae_checkpoint asserts this)."""
+    """TF's full-frame shuffle — matches dfa_mass_delta.py's preprocess_c. Raw
+    shuffle is in-grammar for TF's single-frame tokens (no tubelet pairing)."""
     container = av.open(str(clip_path))
     frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
     container.close()
@@ -276,7 +276,8 @@ def main() -> None:
     resolved = None if args.source == "residual" else resolve_sae_checkpoint(
         args.model, args.layer, dataset_name=args.dataset, sae_k=args.sae_k, job_label=args.job_label)
     cfg           = {**CFG, "model_flag": args.model, "layer": args.layer}
-    frame_sampler = FRAME_SAMPLERS[args.dataset]
+    # Model-aware sampler: TF-K400 needs the rate-8 64-frame window, VM-K400 rate-4.
+    frame_sampler = get_frame_sampler(args.dataset, MODEL_REGISTRY[args.model])
     dict_size     = MODEL_REGISTRY[args.model]["hidden_dim"] if resolved is None else resolved["nb_concepts"]
 
     num_positions  = MODEL_REGISTRY[args.model]["num_patch_tokens"] // N_SPATIAL

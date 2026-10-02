@@ -30,8 +30,8 @@ sys.path.insert(0, str(ROOT / "notebooks"))
 from sae import BatchTopKSAE
 from sae.losses import top_k_auxiliary_loss, reanimation_regularizer
 from ToT_utils import (
-    CHECKPOINT_REGISTRY, DATASET_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY,
-    SSv2ClipDataset, load_metadata,
+    CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset,
+    get_frame_sampler, load_metadata,
 )
 from spliced_accuracy_vm import run_spliced_accuracy
 
@@ -168,7 +168,9 @@ def build_split(cfg: dict) -> tuple[list[Path], list[Path]]:
 def build_loaders(
     train_paths: list[Path], val_paths: list[Path], processor, cfg: dict
 ) -> tuple[DataLoader, DataLoader]:
-    frame_sampler = FRAME_SAMPLERS[cfg["dataset_name"]]
+    # Model-aware sampler (backbone frame_sample_rate applied for kinetics400) —
+    # raw FRAME_SAMPLERS[dataset] would silently give VM's rate-4 window to a TF run.
+    frame_sampler = get_frame_sampler(cfg["dataset_name"], MODEL_REGISTRY[cfg["model_name"]])
     train_ds = SSv2ClipDataset(train_paths, processor, cfg["num_frames"], frame_sampler=frame_sampler)
     val_ds   = SSv2ClipDataset(val_paths,   processor, cfg["num_frames"], frame_sampler=frame_sampler)
 

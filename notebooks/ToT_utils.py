@@ -51,6 +51,12 @@ MODEL_REGISTRY: dict[str, dict] = {
         "hidden_dim":       768,
         "num_patch_tokens": 1568,
         "position_label":   "frame",
+        # K400-only (applied via get_frame_sampler when dataset == "kinetics400"):
+        # 8 frames x rate 8 = 64-frame centre window — the SAME wall-clock window
+        # as VM-K400's 16x4, so the two K400 cells sample matched time spans.
+        # Deliberately NOT the checkpoint's published 8x32 protocol (Gate 1 records
+        # both; window-matching was chosen over protocol-matching for comparability).
+        "frame_sample_rate": 8,
     },
     "vivit": {
         "model_class":      VivitForVideoClassification,
@@ -76,6 +82,7 @@ CHECKPOINT_REGISTRY: dict[tuple[str, str], str] = {
     ("videomae", "ssv2"):         "MCG-NJU/videomae-base-finetuned-ssv2",
     ("timesformer", "ssv2"):      "facebook/timesformer-base-finetuned-ssv2",
     ("videomae", "kinetics400"):  "MCG-NJU/videomae-base-finetuned-kinetics",
+    ("timesformer", "kinetics400"): "facebook/timesformer-base-finetuned-k400",
     ("vivit", "kinetics400"):     "google/vivit-b-16x2-kinetics400",
 }
 
@@ -107,13 +114,21 @@ def resolve_sae_checkpoint(
         sae_path = sae_dir / f"sae_vmae_{dataset_name}_k{sae_k}_x{expansion}_l{layer}_job{job_label}_best.pt"
         dim_mean = sae_dir / f"vmae_{dataset_name}_layer{layer}_dim_mean.pt"
     elif model_flag == "timesformer":
-        assert dataset_name == "ssv2", "TimeSformer has no non-SSv2 checkpoints in this project"
-        job_label = str(layer)  # TF's own established convention — layer is the job label
-        matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
-        if len(matches) != 1:
-            raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
-        sae_path = matches[0]
-        dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
+        if dataset_name == "ssv2":
+            # Legacy dataset-less naming (predates the dataset-token scheme) — kept
+            # as-is so existing TF-SSv2 checkpoints keep resolving.
+            job_label = str(layer)  # TF's own established convention — layer is the job label
+            matches = list(sae_dir.glob(f"sae_tf_k*_x*_l{layer}_job{layer}_best.pt"))
+            if len(matches) != 1:
+                raise FileNotFoundError(f"Expected 1 TF checkpoint for layer {layer}, found: {matches}")
+            sae_path = matches[0]
+            dim_mean = sae_dir / f"tf_layer{layer}_dim_mean.pt"
+        else:
+            # Kinetics400: current dataset-tokened scheme, written by today's
+            # train_sae.py (which asserts dataset_name into the filename).
+            expansion = _SAE_EXPANSION_FOR_K[sae_k]
+            sae_path = sae_dir / f"sae_tf_{dataset_name}_k{sae_k}_x{expansion}_l{layer}_job{job_label}_best.pt"
+            dim_mean = sae_dir / f"tf_{dataset_name}_layer{layer}_dim_mean.pt"
     elif model_flag == "vivit":
         assert dataset_name == "kinetics400", "ViViT has no non-Kinetics-400 checkpoints in this project"
         expansion = _SAE_EXPANSION_FOR_K[sae_k]

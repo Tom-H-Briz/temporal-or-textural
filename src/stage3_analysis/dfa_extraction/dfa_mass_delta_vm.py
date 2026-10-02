@@ -1,21 +1,24 @@
 """
-DFA mass delta diagnostic (VideoMAE) — R vs C1 vs A across SL manifest clips.
+DFA mass delta diagnostic (VideoMAE or TimeSformer) — R vs shuffle vs A across
+SL manifest clips. Shuffle condition is model-dispatched: VM = C1 (shuffled
+consecutive tubelet pairs), TF = C (raw pre-sampling frame shuffle).
 
-C1 = shuffled consecutive frame pairs (seed = int(clip_id) % 2**32)
-For each R-correct clip: delta = sum(abs(DFA_R)) - sum(abs(DFA_C1))
+C1/C seed = _deterministic_seed(clip_id) (int for SSv2, crc32 for K400 ids).
+For each R-correct clip: delta = sum(abs(DFA_R)) - sum(abs(DFA_shuffle))
 
 signed_vec_R/C1/A are checkpoint-width vectors (dict_size varies by SAE config,
 e.g. 6144 at 8x expansion vs 12288 at 16x) — feature indices are only meaningful
 within the SAE that produced them, never comparable across configs.
 
-Outputs (outputs/analysis/dfa_mass_delta_vm_c1/):
-    dfa_mass_delta_vm_c1_{dataset}_l{layer}_job{job_label}_k{sae_k}.parquet
-    dfa_mass_delta_{dataset}_l{layer}_job{job_label}_k{sae_k}.png
+Outputs:
+    VM:  outputs/analysis/dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_{dataset}_l{layer}_job{job}_k{k}.parquet
+    TF:  outputs/analysis/dfa_mass_delta_tf/dfa_mass_delta_tf_{dataset}_l{layer}_job{job}_k{k}.parquet
 
 Usage:
-    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7
-    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --layer 7 --sae-k 128
-    uv run python src/stage3_analysis/dfa_mass_delta_vm.py --dataset kinetics400 --layer 7
+    uv run python src/stage3_analysis/dfa_extraction/dfa_mass_delta_vm.py --layer 7
+    uv run python src/stage3_analysis/dfa_extraction/dfa_mass_delta_vm.py --layer 7 --sae-k 128
+    uv run python src/stage3_analysis/dfa_extraction/dfa_mass_delta_vm.py --dataset kinetics400 --layer 7
+    uv run python src/stage3_analysis/dfa_extraction/dfa_mass_delta_vm.py --model timesformer --dataset kinetics400 --layer 7
 """
 
 import argparse
@@ -36,9 +39,11 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
+from perturbation import apply_shuffle
 from perturbationA import apply_midpoint_frame
 from ToT_utils import (
-    FRAME_SAMPLERS, _deterministic_seed, _strip_brackets, load_metadata, resolve_sae_checkpoint,
+    MODEL_REGISTRY, _deterministic_seed, _strip_brackets, get_frame_sampler,
+    load_metadata, resolve_sae_checkpoint,
 )
 from ToT_utils import load_clips_kinetics as tot_load_clips_kinetics
 from stage3_analysis.dfa_engine import DFAEngine
@@ -90,7 +95,7 @@ def load_clips_kinetics(cfg: dict) -> list[tuple[str, int, Path]]:
     shared logic (manifest schema, why label2id is resolved at call time, why
     no held-out/correctness filtering) and position_lock_extraction.py for the
     other caller this was consolidated from (03/08)."""
-    result = tot_load_clips_kinetics(cfg["k400_manifest_path"], cfg["video_dir"], "videomae")
+    result = tot_load_clips_kinetics(cfg["k400_manifest_path"], cfg["video_dir"], cfg["model_flag"])
     print(f"  {len(result)} clips from K400 SL manifest")
     return result
 
@@ -115,6 +120,20 @@ def preprocess_c1(clip_path: Path, clip_id: str, num_frames: int, processor, dev
     return processor(result, return_tensors="pt")["pixel_values"].to(device)
 
 
+def preprocess_c(clip_path: Path, clip_id: str, num_frames: int, processor, device: str,
+                 frame_sampler) -> torch.Tensor:
+    """TF's raw-frame shuffle — ALL native frames permuted pre-sampling (matches
+    perturb_accuracy_tf.py / dfa_mass_delta.py's preprocess_c). In-grammar for
+    TF's single-frame tokens; VM uses C1 instead (tubelet-preserving pairs)."""
+    container = av.open(str(clip_path))
+    frames    = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
+    container.close()
+    frames = apply_shuffle(frames, _deterministic_seed(clip_id))
+    n      = len(frames)
+    idx    = frame_sampler(n, num_frames)
+    return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
+
+
 def preprocess_a(clip_path: Path, num_frames: int, processor, device: str,
                  frame_sampler) -> torch.Tensor:
     container = av.open(str(clip_path))
@@ -127,35 +146,39 @@ def preprocess_a(clip_path: Path, num_frames: int, processor, device: str,
 
 
 def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict,
-             frame_sampler) -> list[dict]:
+              frame_sampler) -> list[dict]:
+    # Shuffle condition is model-dispatched (position_lock_extraction.py precedent):
+    # VM = C1 (tubelet pairs), TF = C (raw pre-sampling shuffle).
+    shuffle_fn = preprocess_c1 if cfg["model_flag"] == "videomae" else preprocess_c
+    shuf_label = "C1" if cfg["model_flag"] == "videomae" else "C"  # parquet column suffix
     records = []
     for i, (clip_id, class_id, path_r) in enumerate(clips):
         r_result = engine.run(path_r, class_id, frame_sampler=frame_sampler)
         if not r_result.correct:
             continue
-        pv_c1    = preprocess_c1(path_r, clip_id, engine._num_frames, engine._processor,
-                                 cfg["device"], frame_sampler)
+        pv_shuf  = shuffle_fn(path_r, clip_id, engine._num_frames, engine._processor,
+                              cfg["device"], frame_sampler)
         pv_a     = preprocess_a(path_r, engine._num_frames, engine._processor,
                                 cfg["device"], frame_sampler)
-        c1_result = engine.run_pixels(pv_c1, class_id)
-        a_result  = engine.run_pixels(pv_a, class_id)
-        s_r  = r_result.signed_feature_summary.numpy().astype(np.float32)
-        s_c1 = c1_result.signed_feature_summary.numpy().astype(np.float32)
-        s_a  = a_result.signed_feature_summary.numpy().astype(np.float32)
+        shuf_result = engine.run_pixels(pv_shuf, class_id)
+        a_result    = engine.run_pixels(pv_a, class_id)
+        s_r   = r_result.signed_feature_summary.numpy().astype(np.float32)
+        s_shu = shuf_result.signed_feature_summary.numpy().astype(np.float32)
+        s_a   = a_result.signed_feature_summary.numpy().astype(np.float32)
         records.append({
             "clip_id":         clip_id,
             "class_id":        class_id,
             "total_abs_R":     float(r_result.per_feature_summary.sum()),
-            "total_abs_C1":    float(c1_result.per_feature_summary.sum()),
+            f"total_abs_{shuf_label}":    float(shuf_result.per_feature_summary.sum()),
             "total_abs_A":     float(a_result.per_feature_summary.sum()),
-            "delta":           float(r_result.per_feature_summary.sum() - c1_result.per_feature_summary.sum()),
-            "correct_C1":      bool(c1_result.correct),
+            "delta":           float(r_result.per_feature_summary.sum() - shuf_result.per_feature_summary.sum()),
+            f"correct_{shuf_label}":      bool(shuf_result.correct),
             "correct_A":       bool(a_result.correct),
             "total_signed_R":  float(s_r.sum()),
-            "total_signed_C1": float(s_c1.sum()),
+            f"total_signed_{shuf_label}": float(s_shu.sum()),
             "total_signed_A":  float(s_a.sum()),
             "signed_vec_R":    s_r,
-            "signed_vec_C1":   s_c1,
+            f"signed_vec_{shuf_label}":   s_shu,
             "signed_vec_A":    s_a,
         })
         if (i + 1) % 100 == 0:
@@ -167,16 +190,24 @@ def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict,
 def save_parquet(records: list[dict], sl_map: dict[int, str], out_dir: Path, out_suffix: str) -> None:
     df = pd.DataFrame(records)
     df["sl_label"] = df["class_id"].map(sl_map).fillna("unlabelled")
+def save_parquet(records: list[dict], sl_map: dict[int, str], out_dir: Path,
+                 out_prefix: str, shuf_label: str, out_suffix: str) -> None:
+    df = pd.DataFrame(records)
+    df["sl_label"] = df["class_id"].map(sl_map).fillna("unlabelled")
+    # Column order mirrors the historical VM layout with the shuffle label inlined —
+    # VM output is byte-compatible (C1), TF writes the same shape with C.
     df = df[["clip_id", "class_id", "sl_label",
-             "total_abs_R", "total_abs_C1", "total_abs_A", "delta", "correct_C1", "correct_A",
-             "total_signed_R", "total_signed_C1", "total_signed_A",
-             "signed_vec_R", "signed_vec_C1", "signed_vec_A"]]
-    path = out_dir / f"dfa_mass_delta_vm_c1_{out_suffix}.parquet"
+             "total_abs_R", f"total_abs_{shuf_label}", "total_abs_A", "delta",
+             f"correct_{shuf_label}", "correct_A",
+             "total_signed_R", f"total_signed_{shuf_label}", "total_signed_A",
+             "signed_vec_R", f"signed_vec_{shuf_label}", "signed_vec_A"]]
+    path = out_dir / f"{out_prefix}_{out_suffix}.parquet"
     df.to_parquet(path, index=False)
     print(f"  Parquet → {path}  ({len(df)} rows)")
 
 
-def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path, out_suffix: str) -> None:
+def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path,
+              shuf_label: str, out_suffix: str) -> None:
     df = pd.DataFrame(records)
     df["sl_label"] = df["class_id"].map(sl_map).fillna("unlabelled")
     df = df.sort_values("delta").reset_index(drop=True)
@@ -188,7 +219,7 @@ def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path, out_su
         ax.scatter(grp["delta"], grp["y"], s=8, c=colour, alpha=0.6,
                    label=f"{label.capitalize()} (n={len(grp)})")
     ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("delta  (total_abs_R − total_abs_C1)")
+    ax.set_xlabel(f"delta  (total_abs_R − total_abs_{shuf_label})")
     ax.set_ylabel("clip rank (sorted by delta ascending)")
     ax.legend()
     fig.tight_layout()
@@ -200,21 +231,25 @@ def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path, out_su
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--model", choices=["videomae", "timesformer"], default="videomae")
     parser.add_argument("--dataset", choices=["ssv2", "kinetics400"], default="ssv2")
     parser.add_argument("--layer", type=int, required=True)
     parser.add_argument("--job-label", type=str, default="7ep")
     parser.add_argument("--sae-k", type=int, default=64, help="fallback if checkpoint lacks sae_k")
     args = parser.parse_args()
 
-    resolved   = resolve_sae_checkpoint("videomae", args.layer, dataset_name=args.dataset,
+    resolved   = resolve_sae_checkpoint(args.model, args.layer, dataset_name=args.dataset,
                                         sae_k=args.sae_k, job_label=args.job_label)
-    cfg           = {**CFG, **resolved, "layer": args.layer}
-    frame_sampler = FRAME_SAMPLERS[args.dataset]
-    out_suffix    = f"{args.dataset}_l{args.layer}_job{args.job_label}_k{resolved['sae_k']}"
-    print(f"Device: {cfg['device']}  Layer: {cfg['layer']}  Dataset: {args.dataset}")
-    print(f"SAE: {Path(cfg['sae_path']).name}  sae_k={cfg['sae_k']}")
+    cfg           = {**CFG, **resolved, "model_flag": args.model, "layer": args.layer}
+    frame_sampler = get_frame_sampler(args.dataset, MODEL_REGISTRY[args.model])
+    shuf_label    = "C1" if args.model == "videomae" else "C"
+    out_prefix    = "dfa_mass_delta_vm_c1" if args.model == "videomae" else "dfa_mass_delta_tf"
+    out_suffix    = f"{args.dataset}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}"
+    print(f"Device: {cfg['device']}  Layer: {cfg['layer']}  Dataset: {args.dataset}  Model: {args.model}")
+    print(f"SAE: {Path(cfg['sae_path']).name}  sae_k={cfg['sae_k']}  shuffle condition: {shuf_label}")
 
-    out_dir = Path(cfg["output_dir"])
+    out_dir = Path(cfg["output_dir"] if args.model == "videomae"
+                   else str(ROOT / "outputs" / "analysis" / "dfa_mass_delta_tf"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     sl_map = build_sl_label_map(cfg, args.dataset)
@@ -225,8 +260,8 @@ def main() -> None:
                    sae_k=cfg["sae_k"], dataset_name=args.dataset) as engine:
         records = run_clips(engine, clips, cfg, frame_sampler)
 
-    save_parquet(records, sl_map, out_dir, out_suffix)
-    make_plot(records, sl_map, out_dir, out_suffix)
+    save_parquet(records, sl_map, out_dir, out_prefix, shuf_label, out_suffix)
+    make_plot(records, sl_map, out_dir, shuf_label, out_suffix)
     print("Done.")
 
 
