@@ -483,14 +483,26 @@ def main() -> None:
         f"\nRunning spliced accuracy on best-score checkpoint: epoch {best_epoch} "
         f"(score={best_score:.4f}) -> {CFG['best_checkpoint']}"
     )
-    result = run_spliced_accuracy(
-        sae_checkpoint=CFG["best_checkpoint"], layer=CFG["layer"], model_name=CFG["model_name"],
-        dataset_name=CFG["dataset_name"], eval_clips=eval_clips,
-    )
-    wandb.summary["spliced_accuracy_clip_weighted"]      = result["spliced_accuracy_clip_weighted"]
-    wandb.summary["spliced_accuracy_drop_clip_weighted"] = result["spliced_accuracy_drop_clip_weighted"]
-    print(f"  Spliced accuracy (clip-weighted): {result['spliced_accuracy_clip_weighted']:.4f}  "
-          f"drop={result['spliced_accuracy_drop_clip_weighted']:+.4f}")
+    # Epilogue guard: this splice is a wandb convenience metric only — the
+    # authoritative spliced-accuracy numbers come from the dedicated job (Job 3)
+    # on the persisted eval sample. A labels-CSV / eval-set issue here must NOT
+    # retro-fail a finished multi-hour training run: checkpoints are already on
+    # disk, and a non-zero exit cancels every downstream dependency job
+    # (hit 02/10: KINETICS_LABELS_CSV unset on Isambard -> FileNotFoundError).
+    import traceback
+    try:
+        result = run_spliced_accuracy(
+            sae_checkpoint=CFG["best_checkpoint"], layer=CFG["layer"], model_name=CFG["model_name"],
+            dataset_name=CFG["dataset_name"], eval_clips=eval_clips,
+        )
+        wandb.summary["spliced_accuracy_clip_weighted"]      = result["spliced_accuracy_clip_weighted"]
+        wandb.summary["spliced_accuracy_drop_clip_weighted"] = result["spliced_accuracy_drop_clip_weighted"]
+        print(f"  Spliced accuracy (clip-weighted): {result['spliced_accuracy_clip_weighted']:.4f}  "
+              f"drop={result['spliced_accuracy_drop_clip_weighted']:+.4f}")
+    except Exception:
+        print("\n!!! TRAINING COMPLETE — checkpoints saved — epilogue splice FAILED (non-fatal):")
+        traceback.print_exc()
+        print("!!! Skipping wandb splice summary; the dedicated splice job is the source of truth.\n")
 
     wandb.finish()
     print("\nDone.")
