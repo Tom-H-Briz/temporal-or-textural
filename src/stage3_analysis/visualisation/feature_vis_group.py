@@ -317,12 +317,22 @@ def make_feature_image(
 # MAIN
 # ---------------------------------------------------------------------------
 
+def parse_args(cfg: dict) -> dict:
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--layer", type=int, default=cfg["layer"])
+    p.add_argument("--class-id", type=int, default=cfg["class_id"])
+    p.add_argument("--features", type=int, nargs="+", default=cfg["features"])
+    a = p.parse_args()
+    return {**cfg, "layer": a.layer, "class_id": a.class_id, "features": a.features}
+
+
 def main():
-    cfg      = CFG
+    cfg      = parse_args(CFG)
     resolved = _resolve_cfg(cfg)
     device   = cfg["device"]
 
-    out_dir = ROOT / "outputs/analysis/visualisations" / f"class_{cfg['class_id']}"
+    out_dir = ROOT / "outputs/analysis/visualisations" / f"class_{cfg['class_id']}" / f"L{cfg['layer']}"
     if out_dir.exists():
         print(f"Output directory exists: {out_dir}")
     else:
@@ -333,13 +343,15 @@ def main():
     model, processor, sae, dim_mean = load_model_and_sae(cfg, resolved, device)
     W_dec = get_decoder_weights(sae)
 
-    # Load per-class DFA signs from ranking CSV if available
+    # Per-class DFA signs, layer-matched: the old per_class_feature_delta CSVs are
+    # L7-only, and dictionary indices are not comparable across layers.
     import pandas as pd
-    ranking_csv = ROOT / "outputs/analysis/per_class_feature_delta" / f"class_{cfg['class_id']}_feature_ranking.csv"
-    if ranking_csv.exists():
-        _df = pd.read_csv(ranking_csv, usecols=["feature_idx", "sign_R"])
-        sign_dict = dict(zip(_df["feature_idx"], _df["sign_R"].astype(float)))
-        print(f"  Loaded DFA signs for {len(sign_dict)} features from {ranking_csv.name}")
+    tub = ROOT / "outputs/analysis/dfa_per_tubelet_mass" / f"tubelet_position_lock_timesformer_l{cfg['layer']}.parquet"
+    if tub.exists():
+        _df = pd.read_parquet(tub, columns=["feature_idx", "mean_signed"],
+                              filters=[("class_id", "==", cfg["class_id"]), ("condition", "==", "R")])
+        sign_dict = np.sign(_df.groupby("feature_idx")["mean_signed"].sum()).to_dict()
+        print(f"  Loaded DFA signs for {len(sign_dict)} features from {tub.name}")
     else:
         sign_dict = {}
         print(f"  No ranking CSV found — using decoder-weight sign fallback")
