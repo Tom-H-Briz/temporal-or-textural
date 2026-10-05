@@ -158,25 +158,25 @@ def run_clips(engine: DFAEngine, clips: list[tuple[str, int, Path]], cfg: dict,
             continue
         pv_shuf  = shuffle_fn(path_r, clip_id, engine._num_frames, engine._processor,
                               cfg["device"], frame_sampler)
-        pv_a     = preprocess_a(path_r, engine._num_frames, engine._processor,
-                                cfg["device"], frame_sampler)
         shuf_result = engine.run_pixels(pv_shuf, class_id)
-        a_result    = engine.run_pixels(pv_a, class_id)
+        # skip_a (--skip-a): A columns kept in the schema as nulls, so readers are unchanged.
+        a_result = None if cfg.get("skip_a") else engine.run_pixels(
+            preprocess_a(path_r, engine._num_frames, engine._processor, cfg["device"], frame_sampler), class_id)
         s_r   = r_result.signed_feature_summary.numpy().astype(np.float32)
         s_shu = shuf_result.signed_feature_summary.numpy().astype(np.float32)
-        s_a   = a_result.signed_feature_summary.numpy().astype(np.float32)
+        s_a   = None if a_result is None else a_result.signed_feature_summary.numpy().astype(np.float32)
         records.append({
             "clip_id":         clip_id,
             "class_id":        class_id,
             "total_abs_R":     float(r_result.per_feature_summary.sum()),
             f"total_abs_{shuf_label}":    float(shuf_result.per_feature_summary.sum()),
-            "total_abs_A":     float(a_result.per_feature_summary.sum()),
+            "total_abs_A":     np.nan if a_result is None else float(a_result.per_feature_summary.sum()),
             "delta":           float(r_result.per_feature_summary.sum() - shuf_result.per_feature_summary.sum()),
             f"correct_{shuf_label}":      bool(shuf_result.correct),
-            "correct_A":       bool(a_result.correct),
+            "correct_A":       None if a_result is None else bool(a_result.correct),
             "total_signed_R":  float(s_r.sum()),
             f"total_signed_{shuf_label}": float(s_shu.sum()),
-            "total_signed_A":  float(s_a.sum()),
+            "total_signed_A":  np.nan if s_a is None else float(s_a.sum()),
             "signed_vec_R":    s_r,
             f"signed_vec_{shuf_label}":   s_shu,
             "signed_vec_A":    s_a,
@@ -236,17 +236,25 @@ def main() -> None:
     parser.add_argument("--layer", type=int, required=True)
     parser.add_argument("--job-label", type=str, default="7ep")
     parser.add_argument("--sae-k", type=int, default=64, help="fallback if checkpoint lacks sae_k")
+    parser.add_argument("--manifest", type=str, default=None,
+                        help="ssv2 clip manifest (same schema as manifest_SL_subset.json); requires --out-tag")
+    parser.add_argument("--out-tag", type=str, default=None, help="filename tag, e.g. all174 — keeps SL outputs intact")
+    parser.add_argument("--skip-a", action="store_true", help="R and shuffle only; A columns written as nulls")
     args = parser.parse_args()
+    assert args.manifest is None or args.out_tag, "--manifest needs --out-tag (never overwrite the SL parquets)"
 
     resolved   = resolve_sae_checkpoint(args.model, args.layer, dataset_name=args.dataset,
                                         sae_k=args.sae_k, job_label=args.job_label)
-    cfg           = {**CFG, **resolved, "model_flag": args.model, "layer": args.layer}
+    cfg           = {**CFG, **resolved, "model_flag": args.model, "layer": args.layer, "skip_a": args.skip_a}
+    if args.manifest:
+        cfg["manifest_path"] = args.manifest
     frame_sampler = get_frame_sampler(args.dataset, MODEL_REGISTRY[args.model])
     shuf_label    = "C1" if args.model == "videomae" else "C"
     # UMT gets its own prefix/dir: same C as TF (single-frame tokens) but must not land in TF's files.
     out_prefix    = {"videomae": "dfa_mass_delta_vm_c1", "timesformer": "dfa_mass_delta_tf",
                      "umt": "dfa_mass_delta_umt"}[args.model]
-    out_suffix    = f"{args.dataset}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}"
+    tag           = f"_{args.out_tag}" if args.out_tag else ""
+    out_suffix    = f"{args.dataset}{tag}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}"
     print(f"Device: {cfg['device']}  Layer: {cfg['layer']}  Dataset: {args.dataset}  Model: {args.model}")
     print(f"SAE: {Path(cfg['sae_path']).name}  sae_k={cfg['sae_k']}  shuffle condition: {shuf_label}")
 
