@@ -21,6 +21,8 @@ from transformers import (
     VivitImageProcessor,
 )
 
+from umt_wrapper import UMTClassifier, UMTProcessor, sample_frames_umt
+
 ROOT = Path(__file__).parent.parent
 
 MODEL_ID = "MCG-NJU/videomae-base-finetuned-ssv2"  # legacy — prefer CHECKPOINT_REGISTRY
@@ -74,6 +76,19 @@ MODEL_REGISTRY: dict[str, dict] = {
         # the Aug-2023 partial config fix (hub discussion #2 on this checkpoint).
         "processor_overrides": {"do_normalize": False},
     },
+    "umt": {
+        "model_class":      UMTClassifier,      # notebooks/umt_wrapper.py — vision tower + cached template text
+        "num_frames":       12,
+        "processor_class":  UMTProcessor,
+        "cls_offset":       0,                  # no CLS token in UMT's ViT
+        "layer_getter":     lambda model, i: model.vision.encoder.blocks[i],
+        "hidden_dim":       768,
+        "num_patch_tokens": 2352,               # 12 frames x 196 (tubelet_size=1)
+        "position_label":   "frame",
+        # Repo eval protocol: midpoint of 12 equal intervals. Overrides the dataset
+        # sampler in get_frame_sampler (SSv2's linspace would pick different frames).
+        "frame_sampler":    sample_frames_umt,
+    },
 }
 
 # (model_name, dataset_name) -> HF checkpoint string. The only place a finetuned
@@ -84,6 +99,9 @@ CHECKPOINT_REGISTRY: dict[tuple[str, str], str] = {
     ("videomae", "kinetics400"):  "MCG-NJU/videomae-base-finetuned-kinetics",
     ("timesformer", "kinetics400"): "facebook/timesformer-base-finetuned-k400",
     ("vivit", "kinetics400"):     "google/vivit-b-16x2-kinetics400",
+    # Local file, not an HF id — UMTClassifier.from_pretrained reads umt_wrapper.CFG;
+    # kept here so checkpoint identity stays in one place.
+    ("umt", "ssv2"):              "models/umt_ckpts/ret_ssv2_tpl_b16_25m.pth",
 }
 
 # k -> expansion. This project has only ever trained these two SAE configs — not a
@@ -134,6 +152,11 @@ def resolve_sae_checkpoint(
         expansion = _SAE_EXPANSION_FOR_K[sae_k]
         sae_path = sae_dir / f"sae_vivit_{dataset_name}_k{sae_k}_x{expansion}_l{layer}_job{job_label}_best.pt"
         dim_mean = sae_dir / f"vivit_{dataset_name}_layer{layer}_dim_mean.pt"
+    elif model_flag == "umt":
+        assert dataset_name == "ssv2", "UMT has only the SSv2-template checkpoint in this project"
+        expansion = _SAE_EXPANSION_FOR_K[sae_k]
+        sae_path = sae_dir / f"sae_umt_{dataset_name}_k{sae_k}_x{expansion}_l{layer}_job{job_label}_best.pt"
+        dim_mean = sae_dir / f"umt_{dataset_name}_layer{layer}_dim_mean.pt"
     else:
         raise ValueError(f"Unknown model_flag: {model_flag!r}")
 
@@ -193,8 +216,9 @@ def gather_by_position(tokens: torch.Tensor, model_flag: str) -> torch.Tensor:
     elif model_flag == "timesformer":
         grouped = tokens.reshape(N_SPATIAL, num_positions, *tokens.shape[1:])
         return grouped.transpose(0, 1)
-    elif model_flag == "vivit":
-        # conv3d tubelet embedding flattens (T, H, W) time-major — same layout as VM
+    elif model_flag in ("vivit", "umt"):
+        # conv3d patch embedding flattens (T, H, W) time-major — same layout as VM
+        # (UMT: tubelet_size=1, so each position is one frame)
         return tokens.reshape(num_positions, N_SPATIAL, *tokens.shape[1:])
     else:
         raise ValueError(f"No position-gather rule registered for model_flag={model_flag!r}")
@@ -387,6 +411,8 @@ def get_frame_sampler(dataset_name: str, model_cfg: dict):
     point so validation, SAE training and DFA stages can't drift onto different
     strides. Datasets whose sampler takes no rate (ssv2) get the plain sampler.
     """
+    if "frame_sampler" in model_cfg:   # backbone with its own eval protocol (UMT: 'middle')
+        return model_cfg["frame_sampler"]
     sampler = FRAME_SAMPLERS[dataset_name]
     if dataset_name == "kinetics400":
         return partial(sampler, frame_sample_rate=model_cfg.get("frame_sample_rate", 4))

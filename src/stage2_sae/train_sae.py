@@ -96,7 +96,7 @@ assert CFG["dataset_name"] in DATASET_REGISTRY, (
 )
 _model_cfg   = MODEL_REGISTRY[CFG["model_name"]]
 _dataset_cfg = DATASET_REGISTRY[CFG["dataset_name"]]
-_abbrev                 = {"videomae": "vmae", "timesformer": "tf"}[CFG["model_name"]]
+_abbrev                 = {"videomae": "vmae", "timesformer": "tf", "umt": "umt"}[CFG["model_name"]]
 CFG["hf_checkpoint"]    = CHECKPOINT_REGISTRY[(CFG["model_name"], CFG["dataset_name"])]
 CFG["labels_path"]      = os.environ.get("LABELS_PATH")     or (str(_dataset_cfg["labels_path"])     if _dataset_cfg["labels_path"]     else None)
 CFG["validation_path"]  = os.environ.get("VALIDATION_PATH") or (str(_dataset_cfg["validation_path"]) if _dataset_cfg["validation_path"] else None)
@@ -341,7 +341,7 @@ def validate(
 def main() -> None:
     Path(CFG["output_dir"]).mkdir(parents=True, exist_ok=True)
 
-    _abbrev  = {"videomae": "vmae", "timesformer": "tf"}[CFG["model_name"]]
+    _abbrev  = {"videomae": "vmae", "timesformer": "tf", "umt": "umt"}[CFG["model_name"]]
     run_name = (
         f"sae_{_abbrev}_{CFG['dataset_name']}_k{SAE_CONFIG['k']}_x{SAE_CONFIG['expansion']}"
         f"_l{CFG['layer']}_job{CFG['job_label']}"
@@ -494,6 +494,7 @@ def main() -> None:
         result = run_spliced_accuracy(
             sae_checkpoint=CFG["best_checkpoint"], layer=CFG["layer"], model_name=CFG["model_name"],
             dataset_name=CFG["dataset_name"], eval_clips=eval_clips,
+            dim_mean_path=CFG["dim_mean_path"],  # else falls back to the VM-only "vmae_" path
         )
         wandb.summary["spliced_accuracy_clip_weighted"]      = result["spliced_accuracy_clip_weighted"]
         wandb.summary["spliced_accuracy_drop_clip_weighted"] = result["spliced_accuracy_drop_clip_weighted"]

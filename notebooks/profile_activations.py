@@ -57,7 +57,7 @@ CFG["labels_path"]     = os.environ.get("LABELS_PATH")     or (str(_dataset_cfg[
 CFG["validation_path"] = os.environ.get("VALIDATION_PATH") or (str(_dataset_cfg["validation_path"]) if _dataset_cfg["validation_path"] else None)
 CFG["video_dir"]       = os.environ.get("VIDEO_DIR")       or str(_dataset_cfg["video_dir"])
 
-_abbrev = {"videomae": "vmae", "timesformer": "tf"}[CFG["model_name"]]
+_abbrev = {"videomae": "vmae", "timesformer": "tf", "umt": "umt"}[CFG["model_name"]]
 CFG["dim_mean_out"] = str(
     ROOT / "outputs" / "sae" / f"{_abbrev}_{CFG['dataset_name']}_layer{CFG['layer']}_dim_mean.pt"
 )
