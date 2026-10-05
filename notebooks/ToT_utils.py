@@ -99,9 +99,9 @@ CHECKPOINT_REGISTRY: dict[tuple[str, str], str] = {
     ("videomae", "kinetics400"):  "MCG-NJU/videomae-base-finetuned-kinetics",
     ("timesformer", "kinetics400"): "facebook/timesformer-base-finetuned-k400",
     ("vivit", "kinetics400"):     "google/vivit-b-16x2-kinetics400",
-    # Local file, not an HF id — UMTClassifier.from_pretrained reads umt_wrapper.CFG;
-    # kept here so checkpoint identity stays in one place.
-    ("umt", "ssv2"):              "models/umt_ckpts/ret_ssv2_tpl_b16_25m.pth",
+    # Not a transformers model id — a raw .pth inside an HF repo ("repo:file"). Informational:
+    # UMTClassifier.from_pretrained downloads it via umt_wrapper.CFG hf_repo/hf_filename.
+    ("umt", "ssv2"):              "OpenGVLab/UMT:multi_modality/ret_ssv2_tpl_b16_25m.pth",
 }
 
 # k -> expansion. This project has only ever trained these two SAE configs — not a

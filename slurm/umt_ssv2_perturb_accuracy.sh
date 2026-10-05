@@ -8,8 +8,9 @@
 # UMT-B (SSv2-template retrieval ckpt) per-class accuracy, FULL SSv2 val (24,777),
 # conditions R / C / A (TF convention). VM-SSv2's R/A/C1 run took ~10 min/condition;
 # 3h is first-run headroom for a new backbone.
-# Needs on Isambard (gitignored, rsync'd once): models/umt_ckpts/ret_ssv2_tpl_b16_25m.pth,
-# models/umt_ckpts/ssv2_template_text_emb.npy, and the repo clone at models/unmasked_teacher.
+# Checkpoint streams from HF (OpenGVLab/UMT, gated: HF_TOKEN's account must have accepted
+# the terms); text embeddings are git-tracked (notebooks/umt_ssv2_template_text_emb.npy).
+# One-off prereq: UMT code cloned at models/unmasked_teacher (commit 4fb4049) for vit.py.
 
 source $HOME/.tokens
 

@@ -16,10 +16,12 @@ from torchvision.transforms import InterpolationMode, Resize
 ROOT = Path(__file__).parent.parent
 
 CFG = {
-    "ckpt_path":     ROOT / "models/umt_ckpts/ret_ssv2_tpl_b16_25m.pth",
+    # HF-hosted (same file the spike verified by SHA256), cached like the HF backbones.
+    "hf_repo":       "OpenGVLab/UMT",
+    "hf_filename":   "multi_modality/ret_ssv2_tpl_b16_25m.pth",
     # (174, 512) text_proj outputs from the spike's CPU run (outputs/umt_ssv2_tpl_cls/raw/
     # text_emb.npy), rows RE-ORDERED to labels.json class id — row i == logit i == class i.
-    "text_emb_path": ROOT / "models/umt_ckpts/ssv2_template_text_emb.npy",
+    "text_emb_path": Path(__file__).parent / "umt_ssv2_template_text_emb.npy",
     "vit_path":      ROOT / "models/unmasked_teacher/multi_modality/models/backbones/vit/vit.py",
     "num_frames":    12,
     "img_size":      224,
@@ -85,7 +87,9 @@ class UMTClassifier(torch.nn.Module):
 
     @classmethod
     def from_pretrained(cls, checkpoint=None):
-        sd = torch.load(CFG["ckpt_path"], map_location="cpu", weights_only=False)
+        from huggingface_hub import hf_hub_download
+        path = hf_hub_download(CFG["hf_repo"], CFG["hf_filename"])
+        sd = torch.load(path, map_location="cpu", weights_only=False)
         proj = torch.nn.Linear(768, 512)
         proj.load_state_dict({"weight": sd["vision_proj.weight"], "bias": sd["vision_proj.bias"]})
         text = torch.from_numpy(np.load(CFG["text_emb_path"]))
