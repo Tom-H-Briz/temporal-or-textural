@@ -72,6 +72,15 @@ for _l in (5, 7, 9):
         r_acc_csv=ROOT / "outputs/stage1_class_selection_TF_kinetics/per_class_accuracy_TF_kinetics_R.csv",
         reliability_parquet=ROOT / f"outputs/analysis/cumulative_mass_diagnostic_tf_kinetics400_l{_l}.parquet",
     )
+    # UMT-SSv2: raw-shuffle C (TF convention); full-val R accuracy from perturb_accuracy_umt.py.
+    # reliability inline (VM precedent) — cumulative_mass_diagnostic_tf.py is TF-hardwired.
+    CONFIGS[f"umt_l{_l}"] = dict(
+        dfa_parquet=ROOT / f"outputs/analysis/dfa_mass_delta_umt/dfa_mass_delta_umt_ssv2_l{_l}_job7ep_k64.parquet",
+        shuffle_col="signed_vec_C",
+        correct_col="correct_C",
+        r_acc_csv=ROOT / "outputs/stage1_class_selection_UMT_ssv2/per_class_accuracy_UMT_ssv2_R.csv",
+        reliability_parquet=None,
+    )
 
 
 def eligible_classes(dfa_df: pd.DataFrame, r_acc_csv: Path) -> list[int]:

@@ -155,8 +155,9 @@ def preprocess_c_tf(clip_path: Path, clip_id: str, num_frames: int,
     return processor([frames[i] for i in idx], return_tensors="pt")["pixel_values"].to(device)
 
 
-SHUFFLE_PREPROCESSOR = {"videomae": preprocess_c1, "timesformer": preprocess_c_tf}
-SHUFFLE_LABEL         = {"videomae": "C1",          "timesformer": "C"}
+# UMT: single-frame tokens (tubelet_size=1) -> raw shuffle C is in-grammar, same as TF.
+SHUFFLE_PREPROCESSOR = {"videomae": preprocess_c1, "timesformer": preprocess_c_tf, "umt": preprocess_c_tf}
+SHUFFLE_LABEL         = {"videomae": "C1",          "timesformer": "C",             "umt": "C"}
 
 
 def accumulate_position_stats(values: torch.Tensor, class_id: int, cond: str,
@@ -264,7 +265,7 @@ def save_outputs(dfa: dict, z: dict, sl_map: dict, out_dir: Path, conditions: li
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=["videomae", "timesformer"], required=True)
+    parser.add_argument("--model", choices=["videomae", "timesformer", "umt"], required=True)
     parser.add_argument("--dataset", choices=["ssv2", "kinetics400"], default="ssv2")
     parser.add_argument("--layer", type=int, required=True)
     parser.add_argument("--source", choices=["sae", "residual"], default="sae",

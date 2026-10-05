@@ -231,7 +231,7 @@ def make_plot(records: list[dict], sl_map: dict[int, str], out_dir: Path,
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=["videomae", "timesformer"], default="videomae")
+    parser.add_argument("--model", choices=["videomae", "timesformer", "umt"], default="videomae")
     parser.add_argument("--dataset", choices=["ssv2", "kinetics400"], default="ssv2")
     parser.add_argument("--layer", type=int, required=True)
     parser.add_argument("--job-label", type=str, default="7ep")
@@ -243,13 +243,15 @@ def main() -> None:
     cfg           = {**CFG, **resolved, "model_flag": args.model, "layer": args.layer}
     frame_sampler = get_frame_sampler(args.dataset, MODEL_REGISTRY[args.model])
     shuf_label    = "C1" if args.model == "videomae" else "C"
-    out_prefix    = "dfa_mass_delta_vm_c1" if args.model == "videomae" else "dfa_mass_delta_tf"
+    # UMT gets its own prefix/dir: same C as TF (single-frame tokens) but must not land in TF's files.
+    out_prefix    = {"videomae": "dfa_mass_delta_vm_c1", "timesformer": "dfa_mass_delta_tf",
+                     "umt": "dfa_mass_delta_umt"}[args.model]
     out_suffix    = f"{args.dataset}_l{args.layer}_job{resolved['job_label']}_k{resolved['sae_k']}"
     print(f"Device: {cfg['device']}  Layer: {cfg['layer']}  Dataset: {args.dataset}  Model: {args.model}")
     print(f"SAE: {Path(cfg['sae_path']).name}  sae_k={cfg['sae_k']}  shuffle condition: {shuf_label}")
 
     out_dir = Path(cfg["output_dir"] if args.model == "videomae"
-                   else str(ROOT / "outputs" / "analysis" / "dfa_mass_delta_tf"))
+                   else str(ROOT / "outputs" / "analysis" / out_prefix))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     sl_map = build_sl_label_map(cfg, args.dataset)
