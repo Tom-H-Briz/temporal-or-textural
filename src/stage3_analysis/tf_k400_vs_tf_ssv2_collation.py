@@ -491,6 +491,53 @@ def top12_selectivity_section() -> list[str]:
     return lines
 
 
+def patch_alignment_section() -> list[str]:
+    """Within-class spatial alignment of peak activation, PER PATCH (user rule:
+    patch-level or nothing — quadrants meaningless). Chance = 1/196; nulls are
+    simulated uniform draws at each group's exact n (mode agreement, 2000 trials).
+    Cuts: all clips, and top-50% by total_activation (strong firing only)."""
+    rng = np.random.default_rng(42)
+    scan_root = ROOT / "outputs/analysis/max_activating_tf"
+    files = sorted(scan_root.glob("*_l7/feature*/scan.csv"))
+    if not files:
+        return ["## 10. Within-class per-patch spatial alignment", "",
+                "(no scan.csv files synced yet)"]
+    lines = ["## 10. Within-class per-patch spatial alignment (peak_patch mode agreement)", "",
+             "| dataset | feature | classes n>=10 | median agr | max agr | above null-p95 (expect ~5%) |",
+             "|---|---|---|---|---|---|"]
+
+    def nulls(n):
+        counts = np.array([np.bincount(d, minlength=196).max()
+                           for d in rng.integers(0, 196, size=(2000, n))])
+        return counts.mean() / n, np.percentile(counts, 95) / n
+
+    def agree(sub):
+        rows = []
+        for _, g in sub.groupby("class_id"):
+            if len(g) < 10:
+                continue
+            rows.append((len(g), g["peak_patch"].value_counts().iloc[0] / len(g)))
+        return rows
+
+    for f in files:
+        ds = f.parent.parent.name.split("_")[0]
+        feat = f.parent.name.replace("feature", "")
+        df = pd.read_csv(f)
+        for cut, sub in [("all", df), ("top50", df[df.total_activation >= df.total_activation.median()])]:
+            rows = agree(sub)
+            if not rows:
+                continue
+            a = np.array([x for _, x in rows])
+            null_p95_by_n = {n: nulls(n)[1] for n in np.unique([r[0] for r in rows])}
+            above = sum(1 for n, x in rows if x > null_p95_by_n[n])
+            lines.append(f"| {ds} | {feat} ({cut}) | {len(rows)} | {np.median(a):.3f} | "
+                         f"{a.max():.3f} | {above} |")
+    lines += ["Nulls account for group size (small-n groups agree more by chance). "
+              "Readings are numbers only; the dozen-wide table completes once the "
+              "render job's scan.csv files are all synced."]
+    return lines
+
+
 def main() -> None:
     CFG["out_md"].parent.mkdir(parents=True, exist_ok=True)
     header = ["# TF K400 vs TF SSv2 — collated comparison (03/10/26)", "",
@@ -499,7 +546,7 @@ def main() -> None:
     sections = [accuracy_section(), bucket_section(), mass_bucket_section(),
                 dec_inc_section(), sign_flip_focus_section(), signflip_candidates_section(),
                 top12_composition_section(), top12_selectivity_section(),
-                pos_lock_section(), top_locked_listing()]
+                patch_alignment_section(), pos_lock_section(), top_locked_listing()]
     CFG["out_md"].write_text("\n".join(header + [ln for sec in sections for ln in sec]) + "\n")
     print(f"Written -> {CFG['out_md']}")
 

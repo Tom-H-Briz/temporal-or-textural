@@ -31,7 +31,7 @@ import pandas as pd
 
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT / "notebooks"))
-from ToT_utils import resolve_sae_checkpoint
+from ToT_utils import MODEL_REGISTRY, resolve_sae_checkpoint
 
 DFA_CLASSES = {0, 6, 14, 18, 19, 23, 27, 28, 29, 30, 31, 32, 36, 37, 40,
                41, 42, 44, 57, 59, 83, 84, 123, 126, 142, 143, 145, 164,
@@ -56,6 +56,9 @@ CONFIGS = [
     {"name": "L5_x8k64_VM_K400", "model": "videomae", "layer": 5, "sae_k": 64,  "dataset": "kinetics400"},
     {"name": "L7_x8k64_VM_K400", "model": "videomae", "layer": 7, "sae_k": 64,  "dataset": "kinetics400"},
     {"name": "L9_x8k64_VM_K400", "model": "videomae", "layer": 9, "sae_k": 64,  "dataset": "kinetics400"},
+    {"name": "L5_x8k64_UMT",  "model": "umt",         "layer": 5, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L7_x8k64_UMT",  "model": "umt",         "layer": 7, "sae_k": 64,  "dataset": "ssv2"},
+    {"name": "L9_x8k64_UMT",  "model": "umt",         "layer": 9, "sae_k": 64,  "dataset": "ssv2"},
 ]
 
 GATE = {"min_share": 0.90, "exact_frac": 1.0}
@@ -102,6 +105,11 @@ def _resolve_mass_delta_parquet(cfg: dict) -> Path:
     stops a kinetics400 config from silently picking up an ssv2 file of the
     same layer/sae_k (same bug caught in run_ablation.py's equivalent lookup)."""
     layer, sae_k, dataset = cfg["layer"], cfg["sae_k"], cfg["dataset"]
+    if cfg["model"] == "umt":   # own dir/prefix — must never fall through to VM's same-layer file
+        p = ROOT / f"outputs/analysis/dfa_mass_delta_umt/dfa_mass_delta_umt_{dataset}_l{layer}_job7ep_k{sae_k}.parquet"
+        if p.exists():
+            return p
+        raise FileNotFoundError(f"No mass-delta parquet found for {cfg['name']}: {p}")
     d = CFG["mass_delta_dir"]
     tokened = d / f"dfa_mass_delta_vm_c1_{dataset}_l{layer}_job7ep_k{sae_k}.parquet"
     if tokened.exists():
@@ -121,11 +129,11 @@ def _resolve_mass_delta_parquet(cfg: dict) -> Path:
 
 
 def _shuffle_raw_label(model: str) -> str:
-    return "C" if model == "timesformer" else "C1"
+    return "C" if model in ("timesformer", "umt") else "C1"   # UMT: raw shuffle, as TF
 
 
 def _position_col(model: str) -> str:
-    return "mode_frame" if model == "timesformer" else "mode_tubelet"
+    return f"mode_{MODEL_REGISTRY[model]['position_label']}"   # tubelet (VM) / frame (TF, UMT)
 
 
 def load_dfa(df: pd.DataFrame, model: str) -> pd.DataFrame:

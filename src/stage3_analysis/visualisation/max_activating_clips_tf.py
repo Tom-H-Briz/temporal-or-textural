@@ -175,7 +175,13 @@ def process_feature(feat_idx: int, records: list[dict], id2name: dict, sl_map: d
              fdir / "top.csv", index=False)
     log.info(f"feature {feat_idx}: top5 classes -> {top['class_name'].tolist()}")
     for _, row in top.iterrows():
-        render_clip(engine, row, feat_idx, row["class_name"], row["sl_label"], sampler, fdir)
+        # One bad clip must not kill the remaining renders (same lesson as the
+        # train_sae epilogue): log, skip, keep going.
+        try:
+            render_clip(engine, row, feat_idx, row["class_name"], row["sl_label"], sampler, fdir)
+        except Exception as exc:
+            log.warning(f"RENDER SKIP feature {feat_idx} rank {int(row['rank'])} "
+                        f"clip {row['clip_id']}: {exc}")
 
 
 def main() -> None:
