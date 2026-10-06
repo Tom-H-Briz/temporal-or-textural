@@ -127,8 +127,9 @@ def decode_sampled(clip_path: Path, sampler) -> np.ndarray:
 
 
 def frame_maps(z: torch.Tensor, feat_idx: int) -> np.ndarray:
-    """Feature activation reshaped to (8 frames, 14, 14) via the TF layout."""
-    per_patch = z[:, feat_idx].reshape(196, _NF).T      # (8, 196)
+    """Feature activation reshaped to (8 frames, 14, 14) via the TF layout.
+    .cpu() first — get_z returns a CUDA tensor and numpy can't touch it."""
+    per_patch = z[:, feat_idx].detach().cpu().numpy().reshape(196, _NF).T      # (8, 196)
     return per_patch.reshape(_NF, 14, 14)
 
 
