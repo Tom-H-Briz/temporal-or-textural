@@ -17,7 +17,7 @@
 
 source $HOME/.tokens
 
-export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
+export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset"
 export DATASET_NAME=kinetics400
 L=$SLURM_ARRAY_TASK_ID
 

@@ -47,8 +47,8 @@ if [ -f "$_CKPT" ]; then
     echo "Found existing checkpoint, resuming: $_CKPT"
 fi
 export SAE_JOB_LABEL=7ep
-export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
-export KINETICS_LABELS_CSV="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset/val.csv"
+export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset"
+export KINETICS_LABELS_CSV="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset/val.csv"
 export DIM_MEAN_PATH="$HOME/temporal-or-textural/outputs/sae/vmae_kinetics400_layer${SLURM_ARRAY_TASK_ID}_dim_mean.pt"
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"

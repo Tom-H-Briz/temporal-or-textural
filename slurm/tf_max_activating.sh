@@ -15,8 +15,8 @@
 
 source $HOME/.tokens   # exports HF_TOKEN
 
-K400_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
-SSV2_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
+K400_DIR="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset"
+SSV2_DIR="/scratch/b6o/tomheslin83.b6o/videos"
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 

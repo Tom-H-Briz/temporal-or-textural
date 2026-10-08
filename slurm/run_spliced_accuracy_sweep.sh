@@ -21,12 +21,12 @@
 
 source $HOME/.tokens
 
-export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
-export SSV2_VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
-export K400_VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
+export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"
+export SSV2_VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"
+export K400_VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
-export KINETICS_LABELS_CSV="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset/val.csv"
+export KINETICS_LABELS_CSV="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset/val.csv"
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 

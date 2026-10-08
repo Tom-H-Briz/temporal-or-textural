@@ -14,8 +14,8 @@
 
 source $HOME/.tokens
 
-export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
-export KINETICS_LABELS_CSV="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset/val.csv"
+export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset"
+export KINETICS_LABELS_CSV="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset/val.csv"
 
 L=$SLURM_ARRAY_TASK_ID
 CKPT="outputs/sae/sae_tf_kinetics400_k64_x8_l${L}_job7ep_best.pt"

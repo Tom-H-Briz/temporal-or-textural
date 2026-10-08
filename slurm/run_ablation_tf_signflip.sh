@@ -12,7 +12,7 @@
 
 source $HOME/.tokens
 
-export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/videos"
+export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
 

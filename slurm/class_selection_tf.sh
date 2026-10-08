@@ -11,7 +11,7 @@ cd $HOME/temporal-or-textural
 
 # Point data dir at scratch without touching the script's ROOT-relative paths
 mkdir -p data/ssv2
-ln -sfn /scratch/b5bg/tomheslin83.b5bg/videos data/ssv2/20bn-something-something-v2
+ln -sfn /scratch/b6o/tomheslin83.b6o/videos data/ssv2/20bn-something-something-v2
 ln -sfn $HOME/labels/labels.json data/ssv2/labels/labels.json 2>/dev/null || true
 ln -sfn $HOME/labels/validation.json data/ssv2/labels/validation.json 2>/dev/null || true
 

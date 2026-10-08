@@ -17,7 +17,7 @@ source $HOME/.tokens
 export MODEL_NAME=timesformer
 export DATASET_NAME=kinetics400
 export SAE_LAYER=$SLURM_ARRAY_TASK_ID
-export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
+export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset"
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 

@@ -28,11 +28,11 @@ export SAE_LOSS_FN=aux
 export SAE_EPOCHS=7
 export SAE_JOB_LABEL=7ep
 export SAE_VAL_FRACTION=0.2
-export VIDEO_DIR="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset"
+export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset"
 # Training globs VIDEO_DIR and needs no labels, but the end-of-training epilogue
 # splice does (K400 val.csv) — without this it falls back to the local-only
 # data/ path and dies on Isambard (hit 02/10; now also guarded in train_sae.py).
-export KINETICS_LABELS_CSV="/scratch/b5bg/tomheslin83.b5bg/data/kinetics400/kinetics-dataset/val.csv"
+export KINETICS_LABELS_CSV="/scratch/b6o/tomheslin83.b6o/data/kinetics400/kinetics-dataset/val.csv"
 
 # Auto-resume: safe to resubmit this script as-is if a task gets killed
 # (rolling-latest checkpoint pattern, same as the VM-K400 sweep).
