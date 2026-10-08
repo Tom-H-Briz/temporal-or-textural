@@ -15,6 +15,9 @@ __pycache__/
 *.pt
 *.parquet
 
+# Slurm job logs
+*.out
+
 # Environment
 .env
 
@@ -23,3 +26,10 @@ __pycache__/
 
 # Mac
 .DS_Store
+
+# OpenCode local config
+opencode.json
+.opencode/
+
+# Research findings briefs — local-only by design, synced manually
+findings/
