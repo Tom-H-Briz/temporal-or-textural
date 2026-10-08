@@ -24,5 +24,6 @@ apptainer exec --nv \
     bash -c "
         pip install --quiet av einops pandas pyarrow scipy \"transformers==5.5.0\" huggingface-hub tqdm \"timm==0.4.12\" easydict &&
         cd \$HOME/temporal-or-textural &&
+        unset TORCH_ALLOW_TF32_CUBLAS_OVERRIDE &&
         python src/stage3_analysis/umt_vtm_gate.py all
     "

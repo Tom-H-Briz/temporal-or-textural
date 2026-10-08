@@ -269,6 +269,10 @@ def aggregate(out_dir, smoke):
 
 
 def main():
+    # True fp32 on GPU: TF32 matmuls put the VTM self-check at 9.4e-4 (vs 1.9e-6 on CPU), too coarse
+    # for near-tied pairs. The slurm script also unsets NGC's TORCH_ALLOW_TF32_CUBLAS_OVERRIDE.
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
     smoke = CFG["max_clips"] > 0
     out_dir = CFG["out_dir"].with_name(CFG["out_dir"].name + "_smoke") if smoke else CFG["out_dir"]
