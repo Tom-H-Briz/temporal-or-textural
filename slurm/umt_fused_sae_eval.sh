@@ -20,7 +20,7 @@ export MANIFEST_PATH="$HOME/temporal-or-textural/outputs/manifests/manifest_ssv2
 export SAE_LAYER=$SLURM_ARRAY_TASK_ID
 export SAE_EPOCHS=7
 export SAE_JOB_LABEL=7ep
-export SPLICE_CAP=300
+export SPLICE_CAP=805   # full val split (~107 pair-class clips); 300 gave only ~3 per pair
 
 REPO="$HOME/temporal-or-textural"
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
