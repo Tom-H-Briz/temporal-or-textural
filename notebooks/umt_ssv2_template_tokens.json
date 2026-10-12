@@ -1,0 +1,2758 @@
+[
+ {
+  "text": "approaching [something] with your camera",
+  "tokens": [
+   "[CLS]",
+   "approaching",
+   "[",
+   "something",
+   "]",
+   "with",
+   "your",
+   "camera"
+  ]
+ },
+ {
+  "text": "attaching [something] to [something]",
+  "tokens": [
+   "[CLS]",
+   "attach",
+   "##ing",
+   "[",
+   "something",
+   "]",
+   "to",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "bending [something] so that it deforms",
+  "tokens": [
+   "[CLS]",
+   "bending",
+   "[",
+   "something",
+   "]",
+   "so",
+   "that",
+   "it",
+   "def",
+   "##or",
+   "##ms"
+  ]
+ },
+ {
+  "text": "bending [something] until it breaks",
+  "tokens": [
+   "[CLS]",
+   "bending",
+   "[",
+   "something",
+   "]",
+   "until",
+   "it",
+   "breaks"
+  ]
+ },
+ {
+  "text": "burying [something] in [something]",
+  "tokens": [
+   "[CLS]",
+   "burying",
+   "[",
+   "something",
+   "]",
+   "in",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "closing [something]",
+  "tokens": [
+   "[CLS]",
+   "closing",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "covering [something] with [something]",
+  "tokens": [
+   "[CLS]",
+   "covering",
+   "[",
+   "something",
+   "]",
+   "with",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "digging [something] out of [something]",
+  "tokens": [
+   "[CLS]",
+   "digging",
+   "[",
+   "something",
+   "]",
+   "out",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "dropping [something] behind [something]",
+  "tokens": [
+   "[CLS]",
+   "dropping",
+   "[",
+   "something",
+   "]",
+   "behind",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "dropping [something] in front of [something]",
+  "tokens": [
+   "[CLS]",
+   "dropping",
+   "[",
+   "something",
+   "]",
+   "in",
+   "front",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "dropping [something] into [something]",
+  "tokens": [
+   "[CLS]",
+   "dropping",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "dropping [something] next to [something]",
+  "tokens": [
+   "[CLS]",
+   "dropping",
+   "[",
+   "something",
+   "]",
+   "next",
+   "to",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "dropping [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "dropping",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "failing to put [something] into [something] because [something] does not fit",
+  "tokens": [
+   "[CLS]",
+   "failing",
+   "to",
+   "put",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]",
+   "because",
+   "[",
+   "something",
+   "]",
+   "does",
+   "not",
+   "fit"
+  ]
+ },
+ {
+  "text": "folding [something]",
+  "tokens": [
+   "[CLS]",
+   "folding",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "hitting [something] with [something]",
+  "tokens": [
+   "[CLS]",
+   "hitting",
+   "[",
+   "something",
+   "]",
+   "with",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "holding [something]",
+  "tokens": [
+   "[CLS]",
+   "holding",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "holding [something] behind [something]",
+  "tokens": [
+   "[CLS]",
+   "holding",
+   "[",
+   "something",
+   "]",
+   "behind",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "holding [something] in front of [something]",
+  "tokens": [
+   "[CLS]",
+   "holding",
+   "[",
+   "something",
+   "]",
+   "in",
+   "front",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "holding [something] next to [something]",
+  "tokens": [
+   "[CLS]",
+   "holding",
+   "[",
+   "something",
+   "]",
+   "next",
+   "to",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "holding [something] over [something]",
+  "tokens": [
+   "[CLS]",
+   "holding",
+   "[",
+   "something",
+   "]",
+   "over",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "laying [something] on the table on its side not upright",
+  "tokens": [
+   "[CLS]",
+   "laying",
+   "[",
+   "something",
+   "]",
+   "on",
+   "the",
+   "table",
+   "on",
+   "its",
+   "side",
+   "not",
+   "upright"
+  ]
+ },
+ {
+  "text": "letting [something] roll along a flat surface",
+  "tokens": [
+   "[CLS]",
+   "letting",
+   "[",
+   "something",
+   "]",
+   "roll",
+   "along",
+   "a",
+   "flat",
+   "surface"
+  ]
+ },
+ {
+  "text": "letting [something] roll down a slanted surface",
+  "tokens": [
+   "[CLS]",
+   "letting",
+   "[",
+   "something",
+   "]",
+   "roll",
+   "down",
+   "a",
+   "slant",
+   "##ed",
+   "surface"
+  ]
+ },
+ {
+  "text": "letting [something] roll up a slanted surface so it rolls back down",
+  "tokens": [
+   "[CLS]",
+   "letting",
+   "[",
+   "something",
+   "]",
+   "roll",
+   "up",
+   "a",
+   "slant",
+   "##ed",
+   "surface",
+   "so",
+   "it",
+   "rolls",
+   "back",
+   "down"
+  ]
+ },
+ {
+  "text": "lifting a surface with [something] on it but not enough for it to slide down",
+  "tokens": [
+   "[CLS]",
+   "lifting",
+   "a",
+   "surface",
+   "with",
+   "[",
+   "something",
+   "]",
+   "on",
+   "it",
+   "but",
+   "not",
+   "enough",
+   "for",
+   "it",
+   "to",
+   "slide",
+   "down"
+  ]
+ },
+ {
+  "text": "lifting a surface with [something] on it until it starts sliding down",
+  "tokens": [
+   "[CLS]",
+   "lifting",
+   "a",
+   "surface",
+   "with",
+   "[",
+   "something",
+   "]",
+   "on",
+   "it",
+   "until",
+   "it",
+   "starts",
+   "sliding",
+   "down"
+  ]
+ },
+ {
+  "text": "lifting [something] up completely without letting it drop down",
+  "tokens": [
+   "[CLS]",
+   "lifting",
+   "[",
+   "something",
+   "]",
+   "up",
+   "completely",
+   "without",
+   "letting",
+   "it",
+   "drop",
+   "down"
+  ]
+ },
+ {
+  "text": "lifting [something] up completely then letting it drop down",
+  "tokens": [
+   "[CLS]",
+   "lifting",
+   "[",
+   "something",
+   "]",
+   "up",
+   "completely",
+   "then",
+   "letting",
+   "it",
+   "drop",
+   "down"
+  ]
+ },
+ {
+  "text": "lifting [something] with [something] on it",
+  "tokens": [
+   "[CLS]",
+   "lifting",
+   "[",
+   "something",
+   "]",
+   "with",
+   "[",
+   "something",
+   "]",
+   "on",
+   "it"
+  ]
+ },
+ {
+  "text": "lifting up one end of [something] without letting it drop down",
+  "tokens": [
+   "[CLS]",
+   "lifting",
+   "up",
+   "one",
+   "end",
+   "of",
+   "[",
+   "something",
+   "]",
+   "without",
+   "letting",
+   "it",
+   "drop",
+   "down"
+  ]
+ },
+ {
+  "text": "lifting up one end of [something] then letting it drop down",
+  "tokens": [
+   "[CLS]",
+   "lifting",
+   "up",
+   "one",
+   "end",
+   "of",
+   "[",
+   "something",
+   "]",
+   "then",
+   "letting",
+   "it",
+   "drop",
+   "down"
+  ]
+ },
+ {
+  "text": "moving away from [something] with your camera",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "away",
+   "from",
+   "[",
+   "something",
+   "]",
+   "with",
+   "your",
+   "camera"
+  ]
+ },
+ {
+  "text": "moving [part] of [something]",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "part",
+   "]",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "moving [something] across a surface until it falls down",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "across",
+   "a",
+   "surface",
+   "until",
+   "it",
+   "falls",
+   "down"
+  ]
+ },
+ {
+  "text": "moving [something] across a surface without it falling down",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "across",
+   "a",
+   "surface",
+   "without",
+   "it",
+   "falling",
+   "down"
+  ]
+ },
+ {
+  "text": "moving [something] and [something] away from each other",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "and",
+   "[",
+   "something",
+   "]",
+   "away",
+   "from",
+   "each",
+   "other"
+  ]
+ },
+ {
+  "text": "moving [something] and [something] closer to each other",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "and",
+   "[",
+   "something",
+   "]",
+   "closer",
+   "to",
+   "each",
+   "other"
+  ]
+ },
+ {
+  "text": "moving [something] and [something] so they collide with each other",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "and",
+   "[",
+   "something",
+   "]",
+   "so",
+   "they",
+   "col",
+   "##lide",
+   "with",
+   "each",
+   "other"
+  ]
+ },
+ {
+  "text": "moving [something] and [something] so they pass each other",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "and",
+   "[",
+   "something",
+   "]",
+   "so",
+   "they",
+   "pass",
+   "each",
+   "other"
+  ]
+ },
+ {
+  "text": "moving [something] away from [something]",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "away",
+   "from",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "moving [something] away from the camera",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "away",
+   "from",
+   "the",
+   "camera"
+  ]
+ },
+ {
+  "text": "moving [something] closer to [something]",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "closer",
+   "to",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "moving [something] down",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "down"
+  ]
+ },
+ {
+  "text": "moving [something] towards the camera",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "towards",
+   "the",
+   "camera"
+  ]
+ },
+ {
+  "text": "moving [something] up",
+  "tokens": [
+   "[CLS]",
+   "moving",
+   "[",
+   "something",
+   "]",
+   "up"
+  ]
+ },
+ {
+  "text": "opening [something]",
+  "tokens": [
+   "[CLS]",
+   "opening",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "picking [something] up",
+  "tokens": [
+   "[CLS]",
+   "picking",
+   "[",
+   "something",
+   "]",
+   "up"
+  ]
+ },
+ {
+  "text": "piling [something] up",
+  "tokens": [
+   "[CLS]",
+   "pi",
+   "##ling",
+   "[",
+   "something",
+   "]",
+   "up"
+  ]
+ },
+ {
+  "text": "plugging [something] into [something]",
+  "tokens": [
+   "[CLS]",
+   "plug",
+   "##ging",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "plugging [something] into [something] but pulling it right out as you remove your hand",
+  "tokens": [
+   "[CLS]",
+   "plug",
+   "##ging",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]",
+   "but",
+   "pulling",
+   "it",
+   "right",
+   "out",
+   "as",
+   "you",
+   "remove",
+   "your",
+   "hand"
+  ]
+ },
+ {
+  "text": "poking a hole into [some substance]",
+  "tokens": [
+   "[CLS]",
+   "poking",
+   "a",
+   "hole",
+   "into",
+   "[",
+   "some",
+   "substance",
+   "]"
+  ]
+ },
+ {
+  "text": "poking a hole into [something soft]",
+  "tokens": [
+   "[CLS]",
+   "poking",
+   "a",
+   "hole",
+   "into",
+   "[",
+   "something",
+   "soft",
+   "]"
+  ]
+ },
+ {
+  "text": "poking a stack of [something] so the stack collapses",
+  "tokens": [
+   "[CLS]",
+   "poking",
+   "a",
+   "stack",
+   "of",
+   "[",
+   "something",
+   "]",
+   "so",
+   "the",
+   "stack",
+   "collapses"
+  ]
+ },
+ {
+  "text": "poking a stack of [something] without the stack collapsing",
+  "tokens": [
+   "[CLS]",
+   "poking",
+   "a",
+   "stack",
+   "of",
+   "[",
+   "something",
+   "]",
+   "without",
+   "the",
+   "stack",
+   "collapsing"
+  ]
+ },
+ {
+  "text": "poking [something] so it slightly moves",
+  "tokens": [
+   "[CLS]",
+   "poking",
+   "[",
+   "something",
+   "]",
+   "so",
+   "it",
+   "slightly",
+   "moves"
+  ]
+ },
+ {
+  "text": "poking [something] so lightly that it doesnt or almost doesnt move",
+  "tokens": [
+   "[CLS]",
+   "poking",
+   "[",
+   "something",
+   "]",
+   "so",
+   "lightly",
+   "that",
+   "it",
+   "doesn",
+   "##t",
+   "or",
+   "almost",
+   "doesn",
+   "##t",
+   "move"
+  ]
+ },
+ {
+  "text": "poking [something] so that it falls over",
+  "tokens": [
+   "[CLS]",
+   "poking",
+   "[",
+   "something",
+   "]",
+   "so",
+   "that",
+   "it",
+   "falls",
+   "over"
+  ]
+ },
+ {
+  "text": "poking [something] so that it spins around",
+  "tokens": [
+   "[CLS]",
+   "poking",
+   "[",
+   "something",
+   "]",
+   "so",
+   "that",
+   "it",
+   "spins",
+   "around"
+  ]
+ },
+ {
+  "text": "pouring [something] into [something]",
+  "tokens": [
+   "[CLS]",
+   "pouring",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pouring [something] into [something] until it overflows",
+  "tokens": [
+   "[CLS]",
+   "pouring",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]",
+   "until",
+   "it",
+   "over",
+   "##flow",
+   "##s"
+  ]
+ },
+ {
+  "text": "pouring [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "pouring",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pouring [something] out of [something]",
+  "tokens": [
+   "[CLS]",
+   "pouring",
+   "[",
+   "something",
+   "]",
+   "out",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending or failing to wipe [something] off of [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "or",
+   "failing",
+   "to",
+   "wipe",
+   "[",
+   "something",
+   "]",
+   "off",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending or trying and failing to twist [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "or",
+   "trying",
+   "and",
+   "failing",
+   "to",
+   "twist",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to be tearing [something that is not tearable]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "be",
+   "tearing",
+   "[",
+   "something",
+   "that",
+   "is",
+   "not",
+   "tear",
+   "##able",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to close [something] without actually closing it",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "close",
+   "[",
+   "something",
+   "]",
+   "without",
+   "actually",
+   "closing",
+   "it"
+  ]
+ },
+ {
+  "text": "pretending to open [something] without actually opening it",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "open",
+   "[",
+   "something",
+   "]",
+   "without",
+   "actually",
+   "opening",
+   "it"
+  ]
+ },
+ {
+  "text": "pretending to pick [something] up",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "pick",
+   "[",
+   "something",
+   "]",
+   "up"
+  ]
+ },
+ {
+  "text": "pretending to poke [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "poke",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to pour [something] out of [something] but [something] is empty",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "pour",
+   "[",
+   "something",
+   "]",
+   "out",
+   "of",
+   "[",
+   "something",
+   "]",
+   "but",
+   "[",
+   "something",
+   "]",
+   "is",
+   "empty"
+  ]
+ },
+ {
+  "text": "pretending to put [something] behind [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "put",
+   "[",
+   "something",
+   "]",
+   "behind",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to put [something] into [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "put",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to put [something] next to [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "put",
+   "[",
+   "something",
+   "]",
+   "next",
+   "to",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to put [something] on a surface",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "put",
+   "[",
+   "something",
+   "]",
+   "on",
+   "a",
+   "surface"
+  ]
+ },
+ {
+  "text": "pretending to put [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "put",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to put [something] underneath [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "put",
+   "[",
+   "something",
+   "]",
+   "underneath",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to scoop [something] up with [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "scoop",
+   "[",
+   "something",
+   "]",
+   "up",
+   "with",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to spread air onto [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "spread",
+   "air",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to sprinkle air onto [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "sp",
+   "##rin",
+   "##kle",
+   "air",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to squeeze [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "squeeze",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to take [something] from [somewhere]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "take",
+   "[",
+   "something",
+   "]",
+   "from",
+   "[",
+   "somewhere",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to take [something] out of [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "take",
+   "[",
+   "something",
+   "]",
+   "out",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to throw [something]",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "throw",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pretending to turn [something] upside down",
+  "tokens": [
+   "[CLS]",
+   "pretending",
+   "to",
+   "turn",
+   "[",
+   "something",
+   "]",
+   "upside",
+   "down"
+  ]
+ },
+ {
+  "text": "pulling [something] from behind of [something]",
+  "tokens": [
+   "[CLS]",
+   "pulling",
+   "[",
+   "something",
+   "]",
+   "from",
+   "behind",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pulling [something] from left to right",
+  "tokens": [
+   "[CLS]",
+   "pulling",
+   "[",
+   "something",
+   "]",
+   "from",
+   "left",
+   "to",
+   "right"
+  ]
+ },
+ {
+  "text": "pulling [something] from right to left",
+  "tokens": [
+   "[CLS]",
+   "pulling",
+   "[",
+   "something",
+   "]",
+   "from",
+   "right",
+   "to",
+   "left"
+  ]
+ },
+ {
+  "text": "pulling [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "pulling",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pulling [something] out of [something]",
+  "tokens": [
+   "[CLS]",
+   "pulling",
+   "[",
+   "something",
+   "]",
+   "out",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pulling two ends of [something] but nothing happens",
+  "tokens": [
+   "[CLS]",
+   "pulling",
+   "two",
+   "ends",
+   "of",
+   "[",
+   "something",
+   "]",
+   "but",
+   "nothing",
+   "happens"
+  ]
+ },
+ {
+  "text": "pulling two ends of [something] so that it gets stretched",
+  "tokens": [
+   "[CLS]",
+   "pulling",
+   "two",
+   "ends",
+   "of",
+   "[",
+   "something",
+   "]",
+   "so",
+   "that",
+   "it",
+   "gets",
+   "stretched"
+  ]
+ },
+ {
+  "text": "pulling two ends of [something] so that it separates into two pieces",
+  "tokens": [
+   "[CLS]",
+   "pulling",
+   "two",
+   "ends",
+   "of",
+   "[",
+   "something",
+   "]",
+   "so",
+   "that",
+   "it",
+   "separates",
+   "into",
+   "two",
+   "pieces"
+  ]
+ },
+ {
+  "text": "pushing [something] from left to right",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "from",
+   "left",
+   "to",
+   "right"
+  ]
+ },
+ {
+  "text": "pushing [something] from right to left",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "from",
+   "right",
+   "to",
+   "left"
+  ]
+ },
+ {
+  "text": "pushing [something] off of [something]",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "off",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pushing [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "pushing [something] so it spins",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "so",
+   "it",
+   "spins"
+  ]
+ },
+ {
+  "text": "pushing [something] so that it almost falls off but doesnt",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "so",
+   "that",
+   "it",
+   "almost",
+   "falls",
+   "off",
+   "but",
+   "doesn",
+   "##t"
+  ]
+ },
+ {
+  "text": "pushing [something] so that it falls off the table",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "so",
+   "that",
+   "it",
+   "falls",
+   "off",
+   "the",
+   "table"
+  ]
+ },
+ {
+  "text": "pushing [something] so that it slightly moves",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "so",
+   "that",
+   "it",
+   "slightly",
+   "moves"
+  ]
+ },
+ {
+  "text": "pushing [something] with [something]",
+  "tokens": [
+   "[CLS]",
+   "pushing",
+   "[",
+   "something",
+   "]",
+   "with",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [number of] [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "number",
+   "of",
+   "]",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [something] and [something] on the table",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "and",
+   "[",
+   "something",
+   "]",
+   "on",
+   "the",
+   "table"
+  ]
+ },
+ {
+  "text": "putting [something] behind [something]",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "behind",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [something] in front of [something]",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "in",
+   "front",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [something] into [something]",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [something] next to [something]",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "next",
+   "to",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [something] on a flat surface without letting it roll",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "on",
+   "a",
+   "flat",
+   "surface",
+   "without",
+   "letting",
+   "it",
+   "roll"
+  ]
+ },
+ {
+  "text": "putting [something] on a surface",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "on",
+   "a",
+   "surface"
+  ]
+ },
+ {
+  "text": "putting [something] on the edge of [something] so it is not supported and falls down",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "on",
+   "the",
+   "edge",
+   "of",
+   "[",
+   "something",
+   "]",
+   "so",
+   "it",
+   "is",
+   "not",
+   "supported",
+   "and",
+   "falls",
+   "down"
+  ]
+ },
+ {
+  "text": "putting [something] onto a slanted surface but it doesnt glide down",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "a",
+   "slant",
+   "##ed",
+   "surface",
+   "but",
+   "it",
+   "doesn",
+   "##t",
+   "glide",
+   "down"
+  ]
+ },
+ {
+  "text": "putting [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [something] onto [something else that cannot support it] so it falls down",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "else",
+   "that",
+   "cannot",
+   "support",
+   "it",
+   "]",
+   "so",
+   "it",
+   "falls",
+   "down"
+  ]
+ },
+ {
+  "text": "putting [something similar to other things that are already on the table]",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "similar",
+   "to",
+   "other",
+   "things",
+   "that",
+   "are",
+   "already",
+   "on",
+   "the",
+   "table",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [something] that cant roll onto a slanted surface so it slides down",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "that",
+   "can",
+   "##t",
+   "roll",
+   "onto",
+   "a",
+   "slant",
+   "##ed",
+   "surface",
+   "so",
+   "it",
+   "slides",
+   "down"
+  ]
+ },
+ {
+  "text": "putting [something] that cant roll onto a slanted surface so it stays where it is",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "that",
+   "can",
+   "##t",
+   "roll",
+   "onto",
+   "a",
+   "slant",
+   "##ed",
+   "surface",
+   "so",
+   "it",
+   "stays",
+   "where",
+   "it",
+   "is"
+  ]
+ },
+ {
+  "text": "putting [something that cannot actually stand upright] upright on the table so it falls on its side",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "that",
+   "cannot",
+   "actually",
+   "stand",
+   "upright",
+   "]",
+   "upright",
+   "on",
+   "the",
+   "table",
+   "so",
+   "it",
+   "falls",
+   "on",
+   "its",
+   "side"
+  ]
+ },
+ {
+  "text": "putting [something] underneath [something]",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "underneath",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "putting [something] upright on the table",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "upright",
+   "on",
+   "the",
+   "table"
+  ]
+ },
+ {
+  "text": "putting [something] [something] and [something] on the table",
+  "tokens": [
+   "[CLS]",
+   "putting",
+   "[",
+   "something",
+   "]",
+   "[",
+   "something",
+   "]",
+   "and",
+   "[",
+   "something",
+   "]",
+   "on",
+   "the",
+   "table"
+  ]
+ },
+ {
+  "text": "removing [something] revealing [something] behind",
+  "tokens": [
+   "[CLS]",
+   "removing",
+   "[",
+   "something",
+   "]",
+   "revealing",
+   "[",
+   "something",
+   "]",
+   "behind"
+  ]
+ },
+ {
+  "text": "rolling [something] on a flat surface",
+  "tokens": [
+   "[CLS]",
+   "rolling",
+   "[",
+   "something",
+   "]",
+   "on",
+   "a",
+   "flat",
+   "surface"
+  ]
+ },
+ {
+  "text": "scooping [something] up with [something]",
+  "tokens": [
+   "[CLS]",
+   "scoop",
+   "##ing",
+   "[",
+   "something",
+   "]",
+   "up",
+   "with",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "showing a photo of [something] to the camera",
+  "tokens": [
+   "[CLS]",
+   "showing",
+   "a",
+   "photo",
+   "of",
+   "[",
+   "something",
+   "]",
+   "to",
+   "the",
+   "camera"
+  ]
+ },
+ {
+  "text": "showing [something] behind [something]",
+  "tokens": [
+   "[CLS]",
+   "showing",
+   "[",
+   "something",
+   "]",
+   "behind",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "showing [something] next to [something]",
+  "tokens": [
+   "[CLS]",
+   "showing",
+   "[",
+   "something",
+   "]",
+   "next",
+   "to",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "showing [something] on top of [something]",
+  "tokens": [
+   "[CLS]",
+   "showing",
+   "[",
+   "something",
+   "]",
+   "on",
+   "top",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "showing [something] to the camera",
+  "tokens": [
+   "[CLS]",
+   "showing",
+   "[",
+   "something",
+   "]",
+   "to",
+   "the",
+   "camera"
+  ]
+ },
+ {
+  "text": "showing that [something] is empty",
+  "tokens": [
+   "[CLS]",
+   "showing",
+   "that",
+   "[",
+   "something",
+   "]",
+   "is",
+   "empty"
+  ]
+ },
+ {
+  "text": "showing that [something] is inside [something]",
+  "tokens": [
+   "[CLS]",
+   "showing",
+   "that",
+   "[",
+   "something",
+   "]",
+   "is",
+   "inside",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "[something] being deflected from [something]",
+  "tokens": [
+   "[CLS]",
+   "[",
+   "something",
+   "]",
+   "being",
+   "def",
+   "##le",
+   "##cted",
+   "from",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "[something] colliding with [something] and both are being deflected",
+  "tokens": [
+   "[CLS]",
+   "[",
+   "something",
+   "]",
+   "col",
+   "##lid",
+   "##ing",
+   "with",
+   "[",
+   "something",
+   "]",
+   "and",
+   "both",
+   "are",
+   "being",
+   "def",
+   "##le",
+   "##cted"
+  ]
+ },
+ {
+  "text": "[something] colliding with [something] and both come to a halt",
+  "tokens": [
+   "[CLS]",
+   "[",
+   "something",
+   "]",
+   "col",
+   "##lid",
+   "##ing",
+   "with",
+   "[",
+   "something",
+   "]",
+   "and",
+   "both",
+   "come",
+   "to",
+   "a",
+   "halt"
+  ]
+ },
+ {
+  "text": "[something] falling like a feather or paper",
+  "tokens": [
+   "[CLS]",
+   "[",
+   "something",
+   "]",
+   "falling",
+   "like",
+   "a",
+   "feather",
+   "or",
+   "paper"
+  ]
+ },
+ {
+  "text": "[something] falling like a rock",
+  "tokens": [
+   "[CLS]",
+   "[",
+   "something",
+   "]",
+   "falling",
+   "like",
+   "a",
+   "rock"
+  ]
+ },
+ {
+  "text": "spilling [something] behind [something]",
+  "tokens": [
+   "[CLS]",
+   "spilling",
+   "[",
+   "something",
+   "]",
+   "behind",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "spilling [something] next to [something]",
+  "tokens": [
+   "[CLS]",
+   "spilling",
+   "[",
+   "something",
+   "]",
+   "next",
+   "to",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "spilling [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "spilling",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "spinning [something] so it continues spinning",
+  "tokens": [
+   "[CLS]",
+   "spinning",
+   "[",
+   "something",
+   "]",
+   "so",
+   "it",
+   "continues",
+   "spinning"
+  ]
+ },
+ {
+  "text": "spinning [something] that quickly stops spinning",
+  "tokens": [
+   "[CLS]",
+   "spinning",
+   "[",
+   "something",
+   "]",
+   "that",
+   "quickly",
+   "stops",
+   "spinning"
+  ]
+ },
+ {
+  "text": "spreading [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "spreading",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "sprinkling [something] onto [something]",
+  "tokens": [
+   "[CLS]",
+   "sp",
+   "##rin",
+   "##kling",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "squeezing [something]",
+  "tokens": [
+   "[CLS]",
+   "squeezing",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "stacking [number of] [something]",
+  "tokens": [
+   "[CLS]",
+   "stack",
+   "##ing",
+   "[",
+   "number",
+   "of",
+   "]",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "stuffing [something] into [something]",
+  "tokens": [
+   "[CLS]",
+   "stuffing",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "taking [one of many similar things on the table]",
+  "tokens": [
+   "[CLS]",
+   "taking",
+   "[",
+   "one",
+   "of",
+   "many",
+   "similar",
+   "things",
+   "on",
+   "the",
+   "table",
+   "]"
+  ]
+ },
+ {
+  "text": "taking [something] from [somewhere]",
+  "tokens": [
+   "[CLS]",
+   "taking",
+   "[",
+   "something",
+   "]",
+   "from",
+   "[",
+   "somewhere",
+   "]"
+  ]
+ },
+ {
+  "text": "taking [something] out of [something]",
+  "tokens": [
+   "[CLS]",
+   "taking",
+   "[",
+   "something",
+   "]",
+   "out",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "tearing [something] into two pieces",
+  "tokens": [
+   "[CLS]",
+   "tearing",
+   "[",
+   "something",
+   "]",
+   "into",
+   "two",
+   "pieces"
+  ]
+ },
+ {
+  "text": "tearing [something] just a little bit",
+  "tokens": [
+   "[CLS]",
+   "tearing",
+   "[",
+   "something",
+   "]",
+   "just",
+   "a",
+   "little",
+   "bit"
+  ]
+ },
+ {
+  "text": "throwing [something]",
+  "tokens": [
+   "[CLS]",
+   "throwing",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "throwing [something] against [something]",
+  "tokens": [
+   "[CLS]",
+   "throwing",
+   "[",
+   "something",
+   "]",
+   "against",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "throwing [something] in the air and catching it",
+  "tokens": [
+   "[CLS]",
+   "throwing",
+   "[",
+   "something",
+   "]",
+   "in",
+   "the",
+   "air",
+   "and",
+   "catching",
+   "it"
+  ]
+ },
+ {
+  "text": "throwing [something] in the air and letting it fall",
+  "tokens": [
+   "[CLS]",
+   "throwing",
+   "[",
+   "something",
+   "]",
+   "in",
+   "the",
+   "air",
+   "and",
+   "letting",
+   "it",
+   "fall"
+  ]
+ },
+ {
+  "text": "throwing [something] onto a surface",
+  "tokens": [
+   "[CLS]",
+   "throwing",
+   "[",
+   "something",
+   "]",
+   "onto",
+   "a",
+   "surface"
+  ]
+ },
+ {
+  "text": "tilting [something] with [something] on it slightly so it doesnt fall down",
+  "tokens": [
+   "[CLS]",
+   "tilting",
+   "[",
+   "something",
+   "]",
+   "with",
+   "[",
+   "something",
+   "]",
+   "on",
+   "it",
+   "slightly",
+   "so",
+   "it",
+   "doesn",
+   "##t",
+   "fall",
+   "down"
+  ]
+ },
+ {
+  "text": "tilting [something] with [something] on it until it falls off",
+  "tokens": [
+   "[CLS]",
+   "tilting",
+   "[",
+   "something",
+   "]",
+   "with",
+   "[",
+   "something",
+   "]",
+   "on",
+   "it",
+   "until",
+   "it",
+   "falls",
+   "off"
+  ]
+ },
+ {
+  "text": "tipping [something] over",
+  "tokens": [
+   "[CLS]",
+   "tipping",
+   "[",
+   "something",
+   "]",
+   "over"
+  ]
+ },
+ {
+  "text": "tipping [something] with [something in it] over so [something in it] falls out",
+  "tokens": [
+   "[CLS]",
+   "tipping",
+   "[",
+   "something",
+   "]",
+   "with",
+   "[",
+   "something",
+   "in",
+   "it",
+   "]",
+   "over",
+   "so",
+   "[",
+   "something",
+   "in",
+   "it",
+   "]",
+   "falls",
+   "out"
+  ]
+ },
+ {
+  "text": "touching without moving [part] of [something]",
+  "tokens": [
+   "[CLS]",
+   "touching",
+   "without",
+   "moving",
+   "[",
+   "part",
+   "]",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "trying but failing to attach [something] to [something] because it doesnt stick",
+  "tokens": [
+   "[CLS]",
+   "trying",
+   "but",
+   "failing",
+   "to",
+   "attach",
+   "[",
+   "something",
+   "]",
+   "to",
+   "[",
+   "something",
+   "]",
+   "because",
+   "it",
+   "doesn",
+   "##t",
+   "stick"
+  ]
+ },
+ {
+  "text": "trying to bend [something unbendable] so nothing happens",
+  "tokens": [
+   "[CLS]",
+   "trying",
+   "to",
+   "bend",
+   "[",
+   "something",
+   "un",
+   "##ben",
+   "##dable",
+   "]",
+   "so",
+   "nothing",
+   "happens"
+  ]
+ },
+ {
+  "text": "trying to pour [something] into [something] but missing so it spills next to it",
+  "tokens": [
+   "[CLS]",
+   "trying",
+   "to",
+   "pour",
+   "[",
+   "something",
+   "]",
+   "into",
+   "[",
+   "something",
+   "]",
+   "but",
+   "missing",
+   "so",
+   "it",
+   "spill",
+   "##s",
+   "next",
+   "to",
+   "it"
+  ]
+ },
+ {
+  "text": "turning [something] upside down",
+  "tokens": [
+   "[CLS]",
+   "turning",
+   "[",
+   "something",
+   "]",
+   "upside",
+   "down"
+  ]
+ },
+ {
+  "text": "turning the camera downwards while filming [something]",
+  "tokens": [
+   "[CLS]",
+   "turning",
+   "the",
+   "camera",
+   "downwards",
+   "while",
+   "filming",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "turning the camera left while filming [something]",
+  "tokens": [
+   "[CLS]",
+   "turning",
+   "the",
+   "camera",
+   "left",
+   "while",
+   "filming",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "turning the camera right while filming [something]",
+  "tokens": [
+   "[CLS]",
+   "turning",
+   "the",
+   "camera",
+   "right",
+   "while",
+   "filming",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "turning the camera upwards while filming [something]",
+  "tokens": [
+   "[CLS]",
+   "turning",
+   "the",
+   "camera",
+   "upwards",
+   "while",
+   "filming",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "twisting wringing [something] wet until water comes out",
+  "tokens": [
+   "[CLS]",
+   "twisting",
+   "wr",
+   "##inging",
+   "[",
+   "something",
+   "]",
+   "wet",
+   "until",
+   "water",
+   "comes",
+   "out"
+  ]
+ },
+ {
+  "text": "twisting [something]",
+  "tokens": [
+   "[CLS]",
+   "twisting",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "uncovering [something]",
+  "tokens": [
+   "[CLS]",
+   "uncover",
+   "##ing",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "unfolding [something]",
+  "tokens": [
+   "[CLS]",
+   "un",
+   "##folding",
+   "[",
+   "something",
+   "]"
+  ]
+ },
+ {
+  "text": "wiping [something] off of [something]",
+  "tokens": [
+   "[CLS]",
+   "wiping",
+   "[",
+   "something",
+   "]",
+   "off",
+   "of",
+   "[",
+   "something",
+   "]"
+  ]
+ }
+]
