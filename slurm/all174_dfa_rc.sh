@@ -18,6 +18,8 @@ LAYERS=(5 7 9 5 7 9 5 7 9)
 MODEL=${MODELS[$SLURM_ARRAY_TASK_ID]}
 L=${LAYERS[$SLURM_ARRAY_TASK_ID]}
 MANIFEST="$HOME/temporal-or-textural/outputs/manifests/manifest_ssv2_all174_cap40.json"
+# OUT_TAG (default all174) keeps re-runs alongside old outputs, e.g. post-threshold-fix:
+#   sbatch --array=2 --export=ALL,OUT_TAG=all174_thrfix slurm/all174_dfa_rc.sh   (task 2 = UMT L9)
 [ -f "$MANIFEST" ] || { echo "MISSING MANIFEST: $MANIFEST (run the builder first)"; exit 1; }
 echo "Task $SLURM_ARRAY_TASK_ID: model=$MODEL layer=$L"
 
@@ -38,5 +40,5 @@ apptainer exec --nv \
         cd \$HOME/temporal-or-textural &&
         python src/stage3_analysis/dfa_extraction/dfa_mass_delta_vm.py \
             --model $MODEL --dataset ssv2 --layer $L --job-label 7ep --sae-k 64 \
-            --manifest $MANIFEST --out-tag all174 --skip-a
+            --manifest $MANIFEST --out-tag ${OUT_TAG:-all174} --skip-a
     "
