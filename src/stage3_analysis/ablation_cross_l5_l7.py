@@ -45,6 +45,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "notebooks"))
 
+from ToT_utils import load_sae_eval
 from ToT_utils import CHECKPOINT_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY, resolve_sae_checkpoint
 from sae import BatchTopKSAE
 from stage3_analysis.ablation_targets import get_targets, group_targets
@@ -104,22 +105,9 @@ def load_model_and_splices(cfg: dict, dataset_name: str):
     for layer in [5, 7]:
         resolved = resolve_sae_checkpoint(cfg["model_flag"], layer, dataset_name=dataset_name, sae_k=64, job_label="7ep")
         dim_mean = torch.load(resolved["dim_mean_path"], weights_only=True).to(device)
-        ckpt = torch.load(resolved["sae_path"], weights_only=True, map_location=device)
-        state_dict = ckpt["sae_state_dict"] if "sae_state_dict" in ckpt else ckpt
-        nb_concepts = state_dict["dictionary._weights"].shape[0]
-        sae_k = ckpt.get("sae_k") or resolved["sae_k"]
-        top_k = sae_k * model_cfg["num_patch_tokens"]
-
-        sae = BatchTopKSAE(input_shape=model_cfg["hidden_dim"], nb_concepts=nb_concepts,
-                           top_k=top_k, device=device)
-        sae.load_state_dict(state_dict)
-        sae.train()
-        dummy = torch.zeros(model_cfg["num_patch_tokens"], model_cfg["hidden_dim"], device=device)
-        with torch.no_grad():
-            sae.encode((dummy - dim_mean).float())
-        for p in sae.parameters():
-            p.requires_grad_(False)
-        sae.eval()
+        # trained running threshold from the checkpoint (12/10/26 fix; was a dummy-zeros warm-up)
+        sae = load_sae_eval(resolved["sae_path"], model_cfg["hidden_dim"], model_cfg["num_patch_tokens"],
+                            device, sae_k=resolved["sae_k"])
 
         state = {"ablate_indices": []}
         hook  = make_splice_hook(sae, dim_mean, model_cfg["cls_offset"], state)

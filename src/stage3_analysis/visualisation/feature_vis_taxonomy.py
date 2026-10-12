@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT / "src" / "stage1_dataset"))
 
 from sae import BatchTopKSAE
 from perturbation import apply_shuffle
+from ToT_utils import load_sae_eval
 from ToT_utils import (
     CHECKPOINT_REGISTRY, FRAME_SAMPLERS, MODEL_REGISTRY, _deterministic_seed,
     gather_by_position, resolve_sae_checkpoint,
@@ -113,19 +114,10 @@ def load_model_and_sae(backbone_cfg: dict, layer: int = 7):
     model = model_cfg["model_class"].from_pretrained(checkpoint)
     model.to(DEVICE).eval().requires_grad_(False)
 
-    ckpt = torch.load(resolved["sae_path"], weights_only=True, map_location=DEVICE)
-    state_dict = ckpt["sae_state_dict"] if "sae_state_dict" in ckpt else ckpt
-    nb_concepts = state_dict["dictionary._weights"].shape[0]
-    top_k = resolved["sae_k"] * model_cfg["num_patch_tokens"]
-    sae = BatchTopKSAE(input_shape=model_cfg["hidden_dim"], nb_concepts=nb_concepts,
-                       top_k=top_k, device=DEVICE)
-    sae.load_state_dict(state_dict)
+    # trained running threshold from the checkpoint (12/10/26 fix; was a dummy-zeros warm-up)
+    sae = load_sae_eval(resolved["sae_path"], model_cfg["hidden_dim"], model_cfg["num_patch_tokens"],
+                        DEVICE, sae_k=resolved["sae_k"])
     dim_mean = torch.load(resolved["dim_mean_path"], weights_only=True, map_location=DEVICE)
-    sae.train()
-    dummy = torch.zeros(model_cfg["num_patch_tokens"], model_cfg["hidden_dim"], device=DEVICE)
-    with torch.no_grad():
-        sae.encode((dummy - dim_mean).float())
-    sae.eval().requires_grad_(False)
     return model, processor, sae, dim_mean
 
 

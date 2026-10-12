@@ -331,6 +331,28 @@ def load_clips_kinetics(
     return result
 
 
+def load_sae_eval(ckpt_path, input_dim: int, tokens_per_clip: int, device: str, sae_k: int | None = None):
+    """BatchTopKSAE in eval mode using the checkpoint's TRAINED running threshold.
+    Replaces the old dummy-zeros warm-up, which set a meaningless threshold (UMT L9:
+    1.27 vs trained 2.11 -> 429 vs 66 active latents/token). Raises on legacy
+    checkpoints saved before the threshold was persisted (sae_layer7_job*, sae_layer_7*)."""
+    from sae import BatchTopKSAE
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
+    if "sae_state_dict" not in ckpt or ckpt.get("running_threshold") is None:
+        raise ValueError(f"{ckpt_path}: no stored running_threshold (legacy checkpoint)")
+    k = ckpt.get("sae_k") or sae_k
+    if k is None:
+        raise ValueError(f"{ckpt_path}: sae_k not in checkpoint and not passed")
+    sd = ckpt["sae_state_dict"]
+    sae = BatchTopKSAE(input_shape=input_dim, nb_concepts=sd["dictionary._weights"].shape[0],
+                       top_k=k * tokens_per_clip, device=device)
+    sae.load_state_dict(sd)
+    sae.running_threshold = torch.as_tensor(ckpt["running_threshold"], device=device)
+    for p in sae.parameters():
+        p.requires_grad_(False)
+    return sae.eval()
+
+
 def make_sae_splice_hook(
     sae: torch.nn.Module, dim_mean: torch.Tensor, cls_offset: int = 0
 ):

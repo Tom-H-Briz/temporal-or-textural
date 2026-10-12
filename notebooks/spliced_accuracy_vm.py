@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from sae import BatchTopKSAE
+from ToT_utils import load_sae_eval
 from ToT_utils import (
     CHECKPOINT_REGISTRY, DATASET_REGISTRY, MODEL_REGISTRY,
     SSv2ClipDataset, _strip_brackets, get_frame_sampler, load_metadata, make_sae_splice_hook,
@@ -81,14 +82,8 @@ def load_sae(cfg: dict, sae_checkpoint: Path, dim_mean: torch.Tensor) -> BatchTo
     # sae_k read from the checkpoint itself, not a fixed CFG default — this sweep mixes
     # k=64 and k=128 checkpoints, and a wrong top_k silently changes reconstruction quality.
     assert isinstance(ckpt, dict) and "sae_k" in ckpt, f"Checkpoint missing sae_k: {ckpt_path}"
-    sae = BatchTopKSAE(input_shape=cfg["hidden_dim"], nb_concepts=nb_concepts,
-                       top_k=ckpt["sae_k"] * cfg["num_patch_tokens"], device=cfg["device"])
-    sae.load_state_dict(state_dict)
-    sae.train()
-    dummy = torch.zeros(cfg["num_patch_tokens"], cfg["hidden_dim"], device=cfg["device"])
-    with torch.no_grad():
-        sae.encode((dummy - dim_mean).float())
-    sae.eval()
+    # trained running threshold from the checkpoint (12/10/26 fix; was a dummy-zeros warm-up)
+    sae = load_sae_eval(ckpt_path, cfg["hidden_dim"], cfg["num_patch_tokens"], cfg["device"])
     print(f"  Loaded {ckpt_path.name}  (nb_concepts={nb_concepts})")
     return sae
 

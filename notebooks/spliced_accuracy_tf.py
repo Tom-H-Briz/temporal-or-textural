@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from sae import BatchTopKSAE
+from ToT_utils import load_sae_eval
 from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, SSv2ClipDataset, _strip_brackets, load_metadata
 
 CFG = {
@@ -71,14 +72,9 @@ def load_sae(cfg: dict, dim_mean: torch.Tensor) -> BatchTopKSAE:
     ckpt        = torch.load(ckpt_path, map_location=cfg["device"], weights_only=True)
     state_dict  = ckpt["sae_state_dict"]
     nb_concepts = state_dict["dictionary._weights"].shape[0]
-    sae = BatchTopKSAE(input_shape=cfg["hidden_dim"], nb_concepts=nb_concepts,
-                       top_k=cfg["sae_k"] * cfg["num_patch_tokens"], device=cfg["device"])
-    sae.load_state_dict(state_dict)
-    sae.train()
-    dummy = torch.zeros(cfg["num_patch_tokens"], cfg["hidden_dim"], device=cfg["device"])
-    with torch.no_grad():
-        sae.encode((dummy - dim_mean).float())
-    sae.eval()
+    # trained running threshold from the checkpoint (12/10/26 fix; was a dummy-zeros warm-up)
+    sae = load_sae_eval(ckpt_path, cfg["hidden_dim"], cfg["num_patch_tokens"], cfg["device"],
+                        sae_k=cfg["sae_k"])
     epoch = ckpt.get("epoch", "?")
     print(f"  Loaded {stem}  (best epoch={epoch})")
     return sae

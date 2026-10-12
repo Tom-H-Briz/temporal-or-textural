@@ -24,7 +24,8 @@ ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sae import BatchTopKSAE
-from ToT_utils import CHECKPOINT_REGISTRY, MODEL_REGISTRY, gather_by_position, sample_frames_ssv2
+from ToT_utils import (CHECKPOINT_REGISTRY, MODEL_REGISTRY, gather_by_position, load_sae_eval,
+                       sample_frames_ssv2)
 
 # ---------------------------------------------------------------------------
 # Output type
@@ -142,24 +143,10 @@ class DFAEngine:
 
         self._dim_mean = torch.load(self.dim_mean_path, weights_only=True).to(device)
 
-        ckpt       = torch.load(self.sae_path, weights_only=True, map_location=device)
-        state_dict = ckpt["sae_state_dict"] if "sae_state_dict" in ckpt else ckpt
-        nb_concepts = state_dict["dictionary._weights"].shape[0]
-        sae_k = ckpt.get("sae_k") or self._sae_k
-        if sae_k is None:
-            raise ValueError(f"sae_k not in checkpoint and not passed to constructor: {self.sae_path}")
-        top_k = sae_k * model_cfg["num_patch_tokens"]
-
-        self._sae = BatchTopKSAE(input_shape=model_cfg["hidden_dim"],
-                                  nb_concepts=nb_concepts, top_k=top_k, device=device)
-        self._sae.load_state_dict(state_dict)
-        self._sae.train()
-        dummy = torch.zeros(model_cfg["num_patch_tokens"], model_cfg["hidden_dim"], device=device)
-        with torch.no_grad():
-            self._sae.encode((dummy - self._dim_mean).float())
-        for p in self._sae.parameters():
-            p.requires_grad_(False)
-        self._sae.eval()
+        # Trained running threshold from the checkpoint (12/10/26 fix). The old dummy-zeros
+        # warm-up set a meaningless threshold; all DFA results before this date used it.
+        self._sae = load_sae_eval(self.sae_path, model_cfg["hidden_dim"],
+                                  model_cfg["num_patch_tokens"], device, sae_k=self._sae_k)
 
         self._hook_handle = model_cfg["layer_getter"](self._model, self._layer) \
             .register_forward_hook(self._splice_hook)
