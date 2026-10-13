@@ -464,14 +464,24 @@ def apply_edit(x9, z, D, feats, dose=2.0):
 def eval_intervention(ctx, feats, dose, route=None):
     """One intervention forward (full, or route-split into one projection), no grad.
     ctx holds the clip's x9, z, D, setup, sp, matches, ti, t_base, vis_base.
-    Returns {delta_<target>: real change} for every target."""
+    Returns ({delta_<target>: real change} for every target, edited vision tokens) — the
+    tokens let callers read attention maps without another tower pass."""
     s = ctx["setup"]
     with torch.no_grad():
         x_int = apply_edit(ctx["x9"], ctx["z"], ctx["D"], feats, dose=dose)
         vis_int = finish_tower(s["model"], x_int)[0]
         vis, alt = (ctx["vis_base"], vis_int) if route is not None else (vis_int, None)
         t_int, _ = targets(vis, s, ctx["sp"], ctx["matches"], ctx["ti"], route=route, alt_vis=alt)
-    return {f"delta_{k}": float(t_int[k] - ctx["t_base"][k]) for k in ctx["t_base"]}
+    d = {f"delta_{k}": float(t_int[k] - ctx["t_base"][k]) for k in ctx["t_base"]}
+    return d, vis_int
+
+
+def att_mass(maps, mask, ti, prefix):
+    """Cross-attention mass (head-mean, query-averaged over real text tokens; Phase 1's
+    pair_pass maps) that the true and partner templates put on the tokens in mask, per
+    fusion layer 9-11. Each map sums to 1 over the 2352 tokens."""
+    return {f"{prefix}_{nm}_L{L}": float(maps[L][r][mask].sum())
+            for L in (9, 10, 11) for nm, r in (("true", ti), ("partner", 1 - ti))}
 
 
 def ids(s):
@@ -488,10 +498,11 @@ def run_clip_interventions(x9, cid, cls, picks, setup, sp, matches, D, cfg):
         t_base, _ = targets(vis_base, setup, sp, matches, ti)
         _, z = setup["sae"].encode((x9[0] - setup["dim_mean"]).float())
     ctx = dict(x9=x9, z=z, D=D, setup=setup, sp=sp, matches=matches, ti=ti,
-               t_base={k: float(v) for k, v in t_base.items()}, vis_base=vis_base)
+               t_base={k: float(v) for k, v in t_base.items()}, vis_base=vis_base,
+               maps_base=pair_pass_ref(vis_base, setup, sp["a"], sp["b"])[1])
     recs = []
     for k_tgt, (top, ctrl) in picks.items():
-        tag = dict(clip_id=cid, target_src=k_tgt)
+        tag = dict(clip_id=cid, a=sp["a"], b=sp["b"], true_class=cls, target_src=k_tgt)
         recs += [{**tag, **r} for r in eval_singles(ctx, top, ctrl)]
         recs += [{**tag, **r} for r in eval_sets(ctx, top, ctrl, cfg)]
     return recs
@@ -499,13 +510,21 @@ def run_clip_interventions(x9, cid, cls, picks, setup, sp, matches, D, cfg):
 
 def eval_singles(ctx, top, ctrl):
     """G3 pool: each selected feature and each mass-matched control alone, at both doses.
-    A feature inactive on this clip gives a zero edit (and delta 0) — expected for gated ones."""
-    recs = []
+    A feature inactive on this clip gives a zero edit (and delta 0) — expected for gated ones.
+    Also records the attention the templates put on the feature's active tokens (tok_frac =
+    share of tokens active; att_base_* at baseline, att_int_* under this edit). At fusion L9
+    the text queries don't depend on the video, so the L9 change is purely the key route."""
+    s, sp, ti, recs = ctx["setup"], ctx["sp"], ctx["ti"], []
     for kind, fs in (("single", top), ("control_single", ctrl)):
         for f in fs:
+            mask = ctx["z"][:, f] > 0
+            base = dict(tok_frac=float(mask.float().mean()), **att_mass(ctx["maps_base"], mask, ti, "att_base"))
             for dose in (1.0, 2.0):
-                recs.append(dict(kind=kind, feats=str(f), k=1, dose=dose, route="full",
-                                 **eval_intervention(ctx, [f], dose)))
+                d, vis_int = eval_intervention(ctx, [f], dose)
+                with torch.no_grad():
+                    maps_int = pair_pass_ref(vis_int, s, sp["a"], sp["b"])[1]
+                recs.append(dict(kind=kind, feats=str(f), k=1, dose=dose, route="full", **d,
+                                 **base, **att_mass(maps_int, mask, ti, "att_int")))
     return recs
 
 
@@ -519,12 +538,12 @@ def eval_sets(ctx, top, ctrl, cfg):
         for kind, fs in (("set", top[:ks]), ("control_set", ctrl[:ks])):
             for dose in (1.0, 2.0):
                 recs.append(dict(kind=kind, feats=",".join(map(str, fs)), k=ks, dose=dose,
-                                 route="full", **eval_intervention(ctx, fs, dose)))
+                                 route="full", **eval_intervention(ctx, fs, dose)[0]))
         for L in cfg["route_layers"]:
             for proj in ("key", "value"):
                 recs.append(dict(kind="route_split", feats=",".join(map(str, top[:ks])), k=ks,
                                  dose=2.0, route=f"L{L}_{proj}",
-                                 **eval_intervention(ctx, top[:ks], 2.0, route=(proj, L))))
+                                 **eval_intervention(ctx, top[:ks], 2.0, route=(proj, L))[0]))
     return recs
 
 
@@ -642,6 +661,49 @@ def agg_g2_completeness(df_int, out_dir):
     return res, g2_route_split(df_int, out_dir)
 
 
+def agg_attention(df_int, out_dir):
+    """Text-side attention on each feature's own tokens (singles, flip dose, clips where the
+    feature is active), per pair, target, feature and true class: tok_frac, baseline mass per
+    template/layer, enrichment = mass / tok_frac (1 = uniform attention), and the change
+    under the flip (datt; at L9 purely the key route). Writes attention_on_features.csv."""
+    s = df_int[df_int.kind.isin(["single", "control_single"]) & (df_int.dose == 2.0)
+               & (df_int.tok_frac > 0)].copy()
+    cols = ["tok_frac"]
+    for L in (9, 10, 11):
+        for nm in ("true", "partner"):
+            base = s[f"att_base_{nm}_L{L}"]
+            s[f"enrich_{nm}_L{L}"] = base / s.tok_frac
+            s[f"datt_{nm}_L{L}"] = s[f"att_int_{nm}_L{L}"] - base
+            cols += [f"att_base_{nm}_L{L}", f"enrich_{nm}_L{L}", f"datt_{nm}_L{L}"]
+    g = s.groupby(["a", "b", "target_src", "kind", "feats", "true_class"])
+    res = g[cols].mean().assign(n_active=g.size()).reset_index()
+    res.to_csv(out_dir / "attention_on_features.csv", index=False)
+    show = ["a", "b", "target_src", "kind", "feats", "true_class", "n_active", "tok_frac",
+            "enrich_true_L9", "datt_true_L9", "enrich_true_L10", "datt_true_L10"]
+    print("\n== Attention on feature tokens ==\n", res[show].round(3).to_string(index=False))
+    return res
+
+
+def agg_additivity(df_int, out_dir):
+    """Overlap between features: real set delta vs the sum of its members' real single deltas
+    (same clip, target, dose). ratio < 1 = redundant (members carry overlapping signal),
+    > 1 = synergistic. Selected vs control sets. Sanity: k = 1 must give ratio exactly 1."""
+    singles = df_int[df_int.kind.isin(["single", "control_single"])]
+    lut = singles.set_index(["clip_id", "target_src", "dose", "feats"]).d_self.to_dict()
+    sets = df_int[df_int.kind.isin(["set", "control_set"])].copy()
+    sets["sum_singles"] = [sum(lut[(r.clip_id, r.target_src, r.dose, str(f))] for f in ids(r.feats))
+                           for r in sets.itertuples()]
+    sets["nonadd"] = (sets.d_self - sets.sum_singles).abs() / (sets.d_self.abs() + 1e-6)
+    res = (sets.groupby(["target_src", "kind", "k", "dose"])
+           .agg(n=("d_self", "size"), mean_set=("d_self", "mean"),
+                mean_sum_singles=("sum_singles", "mean"), median_nonadd=("nonadd", "median"))
+           .reset_index())
+    res["ratio"] = res.mean_set / res.mean_sum_singles.where(res.mean_sum_singles.abs() > 1e-9)
+    res.to_csv(out_dir / "g2_additivity.csv", index=False)
+    print("\n== Set vs sum of singles (overlap) ==\n", res.round(3).to_string(index=False))
+    return res
+
+
 def g2_route_split(df_int, out_dir):
     """G2 split: signed fraction of each full-flip set effect carried by the key-only and the
     value-only patch of all fusion layers; nonadditive = 1 - key - value (key x value
@@ -659,7 +721,8 @@ def g2_route_split(df_int, out_dir):
 
 
 def run_aggregate(cfg):
-    """Stage E: aggregate G2 completeness, G3 agreement, and G4 causal / route tables.
+    """Stage E: aggregate G2 completeness + additivity, G3 agreement, G4 causal / route
+    tables, and attention on feature tokens.
     d_self = each row's delta on the target its features were selected by."""
     out = cfg["out_dir"]
     df_int = pd.read_parquet(out / "per_clip_interventions.parquet")
@@ -667,6 +730,8 @@ def run_aggregate(cfg):
     agg_g3_agreement(df_int, out)
     agg_g4_causal_and_routes(df_int, out)
     agg_g2_completeness(df_int, out)
+    agg_additivity(df_int, out)
+    agg_attention(df_int, out)
 
 
 def main():
