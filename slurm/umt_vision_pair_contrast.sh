@@ -24,7 +24,9 @@ export MODEL=${MODEL:-umt}
 # extractor silently falls back to the default 45,43 up/down dir (two such jobs racing on
 # the same sparse/ files corrupt npz). Submit as:
 #   sbatch --export=ALL,PAIR_A=42,PAIR_B=40 slurm/umt_vision_pair_contrast.sh
-export PAIR="${PAIR:-${PAIR_A:-45},${PAIR_B:-43}}"
+# PAIR_A/PAIR_B (explicit, per-submission) beat a stale exported PAIR left in the shell.
+[ -n "$PAIR_A" ] && export PAIR="${PAIR_A},${PAIR_B:-43}"
+export PAIR="${PAIR:-45,43}"
 echo "PAIR=$PAIR MODEL=$MODEL MAX_CLIPS=$MAX_CLIPS AGG_ONLY=${AGG_ONLY:-0}"
 
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
