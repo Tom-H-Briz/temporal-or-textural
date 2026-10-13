@@ -326,6 +326,15 @@ def run_g0(cfg):
     pd.DataFrame(rows).to_csv(cfg["out_dir"] / "g0_summary.csv", index=False)
     pd.set_option("display.width", 200)
     print(pd.DataFrame(rows).round(4).to_string(index=False))
+    from stage2_sae.train_sae_umt_fused import pairs_2way_fused
+    pairs = []
+    for L in cfg["sae_layers"]:
+        df_l, _ = pairs_2way_fused(raw, torch.stack(spl[L]).numpy(), list(y))
+        df_l.insert(0, "layer", L)
+        pairs.append(df_l)
+    if pairs:
+        pd.concat(pairs).to_csv(cfg["out_dir"] / "g0_pairs.csv", index=False)
+        print(pd.concat(pairs).round(4).to_string(index=False))
 
 
 def run_t1(cfg):

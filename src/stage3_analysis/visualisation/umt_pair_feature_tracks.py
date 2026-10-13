@@ -36,6 +36,9 @@ CFG = {
 }
 CFG["in_dir"] = ROOT / "outputs/analysis" / ("umt_vision_pair_contrast" + (
     "" if CFG["pair"] == (45, 43) else f"_{CFG['pair'][0]}_{CFG['pair'][1]}"))
+# centroid axis for the side track panel: vertical (row) only makes sense for up/down;
+# closer/apart-type pairs move horizontally in the image plane
+CFG["track_axis"] = "row" if CFG["pair"] == (45, 43) else "col"
 
 
 def load_frames(clip_id, cfg):
@@ -100,15 +103,17 @@ def draw_row(axes, frames, maps, sign, norm, label, cfg):
         ax.set_xticks([]); ax.set_yticks([])
         if t == 0:
             ax.set_ylabel(label, fontsize=7, rotation=0, ha="right", va="center")
-    return r
+    return c if cfg["track_axis"] == "col" else r
 
 
 def draw_track(ax, r_real, r_rev, cfg):
-    """Centroid row vs frame (rows inverted so 'up' is up), R solid, Rev dashed."""
+    """Centroid (row for up/down, col otherwise) vs frame; R solid, Rev dashed. Rows are
+    inverted so 'up' is up; columns ascend left->right of the image."""
     t = np.arange(cfg["n_frames"])
     ax.plot(t, r_real, "-o", ms=3, color="tab:blue", label="R")
     ax.plot(t, r_rev, "--o", ms=3, color="tab:orange", label="Rev")
-    ax.set_ylim(cfg["grid"] - 0.5, -0.5)
+    ax.set_ylim(cfg["grid"] - 0.5, -0.5) if cfg["track_axis"] == "row" else ax.set_ylim(-0.5, cfg["grid"] - 0.5)
+    ax.set_ylabel(f"centroid {cfg['track_axis']}", fontsize=6)
     ax.set_xticks([0, 11]); ax.tick_params(labelsize=6)
 
 
@@ -131,9 +136,11 @@ def make_figure(f, ft, cfg):
         axes[2 * i + 1, -1].axis("off")
     axes[0, -1].legend(fontsize=6, loc="upper right")
     row = ft.set_index("feature").loc[f]
+    # optional columns (track/slope) exist only when the vertical motion-flow step ran
+    extra = "".join(f"  track {row[k]:.2f}" for k in ("track_score",) if k in row.index)
+    extra += "".join(f"  slope {k} {row[k]:+.2f}" for k in ("slope_up", "slope_down") if k in row.index)
     fig.suptitle(f"UMT vision L9 feature {f}  |  evidence {row.evidence:.3f}  bias {row.bias:.3f}  "
-                 f"AUROC(up>down) {row.auroc:.2f}  track {row.track_score:.2f}  "
-                 f"slope up/down {row.slope_up:+.2f}/{row.slope_down:+.2f}", fontsize=10)
+                 f"AUROC(A>B) {row.auroc:.2f}{extra}", fontsize=10)
     fig.subplots_adjust(left=0.07, right=0.95, top=0.95, bottom=0.01, wspace=0.03, hspace=0.06)
     # dedicated colorbar axis (feature_vis_vm: never ax=axes, it fights subplots_adjust)
     cax = fig.add_axes([0.965, 0.35, 0.008, 0.3])
