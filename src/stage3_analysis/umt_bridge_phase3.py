@@ -162,26 +162,33 @@ def span_codes(sae, dm, h_row, span):
     return sae(h_row[span] - dm)[1].mean(0)
 
 
+def match_terms(states, setup, sp, matches, ti, L):
+    """Per-text-feature terms sign_f * (codes_true[f] - codes_partner[f]) over the pair-layer's
+    top match features, in matches' rank order (None if the pair has none at L). T_match(L)
+    is their sum; kept separate so interventions can map vision -> individual text feature."""
+    fs = matches.get((f"{sp['a']}_{sp['b']}", L), [])
+    if not fs:
+        return None
+    h = states[L]
+    idx = torch.tensor([f for f, _ in fs], device=h.device)
+    sgn = torch.tensor([s for _, s in fs], device=h.device, dtype=h.dtype)
+    tsae, dm = setup["tsaes"][L], setup["tdm"][L]
+    ct = span_codes(tsae, dm, h[ti], sp[f"diff_{'a' if ti == 0 else 'b'}"])
+    cp = span_codes(tsae, dm, h[1 - ti], sp[f"diff_{'b' if ti == 0 else 'a'}"])
+    return sgn * (ct[idx] - cp[idx])
+
+
 def targets(vis_final, setup, sp, matches, ti, route=None, alt_vis=None):
     """The three Phase 3 targets from final vision tokens. ti indexes the TRUE template
     (rows are [a, b]); T_vtm = itm(true) - itm(partner); T_match(L) = sum_f sign_f
     (codes_true[f] - codes_partner[f]) over that pair-layer's top match features."""
-    w, tsaes, tdm = setup["w"], setup["tsaes"], setup["tdm"]
-    states, itm = fusion_pair(vis_final, setup["text"], w, sp["a"], sp["b"],
+    states, itm = fusion_pair(vis_final, setup["text"], setup["w"], sp["a"], sp["b"],
                               route=route, alt_vis=alt_vis)
-    t_row, p_row = ti, 1 - ti
     out = {"T_vtm": itm[ti] - itm[1 - ti]}
     for L in (9, 10):
-        fs = matches.get((f"{sp['a']}_{sp['b']}", L), [])
+        terms = match_terms(states, setup, sp, matches, ti, L)
         key = f"T_match{L}" if L == 9 else "T_match"
-        if not fs:
-            out[key] = torch.zeros((), device=itm.device)
-            continue
-        idx = torch.tensor([f for f, _ in fs], device=itm.device)
-        sgn = torch.tensor([s for _, s in fs], device=itm.device, dtype=torch.float32)
-        ct = span_codes(tsaes[L], tdm[L], states[L][t_row], sp[f"diff_{'a' if ti == 0 else 'b'}"])
-        cp = span_codes(tsaes[L], tdm[L], states[L][p_row], sp[f"diff_{'b' if ti == 0 else 'a'}"])
-        out[key] = (sgn * (ct[idx] - cp[idx])).sum()
+        out[key] = terms.sum() if terms is not None else torch.zeros((), device=itm.device)
     return out, states
 
 
@@ -475,9 +482,22 @@ def eval_intervention(ctx, feats, dose, route=None):
         x_int = apply_edit(ctx["x9"], ctx["z"], ctx["D"], feats, dose=dose)
         vis_int = finish_tower(s["model"], x_int)[0]
         vis, alt = (ctx["vis_base"], vis_int) if route is not None else (vis_int, None)
-        t_int, _ = targets(vis, s, ctx["sp"], ctx["matches"], ctx["ti"], route=route, alt_vis=alt)
+        t_int, states = targets(vis, s, ctx["sp"], ctx["matches"], ctx["ti"], route=route, alt_vis=alt)
+        tf = tf_values(states, ctx)
     d = {f"delta_{k}": float(t_int[k] - ctx["t_base"][k]) for k in ctx["t_base"]}
+    d.update({k: v - ctx["tf_base"][k] for k, v in tf.items()})
     return d, vis_int
+
+
+def tf_values(states, ctx):
+    """{tf<L>_r<j>: term} — each match feature's sign_f * (true - partner) code difference,
+    j = its rank in the pair-layer's Phase 1 match list (feature ids: text_match_features.csv)."""
+    out = {}
+    for L in (9, 10):
+        terms = match_terms(states, ctx["setup"], ctx["sp"], ctx["matches"], ctx["ti"], L)
+        if terms is not None:
+            out.update({f"tf{L}_r{j}": float(v) for j, v in enumerate(terms)})
+    return out
 
 
 def att_mass(maps, mask, ti, prefix):
@@ -504,6 +524,8 @@ def run_clip_interventions(x9, cid, cls, picks, setup, sp, matches, D, cfg):
     ctx = dict(x9=x9, z=z, D=D, setup=setup, sp=sp, matches=matches, ti=ti,
                t_base={k: float(v) for k, v in t_base.items()}, vis_base=vis_base,
                maps_base=pair_pass_ref(vis_base, setup, sp["a"], sp["b"])[1])
+    with torch.no_grad():
+        ctx["tf_base"] = tf_values(targets(vis_base, setup, sp, matches, ti)[1], ctx)
     recs = []
     for k_tgt, (top, ctrl) in picks.items():
         tag = dict(clip_id=cid, a=sp["a"], b=sp["b"], true_class=cls, target_src=k_tgt)
@@ -512,17 +534,31 @@ def run_clip_interventions(x9, cid, cls, picks, setup, sp, matches, D, cfg):
     return recs
 
 
+def feature_location(z, f, n_frames=12, grid=14):
+    """Where feature f fires on this clip: activation mass per frame (fr0..fr11; tokens are
+    frame-major, as in UMT's keep_temporal pooling) and the activation-weighted centroid
+    (cy, cx) on the 14x14 patch grid (NaN if inactive)."""
+    a = z[:, f].float().view(n_frames, grid, grid)
+    tot, pos = float(a.sum()), torch.arange(grid, device=a.device, dtype=a.dtype)
+    out = {f"fr{t}": float(v) for t, v in enumerate(a.sum((1, 2)))}
+    out["cy"] = float((a.sum((0, 2)) * pos).sum()) / tot if tot > 0 else float("nan")
+    out["cx"] = float((a.sum((0, 1)) * pos).sum()) / tot if tot > 0 else float("nan")
+    return out
+
+
 def eval_singles(ctx, top, ctrl):
     """G3 pool: each selected feature and each mass-matched control alone, at both doses.
     A feature inactive on this clip gives a zero edit (and delta 0) — expected for gated ones.
     Also records the attention the templates put on the feature's active tokens (tok_frac =
     share of tokens active; att_base_* at baseline, att_int_* under this edit). At fusion L9
-    the text queries don't depend on the video, so the L9 change is purely the key route."""
+    the text queries don't depend on the video, so the L9 change is purely the key route.
+    feature_location adds where it fires (per-frame mass, spatial centroid)."""
     s, sp, ti, recs = ctx["setup"], ctx["sp"], ctx["ti"], []
     for kind, fs in (("single", top), ("control_single", ctrl)):
         for f in fs:
             mask = ctx["z"][:, f] > 0
-            base = dict(tok_frac=float(mask.float().mean()), **att_mass(ctx["maps_base"], mask, ti, "att_base"))
+            base = dict(tok_frac=float(mask.float().mean()), **feature_location(ctx["z"], f),
+                        **att_mass(ctx["maps_base"], mask, ti, "att_base"))
             for dose in (1.0, 2.0):
                 d, vis_int = eval_intervention(ctx, [f], dose)
                 with torch.no_grad():
@@ -575,6 +611,9 @@ def run_intervene(cfg, setup):
             records += run_clip_interventions(x9[i:i + 1], cid, cls, picks[(a, b)], setup,
                                               spans[f"{a}_{b}"], matches, D, cfg)
     pd.DataFrame(records).to_parquet(cfg["out_dir"] / "per_clip_interventions.parquet", index=False)
+    tmf = [dict(pair=key, layer=L, rank=j, text_feature=f, sign=sg)
+           for (key, L), fs in matches.items() for j, (f, sg) in enumerate(fs)]
+    pd.DataFrame(tmf).to_csv(cfg["out_dir"] / "text_match_features.csv", index=False)
     print(f"Interventions: {len(sampled)} clips ({len(records)} rows) in {time.time() - t0:.0f}s")
 
 
@@ -665,6 +704,84 @@ def agg_g2_completeness(df_int, out_dir):
     return res, g2_route_split(df_int, out_dir)
 
 
+def text_feature_names():
+    """(a, b, layer, text_feature, top_templates) for every Phase 1 match feature, so the
+    vision -> text map can be read without opening t1_decomp_top.csv."""
+    from stage3_analysis.umt_text_geometry import CFG as GEOM_CFG
+    name2pair = {n: (a, b) for a, b, n in GEOM_CFG["pairs"]}
+    t = pd.read_csv(ROOT / "outputs/analysis/umt_vision_text_bridge/t1_decomp_top.csv")
+    t = t[(t.kind == "match") & (t.pos == "diff")].copy()
+    t["a"], t["b"] = zip(*t.pair.map(name2pair))
+    return t.rename(columns={"feature_idx": "text_feature"})[
+        ["a", "b", "layer", "text_feature", "top_templates"]].drop_duplicates()
+
+
+def agg_vision_text_map(df_int, out_dir):
+    """The bridge: mean change in each text match feature's (true - partner) term when one
+    vision feature is flipped (dose 2, clips where it is active), by true class.
+    Negative = the flip removes that text feature's evidence for the true template."""
+    s = df_int[df_int.kind.isin(["single", "control_single"]) & (df_int.dose == 2.0) & (df_int.tok_frac > 0)]
+    keys = ["a", "b", "target_src", "kind", "feats", "true_class"]
+    long = s.melt(id_vars=keys, value_vars=[c for c in s.columns if c.startswith("tf")],
+                  var_name="col", value_name="delta").dropna(subset=["delta"])
+    long["layer"] = long.col.str.extract(r"^tf(\d+)_")[0].astype(int)
+    long["rank"] = long.col.str.extract(r"_r(\d+)$")[0].astype(int)
+    res = long.groupby(keys + ["layer", "rank"]).delta.agg(mean_delta="mean", n="size").reset_index()
+    tmf = pd.read_csv(out_dir / "text_match_features.csv")
+    tmf["a"], tmf["b"] = zip(*tmf.pair.map(lambda p: tuple(map(int, p.split("_")))))
+    res = (res.merge(tmf[["a", "b", "layer", "rank", "text_feature"]], on=["a", "b", "layer", "rank"])
+           .merge(text_feature_names(), on=["a", "b", "layer", "text_feature"], how="left"))
+    res.to_csv(out_dir / "vision_text_map.csv", index=False)
+    top = (res[res.kind == "single"].assign(m=res.mean_delta.abs()).sort_values("m", ascending=False)
+           .drop_duplicates(["a", "b", "feats", "true_class", "layer", "text_feature"]))  # same edit under both targets
+    print("\n== Vision -> text map (strongest single-feature links) ==\n",
+          top.groupby(["a", "b"]).head(3)[["a", "b", "feats", "true_class", "layer", "text_feature",
+                                          "mean_delta", "n"]].round(3).to_string(index=False))
+    return res
+
+
+def class_profiles(s):
+    """Per (a, b, target, kind, feature, class): mean per-clip-normalised frame profile (12,),
+    mean centroid, token share, n. Input: singles rows at one dose, active clips only."""
+    fr = [f"fr{t}" for t in range(12)]
+    s = s.copy()
+    s[fr] = s[fr].to_numpy() / s[fr].sum(axis=1).to_numpy()[:, None]
+    s["is_a"] = s.true_class == s.a
+    g = s.groupby(["a", "b", "target_src", "kind", "feats", "is_a"])
+    return g[fr + ["cy", "cx", "tok_frac"]].mean().assign(n=g.size()).reset_index(), fr
+
+
+def agg_location(df_int, out_dir):
+    """Same input, different use? For each feature, compare WHERE it fires on A vs B clips:
+    frame-profile correlation, centroid shift (patches), token share; joined with the
+    selection's ratio (< 0 = sign-reversed contribution). High frame_corr + small shift +
+    similar token share on a reversed feature = the model reads the same input differently."""
+    s = df_int[df_int.kind.isin(["single", "control_single"]) & (df_int.dose == 2.0) & (df_int.tok_frac > 0)]
+    p, fr = class_profiles(s)
+    A = p[p.is_a].set_index(["a", "b", "target_src", "kind", "feats"])
+    B = p[~p.is_a].set_index(["a", "b", "target_src", "kind", "feats"])
+    A, B = A.align(B, join="inner", axis=0)
+    res = pd.DataFrame({"n_A": A.n, "n_B": B.n, "tok_A": A.tok_frac, "tok_B": B.tok_frac,
+                        "frame_corr": [np.corrcoef(x, y)[0, 1] for x, y in zip(A[fr].values, B[fr].values)],
+                        "peak_A": A[fr].values.argmax(1), "peak_B": B[fr].values.argmax(1),
+                        "d_cy": (A.cy - B.cy).abs(), "d_cx": (A.cx - B.cx).abs()}).reset_index()
+    return location_summary(res, out_dir)
+
+
+def location_summary(res, out_dir):
+    """Join the selection's ratio, write feature_location_by_class.csv, print medians by type."""
+    sel = pd.read_csv(out_dir / "pair_selection.csv")[["a", "b", "target", "feature", "ratio"]]
+    res["feature"] = res.feats.astype(int)
+    res = res.merge(sel.rename(columns={"target": "target_src"}), on=["a", "b", "target_src", "feature"], how="left")
+    res["type"] = np.where(res.kind == "control_single", "control",
+                           np.where(res.ratio < 0, "reversed", "silent"))
+    res["tok_ratio"] = res[["tok_A", "tok_B"]].max(axis=1) / res[["tok_A", "tok_B"]].min(axis=1).clip(lower=1e-3)
+    res.to_csv(out_dir / "feature_location_by_class.csv", index=False)
+    print("\n== Where features fire, A vs B clips ==\n", res.groupby("type")[
+        ["frame_corr", "d_cy", "d_cx", "tok_ratio"]].median().assign(n=res.groupby("type").size()).round(3))
+    return res
+
+
 def agg_attention(df_int, out_dir):
     """Text-side attention on each feature's own tokens (singles, flip dose, clips where the
     feature is active), per pair, target, feature and true class: tok_frac, baseline mass per
@@ -736,29 +853,31 @@ def run_aggregate(cfg):
     agg_g2_completeness(df_int, out)
     agg_additivity(df_int, out)
     agg_attention(df_int, out)
+    agg_vision_text_map(df_int, out)
+    agg_location(df_int, out)
 
 
 def main():
     cfg = CFG
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
-    stage = cfg["stage"]
-    print(f"Phase 3: stage={stage} device={cfg['device']} clips_cap={cfg['max_clips']}")
-    if stage in ("g1b", "all"):
-        setup = phase3_setup(cfg)
+    # STAGE is one stage, "all", or several joined by "+" (e.g. intervene+aggregate);
+    # "+" rather than "," because sbatch --export splits on commas.
+    stages = {"g1b", "ap", "select", "intervene", "aggregate"} if cfg["stage"] == "all" \
+        else set(cfg["stage"].split("+"))
+    print(f"Phase 3: stages={sorted(stages)} device={cfg['device']} clips_cap={cfg['max_clips']}")
+    setup = phase3_setup(cfg) if stages & {"g1b", "ap", "intervene"} else None
+    if "g1b" in stages:
         run_g1b(cfg, setup)
-        s64 = g1b_check_b(cfg, setup)
-        run_g1b_fd(cfg, setup, s64)
-    if stage in ("ap", "all"):
-        setup = phase3_setup(cfg) if stage != "all" else setup
+        run_g1b_fd(cfg, setup, g1b_check_b(cfg, setup))
+    if "ap" in stages:
         run_ap(cfg, setup)
-    if stage == "selcheck":                      # CPU validation of selection on on-file VTC DFA
+    if "selcheck" in stages:                     # CPU validation of selection on on-file VTC DFA
         check_selection_vs_vtc(cfg)
-    if stage in ("select", "all"):
+    if "select" in stages:
         run_select(cfg)
-    if stage in ("intervene", "all"):
-        setup = phase3_setup(cfg) if stage != "all" else setup
+    if "intervene" in stages:
         run_intervene(cfg, setup)
-    if stage in ("aggregate", "all"):
+    if "aggregate" in stages:
         run_aggregate(cfg)
 
 
