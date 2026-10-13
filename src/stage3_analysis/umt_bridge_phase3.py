@@ -379,6 +379,10 @@ def check_selection_vs_vtc(cfg, pairs=((45, 43), (42, 40), (37, 36))):
     picked = {}
     for a, b in pairs:
         d = ROOT / "outputs/analysis" / ("umt_vision_pair_contrast" + ("" if (a, b) == (45, 43) else f"_{a}_{b}"))
+        need = [d / f for f in ("clip_feature_arrays_R.npz", "feature_table.csv", "per_clip.parquet")]
+        if not all(p.exists() for p in need):
+            print(f"VTC cross-check: skipping {a}_{b} (no contrast tables in {d.name})")
+            continue                     # a cross-check only: never block the run
         R, ft = np.load(d / "clip_feature_arrays_R.npz"), pd.read_csv(d / "feature_table.csv")
         lab = pd.read_parquet(d / "per_clip.parquet").drop_duplicates("clip_id").set_index("clip_id")
         is_a = (lab.loc[[str(c) for c in R["clip_id"]], "true_class"] == a).to_numpy()
