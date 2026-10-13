@@ -18,8 +18,9 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "notebooks"), str(ROOT / "src" / "stage3_analysis" / "visualisation")]
+from umt_pair_feature_tracks import CFG as _VCFG   # same pair / in_dir as the visualiser
 CFG = {
-    "in_dir":     ROOT / "outputs/analysis/umt_vision_pair_contrast",
+    "in_dir":     _VCFG["in_dir"],
     "move_px":    1.0,    # |flow| (px/frame) above which a pixel counts as moving
 }
 

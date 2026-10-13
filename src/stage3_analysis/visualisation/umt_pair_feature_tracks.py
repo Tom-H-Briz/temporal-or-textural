@@ -10,6 +10,7 @@ Reads the stored sparse codes (umt_vision_pair_contrast.py), so no model is need
 are decoded locally with UMT's own 'middle' sampling and squashed to 224 like UMTProcessor.
 Usage: uv run --with easydict --with "timm==0.4.12" python src/stage3_analysis/visualisation/umt_pair_feature_tracks.py
 """
+import os
 import sys
 from pathlib import Path
 
@@ -26,13 +27,15 @@ sys.path[:0] = [str(ROOT / "notebooks"), str(Path(__file__).parent)]
 from feature_vis_vm import _overlay   # shared signed-overlay blend (RdBu_r, alpha 0.45)
 
 CFG = {
-    "in_dir":    ROOT / "outputs/analysis/umt_vision_pair_contrast",
+    # UMT only. PAIR="a,b" as the extractor (default 45,43 = up/down; others get a _a_b dir)
+    "pair":      tuple(int(x) for x in os.environ.get("PAIR", "45,43").split(",")),
     "video_dir": ROOT / "data/ssv2_val_set",
-    "pair":      (45, 43),                      # (up, down)
     "features":  [4250, 393, 6127, 3434, 2782, 2642, 5473, 815, 5901],
     "n_clips":   3,                             # per class
     "n_frames":  12, "grid": 14, "img": 224,
 }
+CFG["in_dir"] = ROOT / "outputs/analysis" / ("umt_vision_pair_contrast" + (
+    "" if CFG["pair"] == (45, 43) else f"_{CFG['pair'][0]}_{CFG['pair'][1]}"))
 
 
 def load_frames(clip_id, cfg):
@@ -121,7 +124,7 @@ def make_figure(f, ft, cfg):
     fig, axes = plt.subplots(2 * len(data), cfg["n_frames"] + 1, figsize=(17, 1.45 * 2 * len(data)),
                              gridspec_kw={"width_ratios": [1] * cfg["n_frames"] + [1.6]})
     for i, (cid, cls, frames, (m, s), (mv, sv)) in enumerate(data):
-        name = "UP" if cls == cfg["pair"][0] else "DOWN"
+        name = "A" if cls == cfg["pair"][0] else "B"
         r_real = draw_row(axes[2 * i, :-1], frames, m, s, norm, f"{name} {cid}\nR  sign {int(s):+d}", cfg)
         r_rev = draw_row(axes[2 * i + 1, :-1], frames[::-1], mv, sv, norm, f"Rev  sign {int(sv):+d}", cfg)
         draw_track(axes[2 * i, -1], r_real, r_rev, cfg)

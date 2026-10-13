@@ -27,7 +27,8 @@ CFG = {
     # MODEL=umt (default) | videomae | timesformer. Shuffle per backbone convention:
     # VM C1 (tubelet-preserving; plain C tears tubelets), UMT/TF C (native-frame shuffle).
     "model":           os.environ.get("MODEL", "umt"),
-    "pair":            (45, 43),        # (A, B) = (moving something up, moving something down)
+    # PAIR="a,b" (class ids) for other pairs; default (45, 43) = moving something up / down
+    "pair":            tuple(int(x) for x in os.environ.get("PAIR", "45,43").split(",")),
     "layer":           9,
     "labels_path":     os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
@@ -47,6 +48,8 @@ def model_setup(cfg):
     cfg["sae_path"], cfg["dim_mean_path"] = res["sae_path"], res["dim_mean_path"]
     cfg["conditions"] = ("R", "C1" if m == "videomae" else "C", "Rev")
     name = "umt_vision_pair_contrast" if m == "umt" else f"{m}_vision_pair_contrast"
+    if cfg["pair"] != (45, 43):                      # other pairs never overwrite up/down
+        name += f"_{cfg['pair'][0]}_{cfg['pair'][1]}"
     cfg["out_dir"] = ROOT / "outputs/analysis" / name
     return cfg
 

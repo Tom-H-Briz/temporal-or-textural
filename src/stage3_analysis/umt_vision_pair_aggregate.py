@@ -22,9 +22,11 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 _M = os.environ.get("MODEL", "umt")   # umt | videomae | timesformer (as the extractor)
+_PAIR = tuple(int(x) for x in os.environ.get("PAIR", "45,43").split(","))
+_SUF = "" if _PAIR == (45, 43) else f"_{_PAIR[0]}_{_PAIR[1]}"   # matches the extractor's out_dir
 CFG = {
-    "in_dir":      ROOT / "outputs/analysis" / ("umt_vision_pair_contrast" if _M == "umt" else f"{_M}_vision_pair_contrast"),
-    "pair":        (45, 43),
+    "in_dir":      ROOT / "outputs/analysis" / (("umt_vision_pair_contrast" if _M == "umt" else f"{_M}_vision_pair_contrast") + _SUF),
+    "pair":        _PAIR,
     "conditions":  ("R", "C1" if _M == "videomae" else "C", "Rev"),   # [1] = the shuffle condition
     "n_frames":    12 if _M == "umt" else 8,      # temporal positions (VM tubelets, TF/UMT frames)
     "grid": 14, "n_latents": 6144,
