@@ -741,9 +741,10 @@ def agg_vision_text_map(df_int, out_dir):
 
 
 def class_profiles(s):
-    """Per (a, b, target, kind, feature, class): mean per-clip-normalised frame profile (12,),
-    mean centroid, token share, n. Input: singles rows at one dose, active clips only."""
-    fr = [f"fr{t}" for t in range(12)]
+    """Per (a, b, target, kind, feature, class): mean per-clip-normalised position profile
+    (fr0.., however many temporal positions the model has: UMT 12 frames, VM 8 tubelets,
+    TF 8 frames), mean centroid, token share, n. Input: singles rows at one dose, active clips."""
+    fr = sorted([c for c in s.columns if c.startswith("fr") and c[2:].isdigit()], key=lambda c: int(c[2:]))
     s = s.copy()
     s[fr] = s[fr].to_numpy() / s[fr].sum(axis=1).to_numpy()[:, None]
     s["is_a"] = s.true_class == s.a
