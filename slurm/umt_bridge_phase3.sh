@@ -20,6 +20,8 @@ export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
 export STAGE=${STAGE:-all}
+export LAYER=${LAYER:-9}              # vision SAE layer; non-9 writes to phase3_L<layer>/
+echo "STAGE=$STAGE LAYER=$LAYER"
 export MAX_CLIPS=${MAX_CLIPS:-0}
 export G34_CLIPS=${G34_CLIPS:-300}
 

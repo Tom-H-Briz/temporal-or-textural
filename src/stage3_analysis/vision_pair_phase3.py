@@ -151,7 +151,7 @@ def run_select(cfg):
     """Stage 2 (CPU): intervention subset = the pair's first g34_clips by clip id (UMT Phase 3's
     rule, so clips are largely shared across backbones; capped at 1/3 for smoke runs); select on
     the rest with umt_bridge_phase3's discriminative + mass_controls, contribution = -AP/2."""
-    from umt_bridge_phase3 import discriminative, load_ap, load_zsum, mass_controls
+    from umt_bridge_phase3 import discriminative, largest, load_ap, load_zsum, mass_controls
     (a, b), out = cfg["pair"], cfg["out_dir"]
     df = pd.read_parquet(out / "per_clip_ap.parquet").sort_values("clip_id")
     n = min(cfg["g34_clips"], len(df) // 3)
@@ -160,23 +160,25 @@ def run_select(cfg):
     ap = np.stack([load_ap(out, c)["ap_T_cls"] for c in rest.clip_id])
     mass = np.stack([load_zsum(out, c) for c in rest.clip_id]).mean(0)
     is_a = (rest.true_class == a).to_numpy()
-    sel, tab = discriminative(-0.5 * ap * np.where(is_a, 1.0, -1.0)[:, None], is_a,
-                              cfg["n_sel"], cfg["max_other"])
+    contrib = -0.5 * ap * np.where(is_a, 1.0, -1.0)[:, None]
+    sel, tab = discriminative(contrib, is_a, cfg["n_sel"], cfg["max_other"])
     ctrl, gap = mass_controls(mass, sel, tab.ratio.to_numpy(), cfg["max_other"])
+    mx, mx_share = largest(contrib, len(sel))                    # maximum-damage reference
     tab.loc[sel].assign(a=a, b=b, target="T_cls", rank=np.arange(len(sel)), control=ctrl, mass=mass[sel],
-                        control_mass=mass[ctrl], mass_gap=gap, n_a=int(is_a.sum()), n_b=int((~is_a).sum())
-                        ).to_csv(out / "pair_selection.csv", index=False)
+                        control_mass=mass[ctrl], mass_gap=gap, max_feature=mx, max_share=mx_share,
+                        n_a=int(is_a.sum()), n_b=int((~is_a).sum())).to_csv(out / "pair_selection.csv", index=False)
     print(f"selected {sel.tolist()}  controls {ctrl.tolist()}  max mass gap {gap.max():.2f}", flush=True)
 
 
-def edit_list(sel, ctrl, cfg):
+def edit_list(sel, ctrl, mx, cfg):
     """[(kind, feats, k, dose)]: each selected feature and control alone (G3 pool), and top[:k]
-    vs ctrl[:k] sets (G4, additivity), all at dose 1 (ablate) and 2 (flip)."""
+    vs ctrl[:k] vs the k largest contributors mx[:k] (maximum-damage reference) as sets, all
+    at dose 1 (ablate) and 2 (flip)."""
     out = [(kind, [f], 1, d) for kind, fs in (("single", sel), ("control_single", ctrl))
            for f in fs for d in (1.0, 2.0)]
     for k in cfg["set_sizes"]:
         if k <= len(sel):
-            out += [(kind, fs[:k], k, d) for kind, fs in (("set", sel), ("control_set", ctrl))
+            out += [(kind, fs[:k], k, d) for kind, fs in (("set", sel), ("control_set", ctrl), ("max_set", mx))
                     for d in (1.0, 2.0)]
     return out
 
@@ -206,13 +208,13 @@ def location(z0, f, model):
     return out
 
 
-def run_clip(st, pv, cid, cls, sel, ctrl, cfg):
+def run_clip(st, pv, cid, cls, sel, ctrl, mx, cfg):
     """Every edit on one clip, as records in umt_bridge_phase3's column layout (target_src
     T_cls, delta_T_cls; singles carry location columns) so its aggregators apply unchanged."""
     a, b = cfg["pair"]
     t, p = (a, b) if cls == a else (b, a)
     T_base, x, z0 = encode_clip(st, pv, t, p)
-    edits = edit_list(sel, ctrl, cfg)
+    edits = edit_list(sel, ctrl, mx, cfg)
     recs = []
     for (kind, fs, k, dose), d in zip(edits, eval_edits(st, pv, x, z0, edits, t, p, T_base, cfg["edit_batch"])):
         rec = dict(clip_id=cid, a=a, b=b, true_class=cls, target_src="T_cls", kind=kind,
@@ -226,11 +228,11 @@ def run_intervene(cfg, st):
     from umt_vision_pair_contrast import clip_loader
     out = cfg["out_dir"]
     picks = pd.read_csv(out / "pair_selection.csv").sort_values("rank")
-    sel, ctrl = picks.feature.tolist(), picks.control.tolist()
+    sel, ctrl, mx = picks.feature.tolist(), picks.control.tolist(), picks.max_feature.tolist()
     g34 = pd.read_csv(out / "g34_clips.csv", dtype={"clip_id": str})
     rows, recs, t0 = list(zip(g34.clip_id, g34.true_class.astype(int))), [], time.time()
     for (cid, cls), (pv, _) in zip(rows, clip_loader(rows, cfg, "R", st["processor"])):
-        recs += run_clip(st, pv.to(cfg["device"]), cid, cls, sel, ctrl, cfg)
+        recs += run_clip(st, pv.to(cfg["device"]), cid, cls, sel, ctrl, mx, cfg)
     pd.DataFrame(recs).to_parquet(out / "per_clip_interventions.parquet", index=False)
     print(f"interventions: {len(rows)} clips, {len(recs)} edits in {time.time() - t0:.0f}s", flush=True)
 

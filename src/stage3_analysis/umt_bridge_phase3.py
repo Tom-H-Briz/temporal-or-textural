@@ -48,7 +48,8 @@ CFG = {
     "tokens_path":  ROOT / "notebooks/umt_ssv2_template_tokens.json",
     "pairs":        [(6, 171), (46, 5), (14, 172), (168, 165),
                      (45, 43), (44, 41), (42, 40), (37, 36)],
-    "vis_layer":    9, "sae_k": 64, "job_label": "7ep",           # vision source SAE
+    "vis_layer":    int(os.environ.get("LAYER", 9)),              # vision source SAE layer (block index)
+    "sae_k": 64, "job_label": "7ep",
     "top_n_ap":     20,       # per-clip top-|AP| list, stored as a diagnostic only
     # Per-pair discriminative selection (replaces per-clip top-|AP|, agreed 13/10)
     "n_sel":        10,       # verb-evidence features per (pair, target)
@@ -58,6 +59,8 @@ CFG = {
     "batch_size":   8, "num_workers": 4,
     "out_dir":      ROOT / "outputs/analysis/umt_vision_text_bridge/phase3",
 }
+if CFG["vis_layer"] != 9:   # L9 keeps its original dir; other layers never overwrite it
+    CFG["out_dir"] = CFG["out_dir"].with_name(f"phase3_L{CFG['vis_layer']}")
 
 
 def load_matches(cfg):
@@ -105,25 +108,25 @@ def phase3_setup(cfg):
             "matches": load_matches(cfg)}
 
 
-def tower_to_layer9(model, pixel_values):
-    """(B, 2352, 768) block-9 residual (the vision SAE's input), no grad: patch_embed +
-    pos_embed + blocks 0..9 — exactly forward_features up to the layer_getter hook point.
+def tower_to_layer(model, pixel_values, layer=None):
+    """(B, 2352, 768) residual after block L (the vision SAE's input; L = CFG vis_layer), no
+    grad: patch_embed + pos_embed + blocks 0..L — forward_features up to the layer_getter hook.
     The tower lives on model.vision.encoder (same object ToT_utils' layer_getter uses)."""
-    v = model.vision.encoder
+    v, L = model.vision.encoder, CFG["vis_layer"] if layer is None else layer
     with torch.no_grad():
         x = v.patch_embed(pixel_values.permute(0, 2, 1, 3, 4).float())
         x = x + v.pos_embed.type_as(x).to(x.device).clone().detach()
-        for blk in v.blocks[:10]:
+        for blk in v.blocks[:L + 1]:
             x = blk(x)
     return x
 
 
-def finish_tower(model, x9):
-    """Blocks 10-11 + encoder.norm, grad-enabled: the final tokens cross-attention reads."""
-    v = model.vision.encoder
-    for blk in v.blocks[10:]:
-        x9 = blk(x9)
-    return v.norm(x9)
+def finish_tower(model, x, layer=None):
+    """Blocks L+1..11 + encoder.norm, grad-enabled: the final tokens cross-attention reads."""
+    v, L = model.vision.encoder, CFG["vis_layer"] if layer is None else layer
+    for blk in v.blocks[L + 1:]:
+        x = blk(x)
+    return v.norm(x)
 
 
 def cross_kv(vis, w, i, route=None, alt_vis=None):
@@ -232,7 +235,7 @@ def run_g1b(cfg, setup):
     pair_of = {c: p for p in cfg["pairs"] for c in p}
     errs = {"vis": 0.0, "vtm": 0.0, "match": 0.0}
     for pv, labels in loader:
-        x9 = tower_to_layer9(model, pv.to(cfg["device"]))
+        x9 = tower_to_layer(model, pv.to(cfg["device"]))
         with torch.no_grad():
             vis_ref = vision_and_vtc(model, pv.to(cfg["device"]))[0]
         vis_grad = finish_tower(model, x9.clone())
@@ -289,7 +292,7 @@ def run_g1b_fd(cfg, setup, s64):
     sp, matches = s64["spans"][f"{a}_{b}"], s64["matches"]
     loader = build_loader(t1_clips({**cfg, "max_clips": 1, "pairs": [(a, b)]}), cfg, shuffle=False)
     pv, labels = next(iter(loader))
-    x9 = tower_to_layer9(setup["model"], pv.to(cfg["device"])).double().requires_grad_(True)
+    x9 = tower_to_layer(setup["model"], pv.to(cfg["device"])).double().requires_grad_(True)
     ti = 0 if labels[0].item() == a else 1
 
     def f(x, key):
@@ -316,7 +319,7 @@ def run_ap(cfg, setup):
     spans, matches = setup["spans"], setup["matches"]
     rows, t0, idx = [], time.time(), 0
     for pv, labels in build_loader(clips, cfg, shuffle=False):
-        x9 = tower_to_layer9(setup["model"], pv.to(cfg["device"]))
+        x9 = tower_to_layer(setup["model"], pv.to(cfg["device"]))
         for i, cls in enumerate(labels.tolist()):
             cid = clips[idx][0]
             idx += 1
@@ -438,9 +441,20 @@ def select_pair(df, a, k_tgt, cfg):
     contrib = -0.5 * ap * np.where(is_a, 1.0, -1.0)[:, None]
     sel, tab = discriminative(contrib, is_a, cfg["n_sel"], cfg["max_other"])
     ctrl, gap = mass_controls(mass, sel, tab.ratio.to_numpy(), cfg["max_other"])
+    mx, mx_share = largest(contrib, len(sel))
     return tab.loc[sel].assign(target=k_tgt, rank=np.arange(len(sel)), control=ctrl,
                                mass=mass[sel], control_mass=mass[ctrl], mass_gap=gap,
+                               max_feature=mx, max_share=mx_share,
                                n_a=int(is_a.sum()), n_b=int((~is_a).sum()))
+
+
+def largest(contrib, n):
+    """Maximum-damage reference: the n features with the largest mean share of |contribution|
+    over the selection clips, differential or not (includes the ubiquitous ones). Returns
+    (ids, shares), largest first, rank-aligned with the selection rows."""
+    share = (np.abs(contrib) / (np.abs(contrib).sum(1, keepdims=True) + 1e-12)).mean(0)
+    ids = np.argsort(-share)[:n]
+    return ids, share[ids]
 
 
 def run_select(cfg):
@@ -515,7 +529,7 @@ def ids(s):
 
 def run_clip_interventions(x9, cid, cls, picks, setup, sp, matches, D, cfg):
     """Singles, top-k sets vs their mass-matched controls, and route splits, one clip.
-    picks = {target: (selected, controls)} — the clip's pair's fixed lists, rank-aligned."""
+    picks = {target: (selected, controls, largest)} — the clip's pair's fixed lists, rank-aligned."""
     ti = 0 if cls == sp["a"] else 1
     with torch.no_grad():
         vis_base = finish_tower(setup["model"], x9)[0]
@@ -527,10 +541,10 @@ def run_clip_interventions(x9, cid, cls, picks, setup, sp, matches, D, cfg):
     with torch.no_grad():
         ctx["tf_base"] = tf_values(targets(vis_base, setup, sp, matches, ti)[1], ctx)
     recs = []
-    for k_tgt, (top, ctrl) in picks.items():
+    for k_tgt, (top, ctrl, mx) in picks.items():
         tag = dict(clip_id=cid, a=sp["a"], b=sp["b"], true_class=cls, target_src=k_tgt)
         recs += [{**tag, **r} for r in eval_singles(ctx, top, ctrl)]
-        recs += [{**tag, **r} for r in eval_sets(ctx, top, ctrl, cfg)]
+        recs += [{**tag, **r} for r in eval_sets(ctx, top, ctrl, mx, cfg)]
     return recs
 
 
@@ -568,14 +582,15 @@ def eval_singles(ctx, top, ctrl):
     return recs
 
 
-def eval_sets(ctx, top, ctrl, cfg):
-    """G4: top[:k] vs its k matched controls ctrl[:k] at both doses, plus the full-flip
-    route splits (key-only / value-only into fusion L9, L10, or all of 9-11) for top[:k]."""
+def eval_sets(ctx, top, ctrl, mx, cfg):
+    """G4: top[:k] vs its k matched controls ctrl[:k] and the k largest contributors mx[:k]
+    (maximum-damage reference) at both doses, plus the full-flip route splits (key-only /
+    value-only into fusion L9, L10, or all of 9-11) for top[:k]."""
     recs = []
     for ks in cfg["set_sizes"]:
         if ks > len(top):
             continue
-        for kind, fs in (("set", top[:ks]), ("control_set", ctrl[:ks])):
+        for kind, fs in (("set", top[:ks]), ("control_set", ctrl[:ks]), ("max_set", mx[:ks])):
             for dose in (1.0, 2.0):
                 recs.append(dict(kind=kind, feats=",".join(map(str, fs)), k=ks, dose=dose,
                                  route="full", **eval_intervention(ctx, fs, dose)[0]))
@@ -594,8 +609,8 @@ def run_intervene(cfg, setup):
     from stage2_sae.train_sae_umt_fused import build_loader
     sampled = pd.read_csv(cfg["out_dir"] / "g34_clips.csv", dtype={"clip_id": str})
     sel = pd.read_csv(cfg["out_dir"] / "pair_selection.csv").sort_values("rank")
-    picks = {(a, b): {t: (g.feature.tolist(), g.control.tolist()) for t, g in s.groupby("target")}
-             for (a, b), s in sel.groupby(["a", "b"])}
+    picks = {(a, b): {t: (g.feature.tolist(), g.control.tolist(), g.max_feature.tolist())
+                      for t, g in s.groupby("target")} for (a, b), s in sel.groupby(["a", "b"])}
     pair_of = {c: p for p in cfg["pairs"] for c in p}
     spans, matches = setup["spans"], setup["matches"]
     D = setup["sae"].get_dictionary()
@@ -603,7 +618,7 @@ def run_intervene(cfg, setup):
     loader = build_loader(rows_clips, cfg, shuffle=False)
     records, t0, idx = [], time.time(), 0
     for pv, _ in loader:
-        x9 = tower_to_layer9(setup["model"], pv.to(cfg["device"]))
+        x9 = tower_to_layer(setup["model"], pv.to(cfg["device"]))
         for i in range(len(pv)):
             row = sampled.iloc[idx]; idx += 1
             cid, cls = row.clip_id, int(row.true_class)
