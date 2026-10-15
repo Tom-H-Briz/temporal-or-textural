@@ -29,7 +29,10 @@ CFG = {
     "model":           os.environ.get("MODEL", "umt"),
     # PAIR="a,b" (class ids) for other pairs; default (45, 43) = moving something up / down
     "pair":            tuple(int(x) for x in os.environ.get("PAIR", "45,43").split(",")),
-    "layer":           9,
+    # LAYER=5|7|9 (default 9; others write to a _L<layer> dir so L9 results stay put)
+    "layer":           int(os.environ.get("LAYER", 9)),
+    # CONDS="R" restricts conditions (comma-free: letters only); default all three
+    "conds":           os.environ.get("CONDS", ""),
     "labels_path":     os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir":       os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2_val_set")),
@@ -47,7 +50,11 @@ def model_setup(cfg):
     res = resolve_sae_checkpoint(m, cfg["layer"], dataset_name="ssv2", sae_k=64, job_label="7ep")
     cfg["sae_path"], cfg["dim_mean_path"] = res["sae_path"], res["dim_mean_path"]
     cfg["conditions"] = ("R", "C1" if m == "videomae" else "C", "Rev")
+    if cfg["conds"] == "R":
+        cfg["conditions"] = ("R",)
     name = "umt_vision_pair_contrast" if m == "umt" else f"{m}_vision_pair_contrast"
+    if cfg["layer"] != 9:
+        name += f"_L{cfg['layer']}"
     if cfg["pair"] != (45, 43):                      # other pairs never overwrite up/down
         name += f"_{cfg['pair'][0]}_{cfg['pair'][1]}"
     cfg["out_dir"] = ROOT / "outputs/analysis" / name
