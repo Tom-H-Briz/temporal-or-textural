@@ -48,7 +48,7 @@ CFG = {
     "device":         "cuda" if torch.cuda.is_available() else "cpu",
     "batch_size":     8, "num_workers": 4,
     # training (D3): lr/batch picked for a 623k-param linear-ish head on ~1M rows
-    "lr": 1e-3, "weight_decay": 0.01, "train_bs": 8192, "epochs": 40,
+    "lr": 1e-3, "weight_decay": 0.01, "train_bs": 8192, "epochs": 60,
     "patience": 5, "holdout": 0.05, "seed": 0,
     "wandb_project":  "temporal-or-textural",
     # probe words (D4): dropped + logged if not a single word-piece
