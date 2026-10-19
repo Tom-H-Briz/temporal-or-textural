@@ -3,7 +3,7 @@
 #SBATCH --output=umt_mlm_contrast_%j.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=12:00:00
+#SBATCH --time=02:00:00
 
 # UMT MLM feature contrast (src/stage3_analysis/umt_mlm_feature_contrast.py), brief
 # 191026: L9 SAE feature contributions to the refit MLM head's masked pair-word T_ab,
@@ -12,7 +12,7 @@
 # output ~6.5 GB -> outputs/analysis/umt_mlm_feature_contrast/ (home; smoke reports size).
 # MODE=extract|select|compare|check|all (a failed stage can be resubmitted alone).
 # Smoke (10 per class per split = 40 clips per pair):
-#   sbatch --export=ALL,MAX_CLIPS=20 slurm/umt_mlm_feature_contrast.sh
+#   sbatch --time=00:30:00 --export=ALL,MAX_CLIPS=20 slurm/umt_mlm_feature_contrast.sh
 # Full:                 sbatch slurm/umt_mlm_feature_contrast.sh
 # Pair subset (semicolon-separated, no commas -- sbatch splits on commas):
 #   sbatch --export=ALL,PAIRS="46_5;45_43" slurm/umt_mlm_feature_contrast.sh
