@@ -367,12 +367,14 @@ def discriminative(D, is_a, n_sel, max_other):
     return order[passed[order]][:n_sel], table
 
 
-def mass_controls(mass, sel, ratio, max_other):
+def mass_controls(mass, sel, ratio, max_other, pool=None):
     """One control per selected feature: the active, non-discriminative feature (contributes
     alike on both classes: same sign, ratio > max_other — scale-free, so heavy generic
     features qualify) with the nearest mean activation mass, without replacement, heaviest
-    selected first. Returns (controls, relative mass gaps)."""
-    pool = set(np.where((mass > 0) & (ratio > max_other))[0].tolist()) - set(sel.tolist())
+    selected first. pool overrides the default candidate set (features already excluded by
+    the caller). Returns (controls, relative mass gaps)."""
+    if pool is None:
+        pool = set(np.where((mass > 0) & (ratio > max_other))[0].tolist()) - set(sel.tolist())
     ctrl = {}
     for f in sorted(sel, key=lambda j: -mass[j]):
         ctrl[f] = min(pool, key=lambda j: abs(mass[j] - mass[f]))
