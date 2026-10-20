@@ -16,6 +16,9 @@
 # MAX_CLIPS caps the clip set for CPU checks (outputs go to *_smoke, never the real run).
 # Full:                sbatch slurm/umt_mlm_group_ablation.sh
 # Stage alone:         sbatch --export=ALL,MODE=ablate slurm/umt_mlm_group_ablation.sh
+# Push/pull (after the push/pull contrast job; stop at groups for review, brief §6.1):
+#   sbatch --export=ALL,MODE=groups,CLIP_SOURCE=val,PAIRS="93_86;94_87",CONTRAST_DIR=outputs/analysis/umt_mlm_feature_contrast_pushpull,OUT_DIR=outputs/analysis/umt_mlm_group_ablation_pushpull slurm/umt_mlm_group_ablation.sh
+#   then MODE=all (same exports) for check + ablate + summarise + hand.
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"

@@ -14,6 +14,10 @@ Modes (uv run python src/stage3_analysis/umt_mlm_group_ablation.py <mode>):
              stored per_clip.parquet values are one draw of that flicker)
   ablate     GPU/SLURM: per_clip_edits.parquet + per_clip_other_words.parquet
   summarise  CPU: summary.csv (gap measures, bootstrap CIs) + summary_accuracy.csv
+  hand       CPU: hand_overlap.csv — hand features among the group members,
+             all five pairs (needs groups.csv here + the clean run's folders)
+Push/pull (brief mlm_pushpull_brief_201026.md): PAIRS="93_86;94_87" CLIP_SOURCE=val
+CONTRAST_DIR=.../umt_mlm_feature_contrast_pushpull OUT_DIR=..._pushpull <mode>
 Usage: MODE=groups uv run python src/stage3_analysis/umt_mlm_group_ablation.py
 """
 import json
@@ -37,15 +41,23 @@ from umt_vision_pair_contrast import apply_condition
 CFG = {
     "layer": 9, "sae_k": 64, "job_label": "7ep", "dose": 1.0,
     "pairs": {(45, 43): ("up", "down"), (46, 5): ("opening", "closing"),
-              (168, 165): ("upwards", "downwards")},   # the three clean pairs only
+              (168, 165): ("upwards", "downwards"),   # the three clean pairs
+              (93, 86): ("pushing", "pulling"), (94, 87): ("pushing", "pulling")},
+    "pairs_env":       os.environ.get("PAIRS", ""),    # subset, e.g. "93_86;94_87"
+    "clip_source":     os.environ.get("CLIP_SOURCE", "phase3"),  # phase3 | val (§2 split)
+    "labels_path":     os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir":       os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2_val_set")),
     "max_clips":       int(os.environ.get("MAX_CLIPS", 0)),   # local CPU checks only
-    "pairs_env":       "",                                    # unused: pairs are fixed (§1)
-    "contrast_dir": ROOT / "outputs/analysis/umt_mlm_feature_contrast",
+    "contrast_dir": Path(os.environ.get("CONTRAST_DIR",
+                          str(ROOT / "outputs/analysis/umt_mlm_feature_contrast"))),
     "phase3_dir": ROOT / "outputs/analysis/umt_vision_text_bridge/phase3",
     "refit_dir": ROOT / "outputs/analysis/umt_mlm_refit",
-    "out_dir":     ROOT / "outputs/analysis/umt_mlm_group_ablation",
+    "out_dir":     Path(os.environ.get("OUT_DIR",
+                        str(ROOT / "outputs/analysis/umt_mlm_group_ablation"))),
+    "clean_run":  (ROOT / "outputs/analysis/umt_mlm_feature_contrast",
+                   ROOT / "outputs/analysis/umt_mlm_group_ablation"),  # hand check, §3 D4
+    "hand_csv":   ROOT / "outputs/analysis/hand_tracker_alignment/umt_L9.csv",
     "device":      "cuda" if torch.cuda.is_available() else "cpu",
     "num_workers": 4, "n_boot": 1000, "seed": 0,
 }
@@ -107,9 +119,39 @@ def group_controls(t, mass, members):
     return pd.DataFrame(rows)
 
 
+def pair_accuracy(per):
+    """§6.1: per pair x condition accuracy (sign of T_ab) and mean T_ab per class
+    (orientation, §7.4: report, don't fix)."""
+    rows = []
+    for (a, b, cond), g in per.groupby(["a", "b", "condition"]):
+        is_a = g.true_class == a
+        rows.append(dict(a=a, b=b, condition=cond, n=len(g),
+                         acc=float(((g.T_ab > 0) == is_a).mean()),
+                         mean_T_ab_a=float(g[is_a].T_ab.mean()),
+                         mean_T_ab_b=float(g[~is_a].T_ab.mean())))
+    return pd.DataFrame(rows)
+
+
+def print_contrast_summary(cfg, per):
+    """§6.1 checkpoint: split.csv counts, mask skips, R/C/Rev accuracy + orientation."""
+    split = cfg["contrast_dir"] / "split.csv"
+    if split.exists():
+        print("split counts:\n" + pd.read_csv(split, dtype={"clip_id": str})
+              .groupby(["a", "b", "split"]).size().rename("n").to_string())
+    sk = cfg["contrast_dir"] / "skipped_clips.csv"
+    if sk.exists():
+        df = pd.read_csv(sk)
+        if len(df):
+            print("mask skips:\n" + df.groupby(["a", "b", "reason"]).size().rename("n").to_string())
+    print("pair accuracy / orientation:\n" +
+          pair_accuracy(pd.read_parquet(cfg["contrast_dir"] / "per_clip.parquet"))
+          .round(3).to_string(index=False))
+
+
 def run_groups(cfg):
-    """Stage 1 (CPU): group membership (asserted against the §2 table) + mass-matched
-    controls -> groups.csv."""
+    """Stage 1 (CPU): group membership (asserted against the §2 table for the clean
+    pairs; printed for review for new pairs) + mass-matched controls -> groups.csv."""
+    print_contrast_summary(cfg, None)
     tab = pd.read_parquet(cfg["contrast_dir"] / "selection_table.parquet")
     per = pd.read_parquet(cfg["contrast_dir"] / "per_clip.parquet")
     out = []
@@ -119,8 +161,11 @@ def run_groups(cfg):
         t = group_table(g)
         members = pick_groups(t)
         for grp, feats in members.items():
-            assert feats == EXPECTED[(a, b)][grp], \
-                f"{a}/{b} {grp}: {feats} != {EXPECTED[(a, b)][grp]}"
+            if (a, b) in EXPECTED:
+                assert feats == EXPECTED[(a, b)][grp], \
+                    f"{a}/{b} {grp}: {feats} != {EXPECTED[(a, b)][grp]}"
+            elif len(feats) < 5:
+                print(f"{a}/{b} {grp}: only {len(feats)} qualifying features (< 5)")
         clips = per[(per.a == a) & (per.b == b) & (per.condition == "R") &
                     (per.split == "selection")].clip_id
         ctrls = group_controls(t, pair_mass(cfg, clips), members)
@@ -132,6 +177,10 @@ def run_groups(cfg):
         out.append(info)
         print(f"{a}/{b} groups ok: " + "; ".join(
             f"{g}={[f for f in members[g]]}" for g in GROUPS))
+        if (a, b) not in EXPECTED:   # new pairs: full table for §6.1 review
+            cols = ["group", "rank", "feature", "share", "act_ratio", "size_ratio",
+                    "evidence", "bias", "opposer", "control", "mass", "control_mass", "mass_gap"]
+            print(info[cols].round(4).to_string(index=False))
     res = pd.concat(out, ignore_index=True)
     res.to_csv(cfg["out_dir"] / "groups.csv", index=False)
     print(res.groupby(["a", "b", "group"]).mass_gap.max().to_string())
@@ -476,16 +525,73 @@ def run_summarise(cfg):
           f"r = {np.corrcoef(sing.pred_dT, sing.dT)[0, 1]:.3f} (n = {len(sing)})")
 
 
+def enrichment_row(a, b, tab, is_hand, note):
+    """§3 D4: hand fraction among the pair's top 1% by importance vs all active."""
+    t = group_table(tab[(tab.a == a) & (tab.b == b)])
+    n_top = int(np.ceil(0.01 * len(t)))   # same top-1% cut as the group analysis (62/62/60)
+    f_top = float(t.feature.head(n_top).map(lambda f: bool(is_hand.loc[f])).mean())
+    f_all = float(t.feature.map(lambda f: bool(is_hand.loc[f])).mean())
+    return dict(row_type="enrichment", a=a, b=b, n_active=len(t), n_top1pct=n_top,
+                top1pct_hand_frac=f_top, active_hand_frac=f_all,
+                enrich_ratio=f_top / f_all if f_all > 0 else np.nan, note=note)
+
+
+def hand_rows(groups, tab, hand, is_hand, note):
+    """member / group / enrichment rows for one run's pairs (§3 D4)."""
+    rows = []
+    for (a, b), g in groups.groupby(["a", "b"]):
+        for _, m in g.sort_values(["group", "rank"]).iterrows():
+            h = hand.loc[m.feature]
+            rows.append(dict(row_type="member", a=a, b=b, group=m.group, rank=int(m["rank"]),
+                             feature=m.feature, share=m.share, overlap=h.overlap,
+                             track=h.track, coact=h.coact,
+                             is_hand=bool(is_hand.loc[m.feature]), note=note))
+        for grp, sub in g.groupby("group"):
+            nh = sub[sub.feature.map(lambda f: bool(is_hand.loc[f]))]
+            rows.append(dict(row_type="group", a=a, b=b, group=grp, n_members=len(sub),
+                             n_hand=len(nh),
+                             hand_importance_share=float(nh.share.sum() / sub.share.sum()),
+                             note=note))
+        rows.append(enrichment_row(a, b, tab, is_hand, note))
+    return rows
+
+
+def run_hand(cfg):
+    """§3 D4: hand-feature overlap of the group members, all five pairs -> hand_overlap.csv."""
+    hand = pd.read_csv(cfg["hand_csv"]).set_index("feature")
+    is_hand = (hand.coact >= 0.5) & (hand.overlap > 0.4)
+    note = "hand alignment computed on move up/down clips"
+    runs = [(cfg["contrast_dir"], cfg["out_dir"])]
+    if (cfg["contrast_dir"], cfg["out_dir"]) != tuple(cfg["clean_run"]):
+        runs.append((Path(cfg["clean_run"][0]), Path(cfg["clean_run"][1])))
+    t = hand.loc[2782]
+    rows = [dict(row_type="definition", n_hand_features=int(is_hand.sum()), note=note),
+            dict(row_type="template", feature=2782, overlap=t.overlap, track=t.track,
+                 coact=t.coact, is_hand=bool(is_hand.loc[2782]), note=note)]
+    for contrast_dir, abl_dir in runs:
+        rows += hand_rows(pd.read_csv(abl_dir / "groups.csv"),
+                          pd.read_parquet(contrast_dir / "selection_table.parquet"),
+                          hand, is_hand, note)
+    pd.DataFrame(rows).to_csv(cfg["out_dir"] / "hand_overlap.csv", index=False)
+    n_hand = sum(1 for r in rows if r["row_type"] == "member" and r["is_hand"])
+    print(f"hand_overlap.csv: {len(rows)} rows; {n_hand} hand members; "
+          f"{int(is_hand.sum())} hand features of {len(hand)}")
+
+
 def main():
     torch.backends.cuda.matmul.allow_tf32 = False     # fp32 paths, as the references
     torch.backends.cudnn.allow_tf32 = False
     mode = os.environ.get("MODE", sys.argv[1] if len(sys.argv) > 1 else "all")
     cfg = dict(CFG)
+    if cfg["pairs_env"]:                              # subset, e.g. push/pull runs
+        keep = {tuple(map(int, p.split("_"))) for p in cfg["pairs_env"].split(";")}
+        cfg["pairs"] = {p: w for p, w in cfg["pairs"].items() if p in keep}
     if cfg["max_clips"]:                              # local checks never overwrite the run
         cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name + "_smoke")
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
     print(f"mode={mode} device={cfg['device']} out={cfg['out_dir']} "
-          f"max_clips={cfg['max_clips'] or 'all'} dose={cfg['dose']}")
+          f"max_clips={cfg['max_clips'] or 'all'} dose={cfg['dose']} "
+          f"clip_source={cfg['clip_source']}")
     assert cfg["dose"] == 1.0, "ablation only (brief §0)"
     if mode == "groups":
         run_groups(cfg)
@@ -495,12 +601,15 @@ def main():
         run_ablate(cfg, contrast_setup(cfg))
     if mode == "summarise":
         run_summarise(cfg)
+    if mode == "hand":
+        run_hand(cfg)
     if mode == "all":
         run_groups(cfg)
         s = contrast_setup(cfg)
         run_check(cfg, s)
         run_ablate(cfg, s)
         run_summarise(cfg)
+        run_hand(cfg)
 
 
 if __name__ == "__main__":

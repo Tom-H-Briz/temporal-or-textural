@@ -16,6 +16,8 @@
 # Full:                 sbatch slurm/umt_mlm_feature_contrast.sh
 # Pair subset (semicolon-separated, no commas -- sbatch splits on commas):
 #   sbatch --export=ALL,PAIRS="46_5;45_43" slurm/umt_mlm_feature_contrast.sh
+# Push/pull (brief mlm_pushpull_brief_201026.md; val clips + Phase 3's split rule):
+#   sbatch --export=ALL,CLIP_SOURCE=val,PAIRS="93_86;94_87",OUT_DIR=outputs/analysis/umt_mlm_feature_contrast_pushpull slurm/umt_mlm_feature_contrast.sh
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"

@@ -15,6 +15,8 @@ Modes (uv run python src/stage3_analysis/umt_mlm_feature_contrast.py <mode>):
   extract  GPU/SLURM: sparse/{cond}/{clip_id}.npz + per_clip.parquet + skipped_clips.csv
   select   CPU: discriminative/largest/mass_controls unchanged -> mlm_pair_selection.csv
   compare  CPU: vs Phase 3 T_vtm -> comparison_features/overlap + summary_by_condition
+Push/pull (brief mlm_pushpull_brief_201026.md): CLIP_SOURCE=val PAIRS="93_86;94_87"
+OUT_DIR=.../umt_mlm_feature_contrast_pushpull (extract | select; compare skips them).
 Usage: MAX_CLIPS=20 uv run python src/stage3_analysis/umt_mlm_feature_contrast.py all
 """
 import json
@@ -40,7 +42,10 @@ CFG = {
     "pairs": {  # (a, b): (word_a, word_b) — §1 table; both must be single word-pieces
         (46, 5): ("opening", "closing"), (168, 165): ("upwards", "downwards"),
         (45, 43): ("up", "down"), (44, 41): ("towards", "away"),
-        (42, 40): ("closer", "away"), (37, 36): ("closer", "away")},
+        (42, 40): ("closer", "away"), (37, 36): ("closer", "away"),
+        (93, 86): ("pushing", "pulling"), (94, 87): ("pushing", "pulling")},
+    "clip_source": os.environ.get("CLIP_SOURCE", "phase3"),  # phase3 files | val + §2 split
+    "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir":       os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2_val_set")),
     "max_clips":       int(os.environ.get("MAX_CLIPS", 0)),   # smoke: half per class x split
@@ -48,21 +53,49 @@ CFG = {
     "n_sel": 10, "max_other": 1 / 3,                          # Phase 3 selection parameters
     "phase3_dir": ROOT / "outputs/analysis/umt_vision_text_bridge/phase3",
     "refit_dir":   ROOT / "outputs/analysis/umt_mlm_refit",
-    "out_dir":     ROOT / "outputs/analysis/umt_mlm_feature_contrast",
+    "out_dir":     Path(os.environ.get("OUT_DIR", str(ROOT / "outputs/analysis/umt_mlm_feature_contrast"))),
     "device":      "cuda" if torch.cuda.is_available() else "cpu",
     "num_workers": 4,
 }
 
 
-def pair_rows(cfg):
-    """Phase 3's clips for the six pairs with split tags: per_clip_ap.parquet joined with
-    g34_clips.csv (g34 = held-out test, never read by selection). PAIRS / MAX_CLIPS
-    (smoke: half the cap per class AND split — Phase 3's held-out set is the first ~37
-    ids per pair, so a class-only cap would pick g34 only) restrict."""
+def val_pair_rows(cfg):
+    """clip_source="val": every val clip of cfg's pairs (built as
+    umt_vision_pair_contrast.pair_clips does: template normalisation, sorted by clip
+    id), split g34/selection by Phase 3's rule — sample_g34_clips with n_total = 37 x
+    len(pairs), imported, never re-implemented. Writes split.csv."""
+    from umt_bridge_phase3 import sample_g34_clips
+    norm = lambda s: s.lower().replace("[", "").replace("]", "")
+    key2id = {norm(k): int(v) for k, v in json.load(open(cfg["labels_path"])).items()}
+    rows = []
+    for c in json.load(open(cfg["validation_path"])):
+        cls = key2id.get(norm(c["template"]))
+        for (a, b) in cfg["pairs"]:
+            if cls in (a, b):
+                rows.append(dict(clip_id=str(c["id"]), a=a, b=b, true_class=cls))
+    df = pd.DataFrame(rows).sort_values("clip_id").reset_index(drop=True)
+    g34 = sample_g34_clips(df, 37 * len(cfg["pairs"]), list(cfg["pairs"]))
+    df["split"] = np.where(df.clip_id.isin(g34.clip_id), "g34", "selection")
+    df[["clip_id", "a", "b", "true_class", "split"]].to_csv(cfg["out_dir"] / "split.csv", index=False)
+    return df
+
+
+def phase3_pair_rows(cfg):
+    """clip_source="phase3" (default): Phase 3's per_clip_ap.parquet joined with its
+    g34_clips.csv (g34 = held-out test, never read by selection)."""
     df = pd.read_parquet(cfg["phase3_dir"] / "per_clip_ap.parquet")
     df = df[df.apply(lambda r: (r.a, r.b) in cfg["pairs"], axis=1)].copy()
     g34 = set(pd.read_csv(cfg["phase3_dir"] / "g34_clips.csv", dtype={"clip_id": str}).clip_id)
     df["split"] = np.where(df.clip_id.isin(g34), "g34", "selection")
+    return df
+
+
+def pair_rows(cfg):
+    """One row per clip (clip_id, a, b, true_class, split), sorted by clip_id: Phase 3's
+    files (default) or every val clip + Phase 3's split rule (clip_source="val").
+    PAIRS / MAX_CLIPS restrict (smoke: half the cap per class AND split — Phase 3's
+    held-out set is the first ~37 ids per pair, so a class-only cap would pick g34 only)."""
+    df = val_pair_rows(cfg) if cfg.get("clip_source") == "val" else phase3_pair_rows(cfg)
     if cfg["pairs_env"]:
         keep = {tuple(map(int, p.split("_"))) for p in cfg["pairs_env"].split(";")}
         df = df[df.apply(lambda r: (r.a, r.b) in keep, axis=1)]
@@ -489,6 +522,9 @@ def compare(cfg):
     for (a, b), g in mlm.groupby(["a", "b"]):
         m = g.sort_values("rank")
         v = pc[(pc.target == "T_vtm") & (pc.a == a) & (pc.b == b)].sort_values("rank")
+        if v.empty:                       # not in Phase 3 (e.g. push/pull): skip
+            print(f"compare: {a}/{b} has no Phase 3 T_vtm selection; skipped")
+            continue
         lists = (m.feature.tolist(), m.max_feature.tolist(),
                  v.feature.tolist(), v.max_feature.tolist())
         ov.append(overlap_row(a, b, *lists))
