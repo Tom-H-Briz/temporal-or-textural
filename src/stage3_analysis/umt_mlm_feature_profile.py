@@ -14,11 +14,17 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 CFG = {
     "feature":  int(os.environ.get("FEATURE", "4250")),
+    # every MLM run the figures may draw on; add new run dirs here and all scripts pick them up
     "in_dirs":  [ROOT / "outputs/analysis/umt_mlm_feature_contrast",
                  ROOT / "outputs/analysis/umt_mlm_feature_contrast_pushpull"],
+    "ablation_dirs": [ROOT / "outputs/analysis/umt_mlm_group_ablation",
+                      ROOT / "outputs/analysis/umt_mlm_group_ablation_pushpull"],
     "n_frames": 12, "n_patches": 196,
 }
-CFG["out_dir"] = ROOT / "outputs/analysis/umt_mlm_feature_profile" / f"f{CFG['feature']}"
+
+
+def profile_dir(feature):
+    return ROOT / "outputs/analysis/umt_mlm_feature_profile" / f"f{feature}"
 
 
 def clip_profile(path, cfg):
@@ -44,14 +50,34 @@ def run_dir(in_dir, cfg):
     return rows
 
 
-def main():
-    cfg = CFG
-    cfg["out_dir"].mkdir(parents=True, exist_ok=True)
+def find_run(pair, dirs, table):
+    """The first run dir whose `table` parquet holds pair (a, b); error if none does."""
+    for d in dirs:
+        t = pd.read_parquet(d / table, columns=["a", "b"])
+        if ((t.a == pair[0]) & (t.b == pair[1])).any():
+            return d
+    raise ValueError(f"pair {pair} not in any of {[d.name for d in dirs]} ({table})")
+
+
+def build_profile(feature, cfg=CFG):
+    """Write (and return) clip_profile.parquet for one feature over all MLM contrast runs."""
+    cfg = dict(cfg, feature=feature)
     df = pd.DataFrame([r for d in cfg["in_dirs"] for r in run_dir(d, cfg)])
     df = df.drop_duplicates(["clip_id", "a", "b", "condition"])
-    out = cfg["out_dir"] / "clip_profile.parquet"
-    df.to_parquet(out)
-    print(f"feature {cfg['feature']}: {len(df)} clip-conditions -> {out}")
+    profile_dir(feature).mkdir(parents=True, exist_ok=True)
+    df.to_parquet(profile_dir(feature) / "clip_profile.parquet")
+    print(f"feature {feature}: {len(df)} clip-conditions -> {profile_dir(feature)}")
+    return df
+
+
+def load_profile(feature):
+    """clip_profile.parquet for a feature, building it first if it doesn't exist yet."""
+    path = profile_dir(feature) / "clip_profile.parquet"
+    return pd.read_parquet(path) if path.exists() else build_profile(feature)
+
+
+def main():
+    build_profile(CFG["feature"])
 
 
 if __name__ == "__main__":

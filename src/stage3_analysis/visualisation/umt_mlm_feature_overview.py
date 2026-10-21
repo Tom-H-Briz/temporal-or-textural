@@ -4,10 +4,12 @@ Top: mean activation per frame position, class A vs B, under R / C (shuffle) / R
 Bottom: mean activation per class on R (all MLM classes); per clip activation vs MLM margin T_ab, R and C.
 Activation is scaled by the median R activation on REF_CLASS clips ("1 = a typical full-on clip").
 Needs: umt_mlm_feature_profile.py output.
-Usage: FEATURE=4250 PAIR=45,43 REF_CLASS=43 uv run python src/stage3_analysis/visualisation/umt_mlm_feature_overview.py
+REF_CLASS defaults to the pair class the feature fires on most (R); the profile is built if missing.
+Usage: FEATURE=4250 PAIR=45,43 [REF_CLASS=43] uv run python src/stage3_analysis/visualisation/umt_mlm_feature_overview.py
 """
 import json
 import os
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -17,21 +19,25 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "src/stage3_analysis"))
+import umt_mlm_feature_profile as prof_mod
 CFG = {
     "feature":   int(os.environ.get("FEATURE", "4250")),
     "pair":      tuple(int(x) for x in os.environ.get("PAIR", "45,43").split(",")),
-    "ref_class": int(os.environ.get("REF_CLASS", "43")),
+    "ref_class": os.environ.get("REF_CLASS", ""),                 # "" = auto
     "labels":    ROOT / "data/ssv2/labels/labels.json",
     "colours":   ("#eb6834", "#2a78d6"),          # class A, class B (validated categorical slots 2, 1)
     "ink": "#0b0b0b", "muted": "#8a8984", "grid": "#e6e5e0", "surface": "#fcfcfb",
     "conds":     {"R": "Real (R)", "C": "Shuffled (C)", "Rev": "Reversed (Rev)"},
 }
-CFG["dir"] = ROOT / "outputs/analysis/umt_mlm_feature_profile" / f"f{CFG['feature']}"
+CFG["dir"] = prof_mod.profile_dir(CFG["feature"])
 
 
 def load(cfg):
     """Profile table, class names, and the activation scale (median R z on ref-class clips)."""
-    t = pd.read_parquet(cfg["dir"] / "clip_profile.parquet")
+    t = prof_mod.load_profile(cfg["feature"])
+    pt = t[(t.a == cfg["pair"][0]) & (t.b == cfg["pair"][1]) & (t.condition == "R")]
+    cfg["ref_class"] = int(cfg["ref_class"] or pt.groupby("true_class").z.mean().idxmax())
     names = {int(v): k for k, v in json.load(open(cfg["labels"])).items()}
     ref = t[(t.true_class == cfg["ref_class"]) & (t.condition == "R")].z.median()
     return t, names, ref
@@ -60,7 +66,7 @@ def panel_classes(ax, t, names, ref, cfg):
     """Mean R activation per MLM class; the reference class highlighted, values labelled."""
     m = (t[t.condition == "R"].groupby("true_class").z.mean() / ref).sort_values()
     ax.barh([names[c][:38] for c in m.index], m.values, height=0.7,
-            color=[cfg["colours"][1] if c == cfg["ref_class"] else "#b5b4ad" for c in m.index])
+            color=[cfg["colours"][cfg["pair"].index(c)] if c in cfg["pair"] else "#b5b4ad" for c in m.index])
     for y, v in enumerate(m.values):
         ax.text(v + 0.01 * m.max(), y, f"{v:.2f}", va="center", fontsize=7.5, color="#52514e")
     ax.set_xlabel("mean activation, real video\n(× median real clip, reference class)")
