@@ -40,7 +40,8 @@ CFG = {
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2_val_set")),
     "out_dir": Path(os.environ.get("OUT_DIR", str(ROOT / "outputs/analysis/umt_vtc_clock_ablation"))),
-    "max_clips": int(os.environ.get("MAX_CLIPS", 0)), "edit_batch": 16, "num_workers": 4,
+    "max_clips": int(os.environ.get("MAX_CLIPS", 0)), "edit_batch": 16,
+    "num_workers": int(os.environ.get("NUM_WORKERS", 4)),   # 0 = no loader workers (no /dev/shm use)
     "n_boot": 1000, "seed": 0,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
 }

@@ -18,7 +18,9 @@ export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"
 export LABELS_PATH="$HOME/labels/labels.json"
 export MAX_CLIPS=${MAX_CLIPS:-0}
 export MODE=${MODE:-all}
-echo "MODE=$MODE MAX_CLIPS=$MAX_CLIPS"
+export NUM_WORKERS=${NUM_WORKERS:-4}
+echo "MODE=$MODE MAX_CLIPS=$MAX_CLIPS NUM_WORKERS=$NUM_WORKERS"
+df -h /dev/shm                                   # loader workers share decoded clips via /dev/shm
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 
 apptainer exec --nv \
@@ -29,5 +31,5 @@ apptainer exec --nv \
         pip install --quiet av einops pandas pyarrow scipy \"transformers==5.5.0\" huggingface-hub tqdm \"timm==0.4.12\" easydict &&
         cd \$HOME/temporal-or-textural &&
         unset TORCH_ALLOW_TF32_CUBLAS_OVERRIDE &&
-        python src/stage3_analysis/umt_vtc_clock_ablation.py \$MODE
+        python -u src/stage3_analysis/umt_vtc_clock_ablation.py \$MODE
     "
