@@ -12,6 +12,7 @@
 # Full:        sbatch slurm/umt_vtc_clock_ablation.sh
 # One stage:   sbatch --export=ALL,MODE=ablate slurm/umt_vtc_clock_ablation.sh
 # Smoke (5 clips, *_smoke dir): sbatch --export=ALL,MODE=all,MAX_CLIPS=5 slurm/umt_vtc_clock_ablation.sh
+# SAE-spliced (DFAEngine.run_ablated convention, *_splice dir): sbatch --export=ALL,SPLICE=1 slurm/umt_vtc_clock_ablation.sh
 
 source $HOME/.tokens   # exports HF_TOKEN
 export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"

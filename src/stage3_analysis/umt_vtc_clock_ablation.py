@@ -29,6 +29,9 @@ sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT 
 CFG = {
     "layer": int(os.environ.get("LAYER", 9)), "sae_k": 64, "job_label": "7ep",
     "model": "umt", "dose": 1.0,                       # ablation only (apply_edit's default is 2)
+    # SPLICE=1: DFAEngine.run_ablated convention — layer L replaced by decode(z, feats zeroed) +
+    # dim_mean (no error term); reference = the unablated splice. SPLICE=0: raw-stream subtraction.
+    "splice": os.environ.get("SPLICE", "0") == "1",
     "early": [5473, 2417, 3948, 5043], "late": [6059, 2261, 3623],
     # the rest of the core 14 (22 Oct): fixed multi-peak frame profiles, kept under Rev / C
     # ("positionally consistent", not ramps); 6127 = the one content-following core feature
@@ -130,14 +133,24 @@ def arm_rows(cfg):
                    for arm, feats in zip(c.control_arm, c.control_features)]
 
 
+def edited_stream(st, x9, z0, D, fs, cfg):
+    """(N, D) layer-L tokens for one arm. Splice: decode(z with fs zeroed) + dim_mean, as
+    DFAEngine._splice_hook (fs = [] -> the unablated splice). Raw: x9 - dose * sum z_f d_f."""
+    if cfg["splice"]:
+        z = z0.clone()
+        z[:, list(fs)] = 0.0
+        return st["sae"].decode(z) + st["dm"]
+    from umt_bridge_phase3 import apply_edit
+    return apply_edit(x9, z0, D, fs, dose=cfg["dose"])[0]
+
+
 def arm_logits(st, pv, x9, z0, D, edits, cfg):
     """The non-baseline arms for one clip, edit_batch per spliced forward (eval_edits'
     batching, no grad); dose is passed explicitly — apply_edit's default is 2."""
-    from umt_bridge_phase3 import apply_edit
     lgs = []
     with torch.no_grad():
         for i in range(0, len(edits), cfg["edit_batch"]):
-            new = torch.stack([apply_edit(x9, z0, D, fs, dose=cfg["dose"])[0]
+            new = torch.stack([edited_stream(st, x9, z0, D, fs, cfg)
                                for _, fs in edits[i:i + cfg["edit_batch"]]])
             lgs += list(full_logits(st, pv, new))
     return lgs
@@ -178,11 +191,12 @@ def write_arms(cfg, mass):
 
 
 def clip_rows(r, cond, arms, base, lgs):
-    """One clip's per-arm rows: clip fields + the full 174-logit vector each; base_correct
-    flags the batch-1 baseline argmax (the population filter). Logits -> CPU once each."""
+    """One clip's per-arm rows: clip fields + the full 174-logit vector each. base_correct =
+    the raw model (batch-1 baseline) is right; ref_correct = the reference arm batch_base
+    (lgs[0]) is right — the spliced model under SPLICE=1, i.e. spliced-correct. Logits -> CPU once."""
     cls = int(r.class_id)
     head = dict(clip_id=r.clip_id, class_id=cls, sl_label=r.sl_label, condition=cond,
-                base_correct=int(base.argmax() == cls))
+                base_correct=int(base.argmax() == cls), ref_correct=int(lgs[0].argmax() == cls))
     vals = [base.cpu().tolist()] + [lg.cpu().tolist() for lg in lgs]
     return [dict(head, arm=arm, **dict(zip(LG, v)))
             for arm, v in zip([a for a, _ in arms], vals)]
@@ -401,8 +415,15 @@ def check_clip(cfg, st, ref, D, rows, i, pv):
     with torch.no_grad():
         clean = ref(pixel_values=pv).logits.float()[0]
     base, x9, z0 = clip_pass(st, pv)
-    d0 = apply_edit(x9, z0, D, cfg["all_clocks"], dose=0.0)
     diff = float((base - clean).abs().max())
+    if cfg["splice"]:                                 # no identity to assert: report splice vs raw
+        sp = full_logits(st, pv, edited_stream(st, x9, z0, D, [], cfg).unsqueeze(0))[0]
+        diff0 = float((base - sp).abs().max())
+        same = int(sp.argmax() == base.argmax())
+        print(f"  clip {rows.iloc[int(i)].clip_id}: baseline |diff| {diff:.2e}, splice vs raw "
+              f"max |dlogit| {diff0:.3f}, same top-1 {same}")
+        return diff, diff0
+    d0 = apply_edit(x9, z0, D, cfg["all_clocks"], dose=0.0)
     diff0 = float((base - full_logits(st, pv, d0)[0]).abs().max())
     assert diff0 < 1e-5, f"dose=0 differs from baseline by {diff0:.2e}"
     print(f"  clip {rows.iloc[int(i)].clip_id}: baseline |diff| {diff:.2e}, dose=0 {diff0:.2e}")
@@ -423,7 +444,7 @@ def run_check(cfg, st):
            for pv, i in clip_loader(rows, cfg, "R")]
     del ref
     print(f"check ok: worst baseline |diff| {max(d for d, _ in res):.2e}; "
-          f"worst dose=0 diff {max(d0 for _, d0 in res):.2e} (< 1e-5 asserted); worst mass gap "
+          f"worst {'splice-vs-raw' if cfg['splice'] else 'dose=0 (< 1e-5 asserted)'} diff {max(d0 for _, d0 in res):.2e}; worst mass gap "
           f"{pd.read_csv(cfg['out_dir'] / 'arms.csv').mass_gap.max():.3f}")
 
 
@@ -432,11 +453,13 @@ def main():
     torch.backends.cudnn.allow_tf32 = False
     mode = os.environ.get("MODE", sys.argv[1] if len(sys.argv) > 1 else "all")
     cfg = dict(CFG)
+    if cfg["splice"]:                                 # keep raw-stream and splice results apart
+        cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name + "_splice")
     if cfg["max_clips"]:
         cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name + "_smoke")
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
     print(f"mode={mode} device={cfg['device']} out={cfg['out_dir']} conds={cfg['conds']} "
-          f"dose={cfg['dose']} max_clips={cfg['max_clips'] or 'all'}")
+          f"dose={cfg['dose']} splice={cfg['splice']} max_clips={cfg['max_clips'] or 'all'}")
     st = setup(cfg) if mode in ("mass", "ablate", "check", "all") else None
     if mode in ("mass", "all"):
         run_mass(cfg, st)

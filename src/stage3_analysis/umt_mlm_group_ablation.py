@@ -60,6 +60,9 @@ CFG = {
     "hand_csv":   ROOT / "outputs/analysis/hand_tracker_alignment/umt_L9.csv",
     "device":      "cuda" if torch.cuda.is_available() else "cpu",
     "num_workers": 4, "n_boot": 1000, "seed": 0,
+    # SPLICE=1: DFAEngine.run_ablated convention — L9 replaced by decode(z, feats zeroed) + dim_mean
+    # (no error term); baseline = the unablated splice. SPLICE=0: raw-stream subtraction (20 Oct run).
+    "splice": os.environ.get("SPLICE", "0") == "1",
 }
 
 EXPECTED = {  # brief §2 membership table (acceptance 7.1)
@@ -233,7 +236,12 @@ def edit_logits(s, h8, add, cap, x9, z0, D, feats, dose):
     """x' = x9 - sum(z_f d_f) (dose 1, ablation only) -> tower 10-11 -> fusion -> head
     at every masked position -> logits (n_variants, vocab)."""
     assert dose == 1.0, "ablation only: dose must be 1.0"
-    x = apply_edit(x9, z0, D, feats, dose=dose)
+    if s.get("splice"):                               # DFAEngine._splice_hook: decode, add mean back
+        z = z0.clone()
+        z[:, list(feats)] = 0.0
+        x = (s["sae"].decode(z) + s["dim_mean"]).unsqueeze(0).to(x9.dtype)
+    else:
+        x = apply_edit(x9, z0, D, feats, dose=dose)
     vis = finish_tower(s["model"], x)[0].unsqueeze(0)
     h = mlm_fusion(h8, add, vis, s["w"])
     sel = h[torch.arange(len(cap["pos"]), device=h.device),
@@ -586,26 +594,28 @@ def main():
     if cfg["pairs_env"]:                              # subset, e.g. push/pull runs
         keep = {tuple(map(int, p.split("_"))) for p in cfg["pairs_env"].split(";")}
         cfg["pairs"] = {p: w for p, w in cfg["pairs"].items() if p in keep}
+    if cfg["splice"]:                                 # keep raw-stream and splice results apart
+        cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name + "_splice")
     if cfg["max_clips"]:                              # local checks never overwrite the run
         cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name + "_smoke")
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
     print(f"mode={mode} device={cfg['device']} out={cfg['out_dir']} "
           f"max_clips={cfg['max_clips'] or 'all'} dose={cfg['dose']} "
-          f"clip_source={cfg['clip_source']}")
+          f"clip_source={cfg['clip_source']} splice={cfg['splice']}")
     assert cfg["dose"] == 1.0, "ablation only (brief §0)"
     if mode == "groups":
         run_groups(cfg)
     if mode == "check":
-        run_check(cfg, contrast_setup(cfg))
+        run_check(cfg, dict(contrast_setup(cfg), splice=cfg["splice"]))
     if mode == "ablate":
-        run_ablate(cfg, contrast_setup(cfg))
+        run_ablate(cfg, dict(contrast_setup(cfg), splice=cfg["splice"]))
     if mode == "summarise":
         run_summarise(cfg)
     if mode == "hand":
         run_hand(cfg)
     if mode == "all":
         run_groups(cfg)
-        s = contrast_setup(cfg)
+        s = dict(contrast_setup(cfg), splice=cfg["splice"])
         run_check(cfg, s)
         run_ablate(cfg, s)
         run_summarise(cfg)
