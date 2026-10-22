@@ -7,7 +7,7 @@ word is masked (white = none, yellow, red = most; red = the 95th pct in the figu
 Class: CLASS (default = the class whose pair word the ablation hurts most); condition: COND (default R).
 Only features ablated as singles in that run are available (the 15 group members per pair).
 Per-word values for both classes and conditions: wordmap_<a>_<b>.csv.
-MODE=template: one averaged row per class x condition, the SSv2 template with "something" = object words.
+MODE=template: one averaged row per class (real clips, COND=R; COND=R+Rev adds reversed rows), the SSv2 template with "something" = object words.
 Usage: FEATURE=4250 PAIR=45,43 [CLASS=43] [COND=R] [MODE=template] uv run python src/stage3_analysis/visualisation/umt_mlm_feature_wordmap.py
 """
 import os
@@ -32,6 +32,7 @@ CFG = {
     "mode":     os.environ.get("MODE", "captions"),                    # captions | template | compare
     "edit":     os.environ.get("EDIT", ""),                            # stored edit; "" = single_<FEATURE>
     "rows":     os.environ.get("ROWS", ""),                            # compare: edit list; "" = default set
+    "vmax":     float(os.environ.get("VMAX", 0)),                      # template/compare: fixed red level (0 = own max)
     "labels":   ROOT / "data/ssv2/labels/labels.json",
     "roles":    ["pair word", "verb", "object", "other"],              # kept in the CSV
     "colours":  ["#ffffff", "#fdd835", "#d7301f"],                     # damage: none -> mid -> most
@@ -41,6 +42,7 @@ CFG = {
 CFG["ablation"] = prof_mod.find_run(CFG["pair"], prof_mod.CFG["ablation_dirs"], "per_clip_edits.parquet")
 CFG["contrast"] = prof_mod.find_run(CFG["pair"], prof_mod.CFG["in_dirs"], "per_clip.parquet")
 CFG["out_dir"] = prof_mod.profile_dir(CFG["feature"])
+ABL = "raw-stream" if os.environ.get("ABLATION") == "raw" else "SAE-spliced"   # for titles
 
 
 def pair_word_rows(cfg):
@@ -184,14 +186,14 @@ def main_compare(cfg):
 
 def draw_rows(cfg, rows, width):
     """Figure with one template line per row, shared white-yellow-red scale (max = largest mean damage)."""
-    top = np.nanmax([t[1] for _, r in rows for t in r] + [1e-6])
+    top = cfg["vmax"] or np.nanmax([t[1] for _, r in rows for t in r] + [1e-6])   # VMAX: shared scale
     cmap = matplotlib.colors.LinearSegmentedColormap.from_list("damage", cfg["colours"])
     norm = matplotlib.colors.Normalize(0, top)
     fig, ax = plt.subplots(figsize=(width, 1.0 * len(rows) + 1.2), dpi=130)
     fig.subplots_adjust(top=1 - 0.5 / (1.0 * len(rows) + 1.2), bottom=0.02)   # no dead band above row 1
     ax.set_xlim(0, 1); ax.set_ylim(len(rows) - 0.2, -0.6)
     fig.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), ax=ax, shrink=0.5, pad=0.01,
-                 label="loss increase on the word, ΔCE = −Δ log p(true word)")
+                 label="ΔCE (loss increase)")
     panel_template(fig, ax, rows, cmap, norm)
     return fig
 
@@ -203,17 +205,17 @@ def main_template(cfg, w):
     tok = BertTokenizer.from_pretrained("bert-base-uncased")
     names = {int(v): k for k, v in json.load(open(cfg["labels"])).items()}
     rows = []
-    for cond in ("R", "Rev"):
+    for cond in cfg["cond"].split("+"):                  # R only by default; COND=R+Rev adds reversed
         for cls in cfg["pair"]:
             s = w[(w.true_class == cls) & (w.condition == cond)]
             rows.append((f"{cond}, n={s.clip_id.nunique()}", template_row(s, names[cls], tok, margin_note(cfg, cls, cond))))
-    top = np.nanmax([t[1] for _, r in rows for t in r] + [1e-6])
+    top = cfg["vmax"] or np.nanmax([t[1] for _, r in rows for t in r] + [1e-6])   # VMAX: shared scale
     cmap = matplotlib.colors.LinearSegmentedColormap.from_list("damage", cfg["colours"])
     norm = matplotlib.colors.Normalize(0, top)
     fig, ax = plt.subplots(figsize=(5.5, 1.0 * len(rows) + 1.2), dpi=130)
     ax.set_xlim(0, 1); ax.set_ylim(len(rows) - 0.2, -0.6)
     fig.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), ax=ax, shrink=0.7, pad=0.01,
-                 label="loss increase on the word, ΔCE = −Δ log p(true word)")
+                 label="ΔCE (loss increase)")
     panel_template(fig, ax, rows, cmap, norm)
     return fig
 
@@ -226,7 +228,7 @@ def main():
         out = prof_mod.profile_dir("compare").parent / "compare" / f"wordmap_compare_{a}_{b}.png"
         out.parent.mkdir(parents=True, exist_ok=True)
         fig = draw_rows(cfg, main_compare(cfg), width=9)
-        fig.suptitle(f"Ablation damage per template word, pair {a}/{b}, R, held-out clips "
+        fig.suptitle(f"Ablation damage ({ABL}) per template word, pair {a}/{b}, R, held-out clips "
                      f"('something' = object words, averaged per clip)", x=0.02, ha="left", fontsize=10)
         fig.savefig(out, dpi=130, bbox_inches="tight"); print(f"saved {out}")
         return
@@ -235,9 +237,9 @@ def main():
     w.drop(columns="pair").to_csv(cfg["out_dir"] / f"wordmap_{a}_{b}.csv", index=False)
     if cfg["mode"] == "template":
         fig = main_template(cfg, w)
-        fig.suptitle(f"#{cfg['feature']} ablated: mean damage per template word, held-out {a}/{b} clips "
+        fig.suptitle(f"#{cfg['feature']} ablated ({ABL}): mean damage per template word, held-out {a}/{b} clips "
                      f"('something' = the object words, averaged per clip)", x=0.02, ha="left", fontsize=10)
-        out = cfg["out_dir"] / f"wordmap_template_{a}_{b}.png"
+        out = cfg["out_dir"] / f"wordmap_template_{a}_{b}_{cfg['cond'].replace('+', '_')}.png"
         fig.savefig(out, dpi=130, bbox_inches="tight"); print(f"saved {out}")
         return
     cls = int(cfg["cls"] or w[w.pair & (w.condition == "R")].groupby("true_class").d.mean().idxmin())
@@ -251,7 +253,7 @@ def main():
                  label="damage = −Δ log p(true word) when ablated")
     panel_captions(fig, ax, s, cmap, norm)          # after the colorbar: it resizes ax, which sets char width
     word = s[s.pair].word.iloc[0]
-    fig.suptitle(f"#{cfg['feature']} ablated: damage to each masked word, '{word}' clips ({cls}), {cfg['cond']}, "
+    fig.suptitle(f"#{cfg['feature']} ablated ({ABL}): damage to each masked word, '{word}' clips ({cls}), {cfg['cond']}, "
                  f"held-out, n={n}", x=0.02, ha="left", fontsize=10)
     out = cfg["out_dir"] / f"wordmap_{a}_{b}_{word}_{cfg['cond']}.png"     # class word + condition: no overwrites
     fig.savefig(out, dpi=130, bbox_inches="tight"); print(f"saved {out}")

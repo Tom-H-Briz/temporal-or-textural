@@ -17,8 +17,9 @@ CFG = {
     # every MLM run the figures may draw on; add new run dirs here and all scripts pick them up
     "in_dirs":  [ROOT / "outputs/analysis/umt_mlm_feature_contrast",
                  ROOT / "outputs/analysis/umt_mlm_feature_contrast_pushpull"],
-    "ablation_dirs": [ROOT / "outputs/analysis/umt_mlm_group_ablation",
-                      ROOT / "outputs/analysis/umt_mlm_group_ablation_pushpull"],
+    # ablation runs: SAE-spliced by default (project convention, 22 Oct); ABLATION=raw -> raw-stream
+    "ablation_dirs": [ROOT / f"outputs/analysis/{d}{'' if os.environ.get('ABLATION') == 'raw' else '_splice'}"
+                      for d in ("umt_mlm_group_ablation", "umt_mlm_group_ablation_pushpull")],
     "n_frames": 12, "n_patches": 196,
 }
 
