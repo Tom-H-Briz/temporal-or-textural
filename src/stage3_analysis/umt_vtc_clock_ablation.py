@@ -1,8 +1,8 @@
 """UMT L9 clock ablation under the VTC 174-way head, SL subset (brief 211026).
 
 Which classes rely on UMT's 7 "clock" L9 SAE features (early 5473/2417/3948/5043, late
-6059/2261/3623) — as group arms and each clock alone — plus the hand singles 4788
-(first-frame bias) / 6127 (order-of-motion)?
+6059/2261/3623) and the 6 positionally consistent core features (4788/1282/1347/4301/1694/541;
+fixed frame profiles kept under Rev / C) — as groups, alone, and all 14 core (+ 6127, content)?
 Ablates every arm (dose=1 raw-stream edit, umt_bridge_phase3.apply_edit) on all clips of
 the 35 SL classes (Static_Temporal.csv x manifest cap40) — the clocks as group arms AND
 each alone — and stores ALL 174 logits per clip x arm (fp16), so every summary runs on CPU.
@@ -30,8 +30,12 @@ CFG = {
     "layer": int(os.environ.get("LAYER", 9)), "sae_k": 64, "job_label": "7ep",
     "model": "umt", "dose": 1.0,                       # ablation only (apply_edit's default is 2)
     "early": [5473, 2417, 3948, 5043], "late": [6059, 2261, 3623],
-    # every clock alone too (the redundancy test), plus the hand singles
-    "singles": {f"single_{f}": f for f in (5473, 2417, 3948, 5043, 6059, 2261, 3623, 4788, 6127)},
+    # the rest of the core 14 (22 Oct): fixed multi-peak frame profiles, kept under Rev / C
+    # ("positionally consistent", not ramps); 6127 = the one content-following core feature
+    "positional": [4788, 1282, 1347, 4301, 1694, 541],
+    # every clock and positional feature alone too (the redundancy test), plus 6127
+    "singles": {f"single_{f}": f for f in (5473, 2417, 3948, 5043, 6059, 2261, 3623,
+                                           4788, 1282, 1347, 4301, 1694, 541, 6127)},
     "conds": os.environ.get("CONDS", "R"),             # R first (user, 21 Oct); C/Rev = second pass
     "sl_csv": ROOT / "outputs/Laura_SL/Static_Temporal.csv",
     "manifest": ROOT / "outputs/manifests/manifest_ssv2_all174_cap40.json",
@@ -111,9 +115,12 @@ def clip_pass(st, pv):
 def arm_rows(cfg):
     """[(arm, feats)] in fixed order: the batch-1 baseline, `batch_base` (an empty edit
     inside the batched forward — the reference every delta is measured against), the 3
-    group arms, the 9 singles, then the control arms read back from arms.csv."""
+    group arms (early / late / all clocks, positional, core14), the 14 singles, then the
+    control arms read back from arms.csv (clock groups only; the rest have no mass peers)."""
     arms = [("baseline", []), ("batch_base", []), ("early", cfg["early"]),
-            ("late", cfg["late"]), ("all", cfg["all_clocks"])]
+            ("late", cfg["late"]), ("all", cfg["all_clocks"]),
+            ("positional", cfg["positional"]),                      # no control: no mass peers
+            ("core14", cfg["all_clocks"] + cfg["positional"] + [6127])]
     arms += [(name, [f]) for name, f in cfg["singles"].items()]
     p = cfg["out_dir"] / "arms.csv"
     assert p.exists(), "arms.csv missing: run MODE=mass first (it draws the controls)"

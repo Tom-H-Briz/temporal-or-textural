@@ -6,7 +6,7 @@
 #SBATCH --time=02:00:00
 
 # UMT L9 clock ablation under the VTC head, SL subset (src/stage3_analysis/umt_vtc_clock_ablation.py,
-# brief 211026): 7 clock features + hand singles 4788/6127, mass-matched group controls, all
+# brief 211026): 7 clocks + 6 positional core features (groups, singles, core14), clock-group controls, all
 # 174 logits per clip x arm. Outputs -> outputs/analysis/umt_vtc_clock_ablation/.
 # MODE=mass|check|ablate|summarise|compare|all (check needs mass first; compare is post-fix).
 # Full:        sbatch slurm/umt_vtc_clock_ablation.sh
