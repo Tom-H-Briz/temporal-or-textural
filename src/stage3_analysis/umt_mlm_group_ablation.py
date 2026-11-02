@@ -147,7 +147,7 @@ def print_contrast_summary(cfg, per):
         print("split counts:\n" + pd.read_csv(split, dtype={"clip_id": str})
               .groupby(["a", "b", "split"]).size().rename("n").to_string())
     sk = cfg["contrast_dir"] / "skipped_clips.csv"
-    if sk.exists():
+    if sk.exists() and sk.stat().st_size > 1:          # no skips -> blank file
         df = pd.read_csv(sk)
         if len(df):
             print("mask skips:\n" + df.groupby(["a", "b", "reason"]).size().rename("n").to_string())
