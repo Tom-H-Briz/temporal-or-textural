@@ -19,6 +19,10 @@
 # Push/pull (after the push/pull contrast job; stop at groups for review, brief §6.1):
 #   sbatch --export=ALL,MODE=groups,CLIP_SOURCE=val,PAIRS="93_86;94_87",CONTRAST_DIR=outputs/analysis/umt_mlm_feature_contrast_pushpull,OUT_DIR=outputs/analysis/umt_mlm_group_ablation_pushpull slurm/umt_mlm_group_ablation.sh
 #   then MODE=all (same exports) for check + ablate + summarise + hand.
+# Text-neutral pairs (02/11; after the two tn contrast jobs), groups first, per job:
+#   sbatch --export=ALL,MODE=groups,CLIP_SOURCE=val,PAIRS="166_167;112_118;61_138;106_145;89_148;8_104",CONTRAST_DIR=outputs/analysis/umt_mlm_feature_contrast_tn_a,OUT_DIR=outputs/analysis/umt_mlm_group_ablation_tn_a slurm/umt_mlm_group_ablation.sh
+#   sbatch --export=ALL,MODE=groups,CLIP_SOURCE=val,PAIRS="12_112;10_106",CONTRAST_DIR=outputs/analysis/umt_mlm_feature_contrast_tn_b,OUT_DIR=outputs/analysis/umt_mlm_group_ablation_tn_b slurm/umt_mlm_group_ablation.sh
+#   then MODE=all (same exports); add SPLICE=1 and an _splice OUT_DIR for the spliced arm.
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"

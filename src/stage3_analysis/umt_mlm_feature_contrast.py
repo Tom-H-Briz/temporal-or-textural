@@ -43,7 +43,12 @@ CFG = {
         (46, 5): ("opening", "closing"), (168, 165): ("upwards", "downwards"),
         (45, 43): ("up", "down"), (44, 41): ("towards", "away"),
         (42, 40): ("closer", "away"), (37, 36): ("closer", "away"),
-        (93, 86): ("pushing", "pulling"), (94, 87): ("pushing", "pulling")},
+        (93, 86): ("pushing", "pulling"), (94, 87): ("pushing", "pulling"),
+        # text-neutral pairs (captions differ only in the key word; 02/11): val clips
+        (166, 167): ("left", "right"), (112, 118): ("onto", "underneath"),
+        (61, 138): ("pouring", "spilling"), (12, 112): ("dropping", "putting"),
+        (106, 145): ("putting", "stuffing"), (89, 148): ("pulling", "taking"),
+        (8, 104): ("dropping", "putting"), (10, 106): ("dropping", "putting")},
     "clip_source": os.environ.get("CLIP_SOURCE", "phase3"),  # phase3 files | val + §2 split
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),

@@ -18,6 +18,10 @@
 #   sbatch --export=ALL,PAIRS="46_5;45_43" slurm/umt_mlm_feature_contrast.sh
 # Push/pull (brief mlm_pushpull_brief_201026.md; val clips + Phase 3's split rule):
 #   sbatch --export=ALL,CLIP_SOURCE=val,PAIRS="93_86;94_87",OUT_DIR=outputs/analysis/umt_mlm_feature_contrast_pushpull slurm/umt_mlm_feature_contrast.sh
+# Text-neutral pairs (02/11), two jobs: classes 106 and 112 sit in two pairs each and
+# sparse files are keyed by clip id, so pairs sharing a class need separate OUT_DIRs:
+#   sbatch --export=ALL,CLIP_SOURCE=val,PAIRS="166_167;112_118;61_138;106_145;89_148;8_104",OUT_DIR=outputs/analysis/umt_mlm_feature_contrast_tn_a slurm/umt_mlm_feature_contrast.sh
+#   sbatch --export=ALL,CLIP_SOURCE=val,PAIRS="12_112;10_106",OUT_DIR=outputs/analysis/umt_mlm_feature_contrast_tn_b slurm/umt_mlm_feature_contrast.sh
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"
