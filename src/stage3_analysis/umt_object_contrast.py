@@ -271,7 +271,8 @@ def run_select(cfg, sets):
         f = check_features(d, Ss, A, chosen).assign(object=o, n_obj=int((d.role == "pos").sum()), n_non=int((d.role == "neg").sum()))
         print(f"{o}: {len(chosen)} chosen\n{f.round(3).to_string(index=False)}", flush=True)
         feats.append(f)
-    pd.concat(feats).to_csv(cfg["out_dir"] / "features.csv", index=False)
+    f = pd.concat(feats)                              # a unit with no passers adds an empty frame
+    f.astype({"latent": int}).to_csv(cfg["out_dir"] / "features.csv", index=False)
 
 
 def run_controls(cfg, sets):
@@ -289,7 +290,7 @@ def run_controls(cfg, sets):
         neutral &= np.abs(a - 0.5) <= cfg["ctrl_band"]
         mass.append(Ss["R"]["mean"])
     mass = np.concatenate(mass).mean(0)
-    sel = np.array(sorted(feats.latent.unique()))
+    sel = np.array(sorted(feats.latent.astype(int).unique()))   # int even if read back as float
     pool = set(np.where((mass > 0) & neutral)[0].tolist()) - set(sel.tolist())
     assert len(pool) >= len(sel), f"control pool has {len(pool)} latents for {len(sel)} features: widen ctrl_band"
     ctrl, gap = mass_controls(mass, sel, None, None, pool=pool)

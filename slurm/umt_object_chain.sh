@@ -16,6 +16,8 @@
 # TASK=pair (opposite pairs, key word masked; R + C + Rev ablation) -> umt_pair_contrast* / umt_pair_ablation_L{L}_splice:
 #   J=$(sbatch --parsable --export=ALL,TASK=pair,STAGE=sample slurm/umt_object_chain.sh)
 #   for L in 5 7 9; do sbatch --dependency=afterok:$J --export=ALL,TASK=pair,LAYER=$L slurm/umt_object_chain.sh; done
+# STAGE=resume: controls -> ablate -> summarise on an existing extraction + features.csv (no re-extract):
+#   sbatch --export=ALL,TASK=pair,LAYER=5,STAGE=resume slurm/umt_object_chain.sh
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"
@@ -26,6 +28,10 @@ echo "LAYER=$LAYER STAGE=$STAGE"
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 if [ "$STAGE" = sample ]; then
     RUN="MODE=sample python src/stage3_analysis/umt_object_contrast.py"
+elif [ "$STAGE" = resume ]; then                 # extraction + selection already on disk
+    RUN="MODE=controls python src/stage3_analysis/umt_object_contrast.py &&
+         FROM_CONTRAST=1 MODE=ablate python src/stage3_analysis/umt_object_ablation.py &&
+         FROM_CONTRAST=1 MODE=summarise python src/stage3_analysis/umt_object_ablation.py"
 else
     RUN="MODE=all python src/stage3_analysis/umt_object_contrast.py &&
          FROM_CONTRAST=1 MODE=ablate python src/stage3_analysis/umt_object_ablation.py &&
