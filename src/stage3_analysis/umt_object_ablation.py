@@ -6,8 +6,9 @@ Clips: every val clip whose caption has box / pen / cup exactly once as a single
 (each object in a clip is its own masked row, so co-occurring objects are natural controls).
 Edits: baseline, 4 singles, cup pair, a mass-matched control per edit; R and C; plus one
 blank-video (text-only) pass per clip.
-Modes: controls (CPU, local: prints control ids for CFG) | ablate (GPU; default). Smoke test:
-ablate with MAX_CLIPS=3 (CPU, writes to *_smoke, never the real run). LAYER must be unset or 9.
+Modes: controls (CPU, local: prints control ids for CFG) | ablate (GPU; default) | summarise (CPU). Smoke test:
+ablate with MAX_CLIPS=3 (CPU, writes to *_smoke, never the real run). LAYER must be unset or 9, except with
+FROM_CONTRAST=1: layer, features, controls and test rows from umt_object_contrast_L{LAYER}.
 Usage: MODE=ablate SPLICE=1 uv run python src/stage3_analysis/umt_object_ablation.py
 """
 import json, os, re, sys, time
@@ -148,14 +149,81 @@ def run_ablate(cfg, s, rows):
         save()
 
 
+def deltas(cfg):
+    """per_row.parquet -> one row per (clip, object, cond, edit) with d_logp / d_top1 vs that
+    row's baseline, the blank-video headroom (baseline R/C - null) and source (13 pairs / held out)."""
+    import umt_object_features as of
+    d = pd.read_parquet(cfg["out_dir"] / "per_row.parquet")
+    k = ["clip_id", "object", "cond"]
+    base = d[d.edit == "baseline"].set_index(k)[["logp", "top1"]]
+    null = d[d.cond == "null"].set_index(["clip_id", "object"]).logp.rename("null_logp")
+    e = d[d.cond != "null"].join(base, on=k, rsuffix="_base").join(null, on=["clip_id", "object"])
+    e["d_logp"], e["d_top1"] = e.logp - e.logp_base, e.top1.astype(float) - e.top1_base.astype(float)
+    e["headroom"] = e.logp_base - e.null_logp
+    if cfg.get("from_contrast"):                      # every row is a held-out test row
+        e["source"] = "test"
+        return e
+    pairs13 = set(of.clip_table(of.CFG).clip_id.astype(str))
+    e["source"] = np.where(e.clip_id.astype(str).isin(pairs13), "13pairs", "heldout")
+    return e
+
+
+def boot(x, n=1000, seed=0):
+    """Mean and 95% bootstrap CI over rows."""
+    x = np.asarray(x, float)
+    m = np.random.default_rng(seed).choice(x, (n, len(x))).mean(1)
+    return x.mean(), *np.percentile(m, [2.5, 97.5])
+
+
+def run_summarise(cfg):
+    """summary_logp.csv (d log p, edit - control, % of headroom) and summary_acc.csv (top-1)."""
+    e = deltas(cfg)
+    k = ["clip_id", "object", "cond"]
+    e = pd.concat([e, e.assign(source="all")])
+    P = {v: e.pivot_table(index=k + ["source"], columns="edit", values=v) for v in ("d_logp", "d_top1", "top1_base", "headroom")}
+    lp, acc = [], []
+    for (obj, cond, src), g in P["d_logp"].groupby(level=["object", "cond", "source"]):
+        idx, head = g.index, P["headroom"].loc[g.index, "baseline"]
+        for name in cfg["edits"]:
+            m, lo, hi = boot(g[name]); dm, dlo, dhi = boot(g[name] - g[f"ctrl_{name}"])
+            lp.append(dict(edit=name, object=obj, cond=cond, source=src, n=len(g), d_logp=m, lo=lo, hi=hi,
+                           ctrl_d_logp=g[f"ctrl_{name}"].mean(), minus_ctrl=dm, mc_lo=dlo, mc_hi=dhi,
+                           headroom=head.mean(), pct_headroom=-100 * m / head.mean()))
+            a = P["d_top1"].loc[idx]
+            acc.append(dict(edit=name, object=obj, cond=cond, source=src, n=len(g),
+                            base_acc=P["top1_base"].loc[idx, "baseline"].mean(), d_acc=a[name].mean(),
+                            ctrl_d_acc=a[f"ctrl_{name}"].mean()))
+    pd.DataFrame(lp).to_csv(cfg["out_dir"] / "summary_logp.csv", index=False)
+    pd.DataFrame(acc).to_csv(cfg["out_dir"] / "summary_acc.csv", index=False)
+    return pd.DataFrame(lp), pd.DataFrame(acc)
+
+
+def contrast_cfg(cfg):
+    """FROM_CONTRAST=1: layer, edits, controls and test rows from umt_object_contrast_L{LAYER}
+    (singles + each object's group), output to umt_object_ablation_L{LAYER}."""
+    L = int(os.environ.get("LAYER", 9))
+    d = ROOT / f"outputs/analysis/umt_object_contrast_L{L}{'_smoke' if cfg['max_clips'] else ''}"
+    f = pd.read_csv(d / "features.csv").sort_values(["object", "auroc_R"], ascending=[True, False])
+    edits = {f"{o}_{int(x)}": [int(x)] for o, x in zip(f.object, f.latent)}
+    edits.update({f"{o}_group": g.latent.astype(int).tolist() for o, g in f.groupby("object") if len(g) > 1})
+    ctrl = pd.read_csv(d / "controls.csv")
+    sets = pd.read_csv(ROOT / "outputs/analysis/umt_object_contrast/sets.csv", dtype={"clip_id": str})
+    test = sets[sets.role == "test"]
+    return dict(cfg, layer=L, edits=edits, controls=dict(zip(ctrl.latent.astype(int), ctrl.control.astype(int))),
+                test_rows=set(zip(test.clip_id, test.object)), from_contrast=True,
+                out_dir=cfg["out_dir"].with_name(f"umt_object_ablation_L{L}"))
+
+
 def main():
     torch.backends.cuda.matmul.allow_tf32 = False     # fp32 paths, as the references
     torch.backends.cudnn.allow_tf32 = False
     mode, cfg = os.environ.get("MODE", "ablate"), dict(CFG)
-    if mode not in ("controls", "ablate"):            # nothing else may fall through to a full run
-        sys.exit(f"MODE={mode}: use controls | ablate (smoke test = ablate with MAX_CLIPS=3)")
+    if mode not in ("controls", "ablate", "summarise"):            # nothing else may fall through to a full run
+        sys.exit(f"MODE={mode}: use controls | ablate | summarise (smoke test = ablate with MAX_CLIPS=3)")
     if mode == "controls":
         return run_controls(cfg)
+    if os.environ.get("FROM_CONTRAST") == "1":       # layer-general run from the object contrast
+        cfg = contrast_cfg(cfg)
     if os.environ.get("LAYER", str(cfg["layer"])) != str(cfg["layer"]):   # finish_tower reads it
         sys.exit(f"LAYER={os.environ['LAYER']} in the environment but this run is L{cfg['layer']}: "
                  "unset LAYER (edit_logits' finish_tower falls back to it)")
@@ -164,11 +232,15 @@ def main():
     if cfg["max_clips"]:                              # local checks never overwrite the run
         cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name + "_smoke")
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
+    if mode == "summarise":                           # CPU, local, after the rsync
+        return run_summarise(cfg)
     from umt_mlm_feature_contrast import setup
     s = dict(setup(cfg), splice=cfg["splice"],
              labels={v["id"]: v["label"] for v in json.load(open(cfg["validation_path"]))})
     rows, skips = object_rows(cfg, s["tok"], s["pre_text"])
     skips.to_csv(cfg["out_dir"] / "skipped_rows.csv", index=False)
+    if cfg.get("test_rows"):                          # contrast runs: held-out object rows only
+        rows = rows[[(c, o) in cfg["test_rows"] for c, o in zip(rows.clip_id, rows.object)]]
     if cfg["max_clips"]:
         rows = rows[rows.clip_id.isin(rows.groupby("object").clip_id.first())]   # 1 clip / object
         rows = rows[rows.clip_id.isin(rows.clip_id.unique()[:cfg["max_clips"]])]
