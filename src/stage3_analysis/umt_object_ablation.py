@@ -6,7 +6,8 @@ Clips: every val clip whose caption has box / pen / cup exactly once as a single
 (each object in a clip is its own masked row, so co-occurring objects are natural controls).
 Edits: baseline, 4 singles, cup pair, a mass-matched control per edit; R and C; plus one
 blank-video (text-only) pass per clip.
-Modes: controls (CPU, local: prints control ids for CFG) | check (CPU, MAX_CLIPS) | ablate (GPU)
+Modes: controls (CPU, local: prints control ids for CFG) | ablate (GPU; default). Smoke test:
+ablate with MAX_CLIPS=3 (CPU, writes to *_smoke, never the real run). LAYER must be unset or 9.
 Usage: MODE=ablate SPLICE=1 uv run python src/stage3_analysis/umt_object_ablation.py
 """
 import json, os, re, sys, time
@@ -19,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT / "src" / "stage3_analysis")]
 
 CFG = {
-    "layer": 9, "sae_k": 64, "job_label": "7ep", "dose": 1.0,   # the contrast runs' SAE
+    "layer": 9, "sae_k": 64, "job_label": "7ep",   # the contrast runs' SAE (ablation only: dose 1)
     "objects": ("box", "pen", "cup"),
     "edits": {"box_5483": [5483], "cup_6011": [6011], "cup_5880": [5880],
               "cup_pair": [6011, 5880], "pen_2428": [2428]},
@@ -116,7 +117,7 @@ def null_logits(s, cap, h8, add):
     from umt_mlm_refit import mlm_fusion
     vis = torch.zeros(1, 1, 768, device=h8.device, dtype=h8.dtype)
     h = mlm_fusion(h8, add, vis, s["w"])
-    return s["head"](h[torch.arange(len(cap["pos"])), torch.tensor(cap["pos"])])
+    return s["head"](h[torch.arange(len(cap["pos"]), device=h.device), torch.tensor(cap["pos"], device=h.device)])
 
 
 def run_ablate(cfg, s, rows):
@@ -129,6 +130,8 @@ def run_ablate(cfg, s, rows):
     texts = {c: text_batch(cfg, s, by_clip[c]) for c in clips.clip_id}
     for c in clips.clip_id:
         recs += measures(null_logits(s, *texts[c]), by_clip[c], "null", "baseline")
+    save = lambda: pd.DataFrame(recs).to_parquet(cfg["out_dir"] / "per_row.parquet", index=False)
+    save()                                            # after each pass: a crash keeps what is done
     for cond in cfg["conds"]:
         seen, t0 = set(), time.time()
         for pv, y in clip_loader(clips, cfg, cond):
@@ -142,15 +145,20 @@ def run_ablate(cfg, s, rows):
             recs += [r for name, f in edits for r in measures(
                 edit_logits(s, *texts[c][1:], texts[c][0], x9, z0, D, f, 1.0), by_clip[c], cond, name)]
         print(f"  {cond}: {len(seen)}/{len(clips)} clips, {time.time() - t0:.0f}s", flush=True)
-    pd.DataFrame(recs).to_parquet(cfg["out_dir"] / "per_row.parquet", index=False)
+        save()
 
 
 def main():
     torch.backends.cuda.matmul.allow_tf32 = False     # fp32 paths, as the references
     torch.backends.cudnn.allow_tf32 = False
     mode, cfg = os.environ.get("MODE", "ablate"), dict(CFG)
+    if mode not in ("controls", "ablate"):            # nothing else may fall through to a full run
+        sys.exit(f"MODE={mode}: use controls | ablate (smoke test = ablate with MAX_CLIPS=3)")
     if mode == "controls":
         return run_controls(cfg)
+    if os.environ.get("LAYER", str(cfg["layer"])) != str(cfg["layer"]):   # finish_tower reads it
+        sys.exit(f"LAYER={os.environ['LAYER']} in the environment but this run is L{cfg['layer']}: "
+                 "unset LAYER (edit_logits' finish_tower falls back to it)")
     if cfg["splice"]:
         cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name + "_splice")
     if cfg["max_clips"]:                              # local checks never overwrite the run
