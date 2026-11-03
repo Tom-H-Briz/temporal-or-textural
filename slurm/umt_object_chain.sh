@@ -13,6 +13,9 @@
 # STAGE=sample writes sets.csv only (run once first, so the layer jobs never race on it):
 #   J=$(sbatch --parsable --export=ALL,STAGE=sample slurm/umt_object_chain.sh)
 #   for L in 5 7 9; do sbatch --dependency=afterok:$J --export=ALL,LAYER=$L slurm/umt_object_chain.sh; done
+# TASK=pair (opposite pairs, key word masked; R + C + Rev ablation) -> umt_pair_contrast* / umt_pair_ablation_L{L}_splice:
+#   J=$(sbatch --parsable --export=ALL,TASK=pair,STAGE=sample slurm/umt_object_chain.sh)
+#   for L in 5 7 9; do sbatch --dependency=afterok:$J --export=ALL,TASK=pair,LAYER=$L slurm/umt_object_chain.sh; done
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"

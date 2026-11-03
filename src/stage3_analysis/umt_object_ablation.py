@@ -96,8 +96,10 @@ def measures(logits, g, cond, edit):
     tr = torch.tensor(g.true_id.values, device=lp.device)
     lpt = lp.gather(1, tr[:, None]).squeeze(1).cpu().numpy()
     top = logits.argmax(-1).cpu().numpy()
+    alt = (lp.gather(1, torch.tensor(g.alt_id.values, device=lp.device)[:, None]).squeeze(1).cpu().numpy()
+           if "alt_id" in g else np.full(len(g), np.nan))   # pairs: the other class word
     return [dict(clip_id=r.clip_id, object=r.object, true_class=r.true_class, cond=cond, edit=edit,
-                 logp=float(lpt[i]), top1=bool(top[i] == r.true_id), top1_id=int(top[i]))
+                 logp=float(lpt[i]), top1=bool(top[i] == r.true_id), top1_id=int(top[i]), logp_alt=float(alt[i]))
             for i, r in enumerate(g.itertuples())]
 
 
@@ -126,6 +128,7 @@ def run_ablate(cfg, s, rows):
     from umt_bridge_phase3 import tower_to_layer
     from umt_mlm_feature_contrast import clip_loader
     from umt_mlm_group_ablation import edit_logits
+    from umt_vision_pair_contrast import apply_condition
     clips = rows.drop_duplicates("clip_id")[["clip_id"]].reset_index(drop=True)
     by_clip, edits, recs, D = dict(tuple(rows.groupby("clip_id"))), edit_list(cfg), [], s["sae"].get_dictionary()
     texts = {c: text_batch(cfg, s, by_clip[c]) for c in clips.clip_id}
@@ -140,7 +143,8 @@ def run_ablate(cfg, s, rows):
             if c in seen:
                 continue
             seen.add(c)
-            x9 = tower_to_layer(s["model"], pv.to(cfg["device"]), layer=cfg["layer"])
+            pv = apply_condition(pv, cond).to(cfg["device"])   # Rev: frames flipped; R / C: as loaded
+            x9 = tower_to_layer(s["model"], pv, layer=cfg["layer"])
             with torch.no_grad():
                 z0 = s["sae"].encode((x9[0] - s["dim_mean"]).float())[1]
             recs += [r for name, f in edits for r in measures(
@@ -160,6 +164,8 @@ def deltas(cfg):
     e = d[d.cond != "null"].join(base, on=k, rsuffix="_base").join(null, on=["clip_id", "object"])
     e["d_logp"], e["d_top1"] = e.logp - e.logp_base, e.top1.astype(float) - e.top1_base.astype(float)
     e["headroom"] = e.logp_base - e.null_logp
+    e["pacc"] = (e.logp > e.logp_alt).astype(float)        # pairs: true word above the other (NaN alt -> 0)
+    e["d_pacc"] = e.pacc - e.join((e[e.edit == "baseline"].set_index(k).pacc).rename("pacc_base"), on=k).pacc_base
     if cfg.get("from_contrast"):                      # every row is a held-out test row
         e["source"] = "test"
         return e
@@ -180,7 +186,7 @@ def run_summarise(cfg):
     e = deltas(cfg)
     k = ["clip_id", "object", "cond"]
     e = pd.concat([e, e.assign(source="all")])
-    P = {v: e.pivot_table(index=k + ["source"], columns="edit", values=v) for v in ("d_logp", "d_top1", "top1_base", "headroom")}
+    P = {v: e.pivot_table(index=k + ["source"], columns="edit", values=v) for v in ("d_logp", "d_top1", "top1_base", "headroom", "pacc", "d_pacc")}
     lp, acc = [], []
     for (obj, cond, src), g in P["d_logp"].groupby(level=["object", "cond", "source"]):
         idx, head = g.index, P["headroom"].loc[g.index, "baseline"]
@@ -192,7 +198,9 @@ def run_summarise(cfg):
             a = P["d_top1"].loc[idx]
             acc.append(dict(edit=name, object=obj, cond=cond, source=src, n=len(g),
                             base_acc=P["top1_base"].loc[idx, "baseline"].mean(), d_acc=a[name].mean(),
-                            ctrl_d_acc=a[f"ctrl_{name}"].mean()))
+                            ctrl_d_acc=a[f"ctrl_{name}"].mean(),
+                            base_pair_acc=P["pacc"].loc[idx, "baseline"].mean(), d_pair_acc=P["d_pacc"].loc[idx, name].mean(),
+                            ctrl_d_pair_acc=P["d_pacc"].loc[idx, f"ctrl_{name}"].mean()))
     pd.DataFrame(lp).to_csv(cfg["out_dir"] / "summary_logp.csv", index=False)
     pd.DataFrame(acc).to_csv(cfg["out_dir"] / "summary_acc.csv", index=False)
     return pd.DataFrame(lp), pd.DataFrame(acc)
@@ -201,17 +209,23 @@ def run_summarise(cfg):
 def contrast_cfg(cfg):
     """FROM_CONTRAST=1: layer, edits, controls and test rows from umt_object_contrast_L{LAYER}
     (singles + each object's group), output to umt_object_ablation_L{LAYER}."""
-    L = int(os.environ.get("LAYER", 9))
-    d = ROOT / f"outputs/analysis/umt_object_contrast_L{L}{'_smoke' if cfg['max_clips'] else ''}"
+    L, pair = int(os.environ.get("LAYER", 9)), os.environ.get("TASK", "object") == "pair"
+    task = "pair" if pair else "object"
+    d = ROOT / f"outputs/analysis/umt_{task}_contrast_L{L}{'_smoke' if cfg['max_clips'] else ''}"
     f = pd.read_csv(d / "features.csv").sort_values(["object", "auroc_R"], ascending=[True, False])
-    edits = {f"{o}_{int(x)}": [int(x)] for o, x in zip(f.object, f.latent)}
-    edits.update({f"{o}_group": g.latent.astype(int).tolist() for o, g in f.groupby("object") if len(g) > 1})
+    f["unit"] = f.object + ("_" + f.home.astype(str) if pair else "")   # pairs: one unit per direction
+    edits = {f"{u}_{int(x)}": [int(x)] for u, x in zip(f.unit, f.latent)}
+    edits.update({f"{u}_group": g.latent.astype(int).tolist() for u, g in f.groupby("unit") if len(g) > 1})
     ctrl = pd.read_csv(d / "controls.csv")
-    sets = pd.read_csv(ROOT / "outputs/analysis/umt_object_contrast/sets.csv", dtype={"clip_id": str})
+    sets = pd.read_csv(ROOT / f"outputs/analysis/umt_{task}_contrast/sets.csv", dtype={"clip_id": str})
     test = sets[sets.role == "test"]
-    return dict(cfg, layer=L, edits=edits, controls=dict(zip(ctrl.latent.astype(int), ctrl.control.astype(int))),
-                test_rows=set(zip(test.clip_id, test.object)), from_contrast=True,
-                out_dir=cfg["out_dir"].with_name(f"umt_object_ablation_L{L}"))
+    out = dict(cfg, layer=L, edits=edits, controls=dict(zip(ctrl.latent.astype(int), ctrl.control.astype(int))),
+               test_rows=set(zip(test.clip_id, test.object)), from_contrast=True,
+               out_dir=cfg["out_dir"].with_name(f"umt_{task}_ablation_L{L}"))
+    if pair:                                          # rows straight from sets (mask + alt word), per class
+        out.update(conds=("R", "C", "Rev"), pair_rows=test.astype({"pos": int, "true_id": int, "alt_id": int})
+                   .assign(object=lambda t: t.object + ":" + t.true_class.astype(str)))
+    return out
 
 
 def main():
@@ -237,9 +251,9 @@ def main():
     from umt_mlm_feature_contrast import setup
     s = dict(setup(cfg), splice=cfg["splice"],
              labels={v["id"]: v["label"] for v in json.load(open(cfg["validation_path"]))})
-    rows, skips = object_rows(cfg, s["tok"], s["pre_text"])
+    rows, skips = (cfg["pair_rows"], pd.DataFrame()) if "pair_rows" in cfg else object_rows(cfg, s["tok"], s["pre_text"])
     skips.to_csv(cfg["out_dir"] / "skipped_rows.csv", index=False)
-    if cfg.get("test_rows"):                          # contrast runs: held-out object rows only
+    if cfg.get("test_rows") and "pair_rows" not in cfg:   # object contrast runs: held-out rows only (pair rows already are)
         rows = rows[[(c, o) in cfg["test_rows"] for c, o in zip(rows.clip_id, rows.object)]]
     if cfg["max_clips"]:
         rows = rows[rows.clip_id.isin(rows.groupby("object").clip_id.first())]   # 1 clip / object

@@ -32,7 +32,15 @@ CFG = {
     "sets_dir":  A / "umt_object_contrast",                    # layer-independent clip sets
     "out_dir":   A / f"umt_object_contrast_L{L}",
     "device": "cuda" if torch.cuda.is_available() else "cpu", "num_workers": 4,
+    # TASK=pair: class A vs class B of each opposite pair (key word masked), same pipeline
+    "task": os.environ.get("TASK", "object"),
+    "pairs": {"45_43": ("up", "down"), "168_165": ("upwards", "downwards"), "46_5": ("opening", "closing"),
+              "93_86": ("pushing", "pulling"), "94_87": ("pushing", "pulling")},
+    "sel_frac": 0.5,                                           # pair clips to selection, per class
 }
+if CFG["task"] == "pair":                                      # own sets and outputs, never mixed
+    CFG.update(objects=tuple(CFG["pairs"]), sets_dir=A / "umt_pair_contrast",
+               out_dir=A / f"umt_pair_contrast_L{L}")
 
 
 def run_sample(cfg):
@@ -57,6 +65,27 @@ def run_sample(cfg):
     return pd.DataFrame(out)
 
 
+def run_sample_pairs(cfg):
+    """sets.csv for TASK=pair: one row per class-A / class-B val clip whose caption has its key
+    word exactly once (mask pos, true / alt word ids); per class sel_frac to "sel", rest "test"."""
+    from umt_mlm_refit import encode, get_tokenizer, umt_pre_text
+    tok, pre, cls_of, out = get_tokenizer(), umt_pre_text(), template_class(cfg), []
+    val = json.load(open(cfg["validation_path"]))
+    for key, words in cfg["pairs"].items():
+        ab, ids = [int(x) for x in key.split("_")], tok.convert_tokens_to_ids(list(words))
+        for c, w, alt in ((ab[0], ids[0], ids[1]), (ab[1], ids[1], ids[0])):
+            rows = []
+            for v in (v for v in val if cls_of(v["template"]) == c):
+                enc, _ = encode(tok, pre(v["label"]), cfg["max_len"])
+                hits = [p for p in range(1, len(enc)) if enc[p] == w]
+                if len(hits) == 1:
+                    rows.append(dict(clip_id=v["id"], object=key, true_class=c, pos=hits[0], true_id=w, alt_id=alt))
+            r = pd.DataFrame(rows).sample(frac=1, random_state=cfg["seed"])
+            n = int(round(cfg["sel_frac"] * len(r)))
+            out += [r.iloc[:n].assign(role="sel"), r.iloc[n:].assign(role="test")]
+    return pd.concat(out).to_dict("records")
+
+
 def template_class(cfg):
     """{template: class id}, bracket-free lower-case keys as labels.json (object_rows' rule)."""
     norm = lambda s: s.lower().replace("[", "").replace("]", "")
@@ -70,7 +99,8 @@ def write_sets(cfg):
     if f.exists():
         return pd.read_csv(f, dtype={"clip_id": str})
     cfg["sets_dir"].mkdir(parents=True, exist_ok=True)
-    s = run_sample(cfg)
+    s = run_sample_pairs(cfg) if cfg["task"] == "pair" else run_sample(cfg)
+    s = pd.DataFrame(s)
     s.to_csv(f, index=False)
     print(s.pivot_table(index="object", columns="role", values="clip_id", aggfunc="count"))
     return pd.read_csv(f, dtype={"clip_id": str})
@@ -129,7 +159,8 @@ def run_extract(cfg, s, sets):
     """summ_{cond}.npz (clip_id + mean/max/top arrays) per condition, attr.npz (pos rows, R)."""
     sel = sets[sets.role != "test"]
     clips = pd.DataFrame({"clip_id": sorted(sel.clip_id.unique())})
-    pos = sets[(sets.role == "pos") & sets.clip_id.isin(clips.clip_id)].astype({"pos": int, "true_id": int})
+    pos = sets[(sets.role != "test") & sets.pos.notna() & sets.clip_id.isin(clips.clip_id)]   # rows with a masked word
+    pos = pos.astype({"pos": int, "true_id": int})
     pos_rows = {c: g for c, g in pos.groupby("clip_id")}
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
     for cond in cfg["conds"]:
@@ -187,11 +218,12 @@ def select_object(cfg, d, Ss, attr):
     return c, c[c.passed].head(cfg["n_feat"]), A
 
 
-def check_features(d, Ss, A, chosen):
+def check_features(d, Ss, A, chosen, y=None, cls=None):
     """Chosen latents: stratified AUROC under every condition (same summary), per-clip activation
     percentile (object / rest, R) and |noun attribution| percentile on object clips."""
     from scipy.stats import rankdata
-    y, cls, out = (d.role == "pos").values, d.true_class.values, []
+    y = (d.role == "pos").values if y is None else y   # pairs: home-class clips, one stratum
+    cls, out = (d.true_class.values if cls is None else cls), []
     attr_pct = 100 * rankdata(np.abs(A), axis=1) / A.shape[1]
     for r in chosen.itertuples():
         row = dict(latent=r.latent, summary=r.summary, attr_mean=r.attr_mean,
@@ -204,6 +236,23 @@ def check_features(d, Ss, A, chosen):
     return pd.DataFrame(out)
 
 
+def select_pair(cfg, d, Ss, attr, key):
+    """Per home class of the pair: AUROC(home vs other clips, R; one stratum) >= bar and mean
+    key-word attribution on home clips > 0 -> up to n_feat latents; then the shared checks."""
+    one, cands, feats = np.zeros(len(d), int), [], []
+    for home in [int(x) for x in key.split("_")]:
+        y = (d.true_class == home).values
+        A = np.stack([attr[(c, key)] for c in d.clip_id[y]])
+        rows = [dict(latent=f, summary=k, auroc=a, attr_mean=A[:, f].mean())
+                for k in cfg["summaries"] for f, a in enumerate(strat_auroc(Ss["R"][k], y, one))]
+        c = pd.DataFrame(rows).sort_values("auroc", ascending=False).drop_duplicates("latent")
+        c["passed"] = (c.auroc >= cfg["min_within"]) & (c.attr_mean > 0)
+        chosen = c[c.passed].head(cfg["n_feat"])
+        cands.append(c.head(50).assign(home=home))
+        feats.append(check_features(d, Ss, A, chosen, y=y, cls=one).assign(home=home, n_home=int(y.sum()), n_other=int((~y).sum())))
+    return pd.concat(cands), pd.concat(feats)
+
+
 def run_select(cfg, sets):
     """features.csv (chosen + checks, all objects) and candidates_{object}.csv (top 50)."""
     z = np.load(cfg["out_dir"] / "attr.npz")
@@ -211,6 +260,12 @@ def run_select(cfg, sets):
     feats = []
     for o in cfg["objects"]:
         d, Ss = object_data(cfg, sets, o)
+        if cfg["task"] == "pair":                     # per direction, home class in each row
+            cand, f = select_pair(cfg, d, Ss, attr, o)
+            cand.to_csv(cfg["out_dir"] / f"candidates_{o}.csv", index=False)
+            print(f"{o}:\n{f.assign(object=o).round(3).to_string(index=False)}", flush=True)
+            feats.append(f.assign(object=o))
+            continue
         cand, chosen, A = select_object(cfg, d, Ss, attr)
         cand.head(50).to_csv(cfg["out_dir"] / f"candidates_{o}.csv", index=False)
         f = check_features(d, Ss, A, chosen).assign(object=o, n_obj=int((d.role == "pos").sum()), n_non=int((d.role == "neg").sum()))
@@ -227,12 +282,16 @@ def run_controls(cfg, sets):
     neutral, mass = np.ones(cfg["n_lat"], bool), []
     for o in cfg["objects"]:
         d, Ss = object_data(cfg, sets, o)
-        a = strat_auroc(Ss["R"]["mean"], (d.role == "pos").values, d.true_class.values)
+        if cfg["task"] == "pair":                     # class A vs B, one stratum
+            a = strat_auroc(Ss["R"]["mean"], (d.true_class == int(o.split("_")[0])).values, np.zeros(len(d), int))
+        else:
+            a = strat_auroc(Ss["R"]["mean"], (d.role == "pos").values, d.true_class.values)
         neutral &= np.abs(a - 0.5) <= cfg["ctrl_band"]
         mass.append(Ss["R"]["mean"])
     mass = np.concatenate(mass).mean(0)
     sel = np.array(sorted(feats.latent.unique()))
     pool = set(np.where((mass > 0) & neutral)[0].tolist()) - set(sel.tolist())
+    assert len(pool) >= len(sel), f"control pool has {len(pool)} latents for {len(sel)} features: widen ctrl_band"
     ctrl, gap = mass_controls(mass, sel, None, None, pool=pool)
     out = pd.DataFrame(dict(latent=sel, control=ctrl, mass=mass[sel], ctrl_mass=mass[ctrl], gap=gap))
     out.to_csv(cfg["out_dir"] / "controls.csv", index=False)
@@ -241,6 +300,8 @@ def run_controls(cfg, sets):
 
 def smoke_sets(sets, n):
     """MAX_CLIPS=n: per object, n object + n non-object clips from one class that has both."""
+    if "sel" in set(sets.role):                       # TASK=pair: n clips of each class per pair
+        return sets[sets.role == "sel"].groupby(["object", "true_class"]).head(n)
     out = []
     for o, g in sets[sets.role != "test"].groupby("object"):
         k = g.groupby(["true_class", "role"]).size().unstack(fill_value=0).min(axis=1)
@@ -261,6 +322,7 @@ def main():
     sets = write_sets(cfg)
     if cfg["max_clips"]:
         sets = smoke_sets(sets, cfg["max_clips"])
+        cfg["ctrl_band"] = 0.5                         # tiny n: AUROC is coarse, any latent may control
     if mode in ("extract", "all"):
         from umt_mlm_feature_contrast import setup
         s = dict(setup(cfg), labels={v["id"]: v["label"] for v in json.load(open(cfg["validation_path"]))})
