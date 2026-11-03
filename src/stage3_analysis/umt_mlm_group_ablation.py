@@ -68,6 +68,9 @@ CFG = {
     # SPLICE=1: DFAEngine.run_ablated convention — L9 replaced by decode(z, feats zeroed) + dim_mean
     # (no error term); baseline = the unablated splice. SPLICE=0: raw-stream subtraction (20 Oct run).
     "splice": os.environ.get("SPLICE", "0") == "1",
+    # extra single-feature edits outside the groups, e.g. "8_104:5050+5167;10_106:5050"
+    # ('+' between features: sbatch --export splits on commas)
+    "extra_singles": os.environ.get("EXTRA_SINGLES", ""),
 }
 
 EXPECTED = {  # brief §2 membership table (acceptance 7.1)
@@ -236,6 +239,17 @@ def pair_edits(groups):
     return out, opp
 
 
+def add_extra_singles(cfg, edits):
+    """EXTRA_SINGLES -> append ("single_<f>", "single", "extra", [f], 1) to those pairs' edits."""
+    for item in filter(None, cfg["extra_singles"].split(";")):
+        pair, feats = item.split(":")
+        key = tuple(int(x) for x in pair.split("_"))
+        if key in edits:
+            edits[key][0].extend((f"single_{int(f)}", "single", "extra", [int(f)], 1)
+                                 for f in feats.split("+"))
+    return edits
+
+
 @torch.no_grad()
 def edit_logits(s, h8, add, cap, x9, z0, D, feats, dose):
     """x' = x9 - sum(z_f d_f) (dose 1, ablation only) -> tower 10-11 -> fusion -> head
@@ -347,7 +361,7 @@ def run_ablate(cfg, s):
     per_clip_edits.parquet + per_clip_other_words.parquet."""
     assert cfg["dose"] == 1.0, "ablation only"
     groups = pd.read_csv(cfg["out_dir"] / "groups.csv")
-    edits = {k: pair_edits(g) for k, g in groups.groupby(["a", "b"])}
+    edits = add_extra_singles(cfg, {k: pair_edits(g) for k, g in groups.groupby(["a", "b"])})
     rows = pair_rows(cfg)
     texts, skips = clip_texts(cfg, rows, s)
     keep = rows[rows.split == "g34"]
