@@ -33,7 +33,6 @@ CFG = {
     "validation_path": os.environ.get("VALIDATION_PATH", str(ROOT / "data/ssv2/labels/validation.json")),
     "video_dir":       os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2_val_set")),
     "refit_dir": ROOT / "outputs/analysis/umt_mlm_refit",
-    "feat_dir":  ROOT / "outputs/analysis/umt_object_features",  # clip_means_R.npy (controls)
     "out_dir":   Path(os.environ.get("OUT_DIR", str(ROOT / "outputs/analysis/umt_object_ablation"))),
     "device": "cuda" if torch.cuda.is_available() else "cpu", "num_workers": 4,
 }
@@ -44,13 +43,12 @@ def run_controls(cfg):
     among latents that separate none of the objects (AUROC in [0.4, 0.6] for all three)."""
     import umt_object_features as of
     from umt_bridge_phase3 import mass_controls
-    X = np.load(cfg["feat_dir"] / "clip_means_R.npy")
-    ok = ~np.isnan(X).any(1)
-    neutral = np.ones(X.shape[1], bool)
-    for obj in cfg["objects"]:
-        y = of.clip_table(dict(of.CFG, object=obj)).has_obj.values[ok]
-        neutral &= np.abs(of.auroc(X[ok], y) - 0.5) <= 0.1
-    mass = X[ok].mean(0)
+    neutral = np.ones(of.CFG["n_lat"], bool)
+    for obj in cfg["objects"]:                        # usable(): checked caches, same clip set
+        c, Xs, _ = of.usable(dict(of.CFG, object=obj))
+        X = Xs["R"]
+        neutral &= np.abs(of.auroc(X, c.has_obj.values) - 0.5) <= 0.1
+    mass = X.mean(0)
     sel = np.array(sorted({f for fs in cfg["edits"].values() for f in fs}))
     pool = set(np.where((mass > 0) & neutral)[0].tolist()) - set(sel.tolist())
     ctrl, gap = mass_controls(mass, sel, None, None, pool=pool)
