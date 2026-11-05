@@ -14,7 +14,9 @@
 # MODE=chain per layer: mass -> ablate -> profiles -> summarise (+ cross-layer table):
 #   J=$(sbatch --parsable --time=00:30:00 --export=ALL,MODE=select slurm/umt_layer_positional_ablation.sh)
 #   for L in 5 7 9; do sbatch --dependency=afterok:$J --export=ALL,LAYER=$L slurm/umt_layer_positional_ablation.sh; done
-# One stage: MODE=mass|check|ablate|profiles|summarise, e.g. --export=ALL,LAYER=5,MODE=profiles
+# MODE=rerun (6 Nov, per-clip rule 3): select -> arms (CPU, from mass_R.npy) -> ablate -> summarise,
+#   for L in 5 7 9; do sbatch --time=01:30:00 --export=ALL,LAYER=$L,MODE=rerun slurm/umt_layer_positional_ablation.sh; done
+# One stage: MODE=mass|arms|check|ablate|profiles|summarise, e.g. --export=ALL,LAYER=5,MODE=profiles
 # Smoke (5 clips, *_smoke dir): --export=ALL,LAYER=5,MAX_CLIPS=5
 
 source $HOME/.tokens   # exports HF_TOKEN
@@ -31,6 +33,9 @@ SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 A="python -u src/stage3_analysis/umt_layer_positional_ablation.py"
 if [ "$MODE" = select ]; then                 # the dependency job: selection for every layer
     RUN="for L in 5 7 9; do LAYER=\$L python -u src/stage3_analysis/umt_layer_positional_select.py || exit 1; done"
+elif [ "$MODE" = rerun ]; then               # new sets on existing profiles + mass: no mass/profiles pass
+    RUN="python -u src/stage3_analysis/umt_layer_positional_select.py &&
+         MODE=arms $A && MODE=ablate $A && MODE=summarise $A"
 elif [ "$MODE" = chain ]; then
     RUN="MODE=mass $A && MODE=ablate $A && MODE=profiles $A && MODE=summarise $A"
 else

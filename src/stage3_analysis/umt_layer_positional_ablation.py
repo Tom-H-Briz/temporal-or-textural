@@ -51,14 +51,15 @@ def layer_path(cfg, key):
 
 
 def arm_sets(cfg):
-    """sets_L{L}.csv -> the five ablated arms: the three selection arms plus the positional
-    (ramp + nonramp) and all (positional + near_flat) unions. Nothing hardcoded per layer."""
+    """sets_L{L}.csv -> the six ablated arms: the four selection arms (ramp, nonramp, near_flat,
+    content_timed — per-clip rule 3, 6 Nov) plus the positional (ramp + nonramp) and all
+    (every selected feature) unions. Nothing hardcoded per layer."""
     sel = pd.read_csv(str(layer_path(cfg, "sets_csv")))
     sel = sel[sel.arm.notna() & (sel.arm.astype(str) != "")]
     f = {a: sorted(g.feature.astype(int).tolist()) for a, g in sel.groupby("arm")}
-    return {"ramp": f["ramp"], "nonramp": f["nonramp"],
-            "positional": f["ramp"] + f["nonramp"], "near_flat": f["near_flat"],
-            "all": f["ramp"] + f["nonramp"] + f["near_flat"]}
+    g = {a: f.get(a, []) for a in ("ramp", "nonramp", "near_flat", "content_timed")}
+    return {"ramp": g["ramp"], "nonramp": g["nonramp"], "positional": g["ramp"] + g["nonramp"],
+            "near_flat": g["near_flat"], "content_timed": g["content_timed"], "all": sum(g.values(), [])}
 
 
 def arm_rows(cfg):
@@ -287,7 +288,7 @@ def layer_result(cfg, layer):
                  d_margin=float(meas[1][:, arms.index(g)].mean()),
                  d_acc=float(meas[2][:, arms.index(g)].mean()),
                  mass_share=float(info.loc[g, "mass_share"]))
-            for g in ("ramp", "nonramp", "positional", "near_flat", "all")]
+            for g in ("ramp", "nonramp", "positional", "near_flat", "content_timed", "all")]
 
 
 def xlayer_table(cfg):
@@ -320,6 +321,8 @@ def main():
     st = clock.setup(cfg) if mode in ("mass", "check", "ablate", "profiles") else None
     if mode == "mass":
         run_mass(cfg, st)
+    if mode == "arms":                                # CPU: re-derive arms.csv for new sets from mass_R.npy
+        write_arms(cfg, np.load(cfg["out_dir"] / "mass_R.npy"))
     if mode == "check":
         clock.run_check(cfg, st)
     if mode == "ablate":
