@@ -10,13 +10,15 @@
 # groups, mass-matched controls; spliced, R). Needs that layer's umt_object_chain.sh outputs.
 # Outputs -> outputs/analysis/umt_object_wordmap_L{L}/per_word.parquet (plots: MODE=plot locally).
 # All three layers:  for L in 5 7 9; do sbatch --export=ALL,LAYER=$L slurm/umt_object_wordmap.sh; done
+# Verb pairs (group edits only, -> umt_pair_wordmap_L{L}): add TASK=pair to --export
+export TASK=${TASK:-object}
 
 source $HOME/.tokens   # exports HF_TOKEN, WANDB_API_KEY
 export VIDEO_DIR="/scratch/b6o/tomheslin83.b6o/videos"
 export LABELS_PATH="$HOME/labels/labels.json"
 export VALIDATION_PATH="$HOME/labels/validation.json"
 export LAYER=${LAYER:-9} MODE=run MAX_CLIPS=0
-echo "LAYER=$LAYER"
+echo "LAYER=$LAYER TASK=$TASK"
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 
 apptainer exec --nv --bind $HOME:$HOME --bind $SCRATCHDIR:$SCRATCHDIR $SIF bash -c "

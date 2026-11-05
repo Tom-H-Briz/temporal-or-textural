@@ -15,8 +15,9 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT / "src" / "stage3_analysis")]
 import umt_object_ablation as oa
-L = int(os.environ.get("LAYER", 9))
-OUT = ROOT / f"outputs/analysis/umt_object_wordmap_L{L}"
+from umt_object_contrast import CFG as OC
+L, TASK = int(os.environ.get("LAYER", 9)), os.environ.get("TASK", "object")
+OUT = ROOT / f"outputs/analysis/umt_{TASK}_wordmap_L{L}"
 
 
 def run(max_clips):
@@ -25,10 +26,14 @@ def run(max_clips):
     from umt_mlm_class_wordmap import all_word_variants, clip_rows
     from umt_mlm_feature_contrast import clip_loader, setup
     from umt_mlm_group_ablation import load_validation
-    cfg = oa.contrast_cfg(dict(oa.CFG, splice=True))            # real picks; max_clips caps clips only
+    cfg = oa.contrast_cfg(dict(oa.CFG, splice=True, max_clips=0))   # real picks; MAX_CLIPS caps clips only
     assert cfg["layer"] == L
     s = dict(setup(cfg), splice=True)
     edits, val, D = oa.edit_list(cfg), load_validation(cfg), s["sae"].get_dictionary()
+    if TASK == "pair":                                # pairs: groups (+ controls) only, ~10 units per layer
+        grouped = {n[:-len("_group")] for n, _ in edits if n.endswith("_group") and not n.startswith("ctrl_")}
+        keep = lambda n: n.endswith("_group") or unit_of(n) not in grouped
+        edits = [(n, f) for n, f in edits if n == "baseline" or keep(n)]
     clips = pd.DataFrame({"clip_id": sorted({c for c, _ in cfg["test_rows"]})})
     clips = clips.head(max_clips) if max_clips else clips
     out, seen, t0 = [], set(), time.time()
@@ -45,25 +50,30 @@ def run(max_clips):
     return pd.DataFrame(out)
 
 
-NOUNS = {"box": {"box", "boxes"}, "pen": {"pen", "pens"}, "cup": {"cup", "cups"}}
+if TASK == "pair":                                    # unit = pair_home (45_43_43); words = the pair's two
+    NOUNS = {f"{p}_{h}": set(ws) for p, ws in OC["pairs"].items() for h in p.split("_")}
+    ROLES = ["own pair word", "other pair word", "object words", "other verb", "template"]
+else:
+    NOUNS = {"box": {"box", "boxes"}, "pen": {"pen", "pens"}, "cup": {"cup", "cups"}}
+    ROLES = ["own noun", "other noun", "other object words", "verb", "template"]
+unit_of = lambda n: "_".join(n.replace("ctrl_", "").split("_")[:3 if TASK == "pair" else 1])
 
 
 def with_roles(w):
-    """Edit's object (box_*, ctrl_box_* -> box) and each word's role relative to it."""
+    """Edit's unit (box_*, ctrl_box_* -> box; 45_43_43_* -> 45_43_43) and each word's role relative to it."""
     w = w[w.edit != "baseline"].copy()
-    w["edit_obj"] = w.edit.str.replace("ctrl_", "").str.split("_").str[0]
-    w["is_ctrl"] = w.edit.str.startswith("ctrl_")
+    w["edit_obj"], w["is_ctrl"] = w.edit.map(unit_of), w.edit.str.startswith("ctrl_")
     own = [wd in NOUNS[o] for wd, o in zip(w.word, w.edit_obj)]
-    other = [any(wd in v for k, v in NOUNS.items() if k != o) for wd, o in zip(w.word, w.edit_obj)]
-    w["wrole"] = np.select([own, other, w.role == "object", w.role == "verb"],
-                           ["own noun", "other noun", "other object words", "verb"], "template")
+    other = [any(wd in v for k, v in NOUNS.items() if v != NOUNS[o]) for wd, o in zip(w.word, w.edit_obj)]
+    w["wrole"] = np.select([own, other, w.role == "object", w.role == "verb"], ROLES[:4], ROLES[4])
     return w
-ROLES = ["own noun", "other noun", "other object words", "verb", "template"]
 
 
 def main_edit(w, o):
     """An object's main edit: its group if it has one, else its single feature."""
     names = set(w.edit[~w.is_ctrl & (w.edit_obj == o)])
+    if not names:                                     # no features passed for this unit at this layer
+        return None
     return f"{o}_group" if f"{o}_group" in names else sorted(names)[0]
 
 
@@ -72,6 +82,8 @@ def role_table(w):
     rows = []
     for o in NOUNS:
         e = main_edit(w, o)
+        if e is None:
+            continue
         g = w[w.edit.isin([e, f"ctrl_{e}"])]
         m = g.pivot_table(index="wrole", columns="is_ctrl", values="dce", aggfunc="mean")
         n = g[~g.is_ctrl].groupby("wrole").size()
@@ -88,16 +100,16 @@ def plot_roles(tabs, out):
     from umt_mlm_feature_wordmap import CFG as WM
     cmap = matplotlib.colors.LinearSegmentedColormap.from_list("damage", WM["colours"])
     vmax = max(t.minus_ctrl.max() for t in tabs.values())
-    fig, axes = plt.subplots(1, len(tabs), figsize=(4.2 * len(tabs), 2.6), dpi=130, squeeze=False)
+    fig, axes = plt.subplots(1, len(tabs), figsize=(4.2 * len(tabs), 1.2 + 0.45 * len(NOUNS)), dpi=130, squeeze=False)
     for ax, (layer, t) in zip(axes[0], tabs.items()):
         M = t.pivot(index="object", columns="role", values="minus_ctrl").reindex(index=list(NOUNS), columns=ROLES)
         ax.imshow(M.clip(lower=0).values, cmap=cmap, vmin=0, vmax=vmax, aspect="auto")
         for (i, j), v in np.ndenumerate(M.values):
             ax.text(j, i, "" if np.isnan(v) else f"{v:+.2f}", ha="center", va="center", fontsize=8)
         ax.set_xticks(range(len(ROLES)), [r.replace(" ", "\n") for r in ROLES], fontsize=7)
-        ax.set_yticks(range(len(NOUNS)), [f"{o}\n{t[t.object == o].edit.iloc[0]}" for o in NOUNS], fontsize=7)
+        ax.set_yticks(range(len(NOUNS)), [f"{o}\n{(t[t.object == o].edit.tolist() or ['none'])[0]}" for o in NOUNS], fontsize=7)
         ax.set_title(f"L{layer}", fontsize=10)
-    fig.suptitle("Object-feature ablation (spliced, R): damage to each masked word by role, minus control",
+    fig.suptitle(f"{TASK.capitalize()}-feature ablation (spliced, R): damage to each masked word by role, minus control",
                  x=0.02, ha="left", fontsize=10)
     fig.savefig(out, bbox_inches="tight"); plt.close(fig); print(f"saved {out}")
 
@@ -107,6 +119,8 @@ def plot_captions(w, o, layer, out, n=30, seed=0):
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     from umt_mlm_feature_wordmap import CFG as WM, panel_captions
     e = main_edit(w, o)
+    if e is None:
+        return print(f"L{layer} {o}: no features, skipped")
     has = w.groupby("clip_id").word.apply(lambda x: bool(set(x) & NOUNS[o]))
     if not has.any():                                 # no caption names o (small smoke sets)
         return print(f"L{layer} {o}: no captions, skipped")
@@ -137,9 +151,9 @@ def main():
     if mode != "plot":
         sys.exit(f"MODE={mode}: use run | plot")
     sys.path.insert(0, str(ROOT / "src/stage3_analysis/visualisation"))
-    tabs, fig_dir = {}, ROOT / f"outputs/analysis/umt_object_wordmap{sfx}"
+    tabs, fig_dir = {}, ROOT / f"outputs/analysis/umt_{TASK}_wordmap{sfx}"
     for layer in [int(x) for x in os.environ.get("LAYERS", "5,7,9").split(",")]:
-        d = ROOT / f"outputs/analysis/umt_object_wordmap_L{layer}{sfx}"
+        d = ROOT / f"outputs/analysis/umt_{TASK}_wordmap_L{layer}{sfx}"
         w = with_roles(pd.read_parquet(d / "per_word.parquet"))
         tabs[layer] = role_table(w)
         tabs[layer].to_csv(d / "role_table.csv", index=False)
