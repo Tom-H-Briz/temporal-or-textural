@@ -171,6 +171,8 @@ def main():
     ok = regression_check(cfg, df)
     print(df[["feature", "arm", "r_RC", "cv", "ramp_r", "vtc_rank"]].to_string(index=False))
     print(f"wrote {out}  ({'regression OK' if ok else 'REGRESSION MISMATCH'})")
+    if not ok:
+        sys.exit(1)                                   # stop the SLURM chain before any GPU stage
 
 
 if __name__ == "__main__":
