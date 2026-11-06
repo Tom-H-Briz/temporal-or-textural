@@ -57,6 +57,23 @@ else:
     NOUNS = {"box": {"box", "boxes"}, "pen": {"pen", "pens"}, "cup": {"cup", "cups"}}
     ROLES = ["own noun", "other noun", "other object words", "verb", "template"]
 unit_of = lambda n: "_".join(n.replace("ctrl_", "").split("_")[:3 if TASK == "pair" else 1])
+ROLE_NAMES = {"own pair word": "its own key word (e.g. down)", "other pair word": "the partner's key word (e.g. up)",
+              "other verb": "'moving' / 'turning'", "own noun": "the object's name", "other noun": "other objects' names",
+              "template": "other template words"}   # figure labels only; the tables keep ROLES
+TPL = {int(v): k for k, v in json.load(open(ROOT / "data/ssv2/labels/labels.json")).items()}
+
+
+def name(o):
+    """Plain name for figures: 45_43_43 -> 'Moving something down' / 'vs Moving something up'; objects as is."""
+    if TASK != "pair":
+        return f"'{o}' features", ""
+    a, b, h = (int(x) for x in o.split("_"))
+    return TPL[h], f"vs {TPL[b if h == a else a]}"
+
+
+def edit_name(e):
+    """'box_group' -> 'feature group'; '93_86_93_3844' -> 'one feature (#3844)'; None -> 'no features passed'."""
+    return "no features passed" if e is None else "feature group" if e.endswith("_group") else f"one feature (#{e.split('_')[-1]})"
 
 
 def with_roles(w):
@@ -106,11 +123,12 @@ def plot_roles(tabs, out):
         ax.imshow(M.clip(lower=0).values, cmap=cmap, vmin=0, vmax=vmax, aspect="auto")
         for (i, j), v in np.ndenumerate(M.values):
             ax.text(j, i, "" if np.isnan(v) else f"{v:+.2f}", ha="center", va="center", fontsize=8)
-        ax.set_xticks(range(len(ROLES)), [r.replace(" ", "\n") for r in ROLES], fontsize=7)
-        ax.set_yticks(range(len(NOUNS)), [f"{o}\n{(t[t.object == o].edit.tolist() or ['none'])[0]}" for o in NOUNS], fontsize=7)
-        ax.set_title(f"L{layer}", fontsize=10)
-    fig.suptitle(f"{TASK.capitalize()}-feature ablation (spliced, R): damage to each masked word by role, minus control",
-                 x=0.02, ha="left", fontsize=10)
+        ax.set_xticks(range(len(ROLES)), [ROLE_NAMES.get(r, r).replace(" ", "\n") for r in ROLES], fontsize=7)
+        first = ax is axes[0][0]                      # class names once; blank row = no features passed at that layer
+        ax.set_yticks(range(len(NOUNS)), ["\n".join(filter(None, name(o))) if first else "" for o in NOUNS], fontsize=7)
+        ax.set_title(f"Layer {layer}", fontsize=10)
+    fig.suptitle(f"Removing each {'verb' if TASK == 'pair' else 'object'}'s features: how much harder each kind of caption word "
+                 "becomes to predict (masked, real video; minus control features; 0 = no effect)", x=0.02, y=1.06, ha="left", fontsize=10)
     fig.savefig(out, bbox_inches="tight"); plt.close(fig); print(f"saved {out}")
 
 
@@ -132,10 +150,11 @@ def plot_captions(w, o, layer, out, n=30, seed=0):
     fig, ax = plt.subplots(figsize=(7.5, 0.32 * len(ids) + 1.2), dpi=130)
     ax.set_xlim(0, 1); ax.set_ylim(len(ids) - 0.5, -0.6)
     fig.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), ax=ax, shrink=0.5, pad=0.01,
-                 label="damage = −Δ log p(true word) when ablated")
+                 label="damage: drop in log-probability of the word")
     panel_captions(fig, ax, g, cmap, norm)
-    fig.suptitle(f"L{layer} {e} ablated (SAE-spliced): damage to each masked word, {len(ids)} test captions naming '{o}', R",
-                 x=0.02, ha="left", fontsize=9)
+    what = f"'{name(o)[0]}' features ({name(o)[1]})" if TASK == "pair" else name(o)[0]
+    fig.suptitle(f"Layer {layer}: {what} removed, {edit_name(e)}.\n{len(ids)} test captions; darker = that word became harder "
+                 "to predict when masked (key word in bold)", x=0.02, ha="left", fontsize=9)
     fig.savefig(out, bbox_inches="tight"); plt.close(fig); print(f"saved {out}")
 
 

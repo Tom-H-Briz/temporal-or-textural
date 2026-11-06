@@ -18,8 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 A = ROOT / "outputs" / "analysis"
 CFG = dict(layers=(5, 7, 9), objects=("box", "pen", "cup"), container_layer=7, min_word_n=15, n_similar=4,
            pairs={"45_43": ("up", "down"), "168_165": ("camera up", "camera down"), "46_5": ("opening", "closing"),
-                  "93_86": ("push LtR", "pull LtR"), "94_87": ("push RtL", "pull RtL")},
-           labels=ROOT / "data/ssv2/labels/labels.json",
+                  "93_86": ("push, left to right", "pull, left to right"),
+                  "94_87": ("push, right to left", "pull, right to left")},
+           labels=ROOT / "data/ssv2/labels/labels.json", train=ROOT / "data/ssv2/labels/train.json",
+           pair_table=A / "umt_pair_table" / "pair_summary.csv",
            out=A / "object_verb_meeting" / "object_verb_summary_051126.xlsx")
 
 
@@ -113,7 +115,7 @@ def verb_rows(cfg):
             rev = pick(ab, edit=e, object=f"{p}:{other}", cond="Rev", source="test") if e else None
             v = pick(vt, edit=e, clips="home class") if e else None
             vals = [len(f[(f.object == p) & (f.home == h)]), pp(mlm, "pair_acc"), pp(v, "acc"), pp(v, "pair_acc"), pp(rev, "pair_acc")]
-            rows += [dict(pair=p, home=h, unit=label, layer=L, edit=e, measure=m, value=x) for m, x in zip(VERB_MEASURES, vals)]
+            rows += [dict(pair=p, against=[w for w in cfg["pairs"][p] if w != label][0], home=h, unit=label, layer=L, edit=e, measure=m, value=x) for m, x in zip(VERB_MEASURES, vals)]
     return pd.DataFrame(rows)
 
 
@@ -187,19 +189,41 @@ def widths(ws, first=14, rest=11):
         ws.column_dimensions[get_column_letter(j)].width = first if j <= 3 else rest
 
 
-def figure_sheet(wb, name, title, figs, max_w=900):
-    """A sheet of embedded figures, stacked, each under its caption (scaled to max_w pixels wide)."""
-    ws, r = wb.create_sheet(name), 3
+def figure_sheet(wb, name, title, figs, notes=(), max_w=900):
+    """A sheet of embedded figures under a 'how to read' block, stacked, each under its caption (scaled to max_w px)."""
+    ws, r = wb.create_sheet(name), 4
     cell(ws, 1, 1, title, FT)
     cell(ws, 2, 1, "← Overview", Font(name="Arial", size=10, color="0563C1", underline="single")).hyperlink = "#'Overview'!A1"
+    if notes:
+        cell(ws, r, 1, "How to read these figures", FB); r += 1
+        for n in notes:
+            cell(ws, r, 1, f"•  {n}"); r += 1
+        r += 1
     for caption, path in figs:
-        cell(ws, r, 1, f"{caption}   ({path.relative_to(ROOT)})", FB)
+        cell(ws, r, 1, caption, FB)
         img = XLImage(str(path))
         s = min(1.0, max_w / img.width)
         img.width, img.height = int(img.width * s), int(img.height * s)
         ws.add_image(img, f"A{r + 1}")
         r += int(img.height / 20) + 3                 # default row ~20 px
     return ws
+
+
+def specific_rows(cfg):
+    """2 Nov pair table (L9 MLM contrast): class-specific features, AP shares, VTC within-pair accuracy, train clips."""
+    tpl = {int(v): k for k, v in json.load(open(cfg["labels"])).items()}
+    train = pd.Series([tpl_of(t["template"]) for t in json.load(open(cfg["train"]))]).value_counts()
+    p = pd.read_csv(cfg["pair_table"])
+    kind = {"opposite": "opposite", "same_frame": "same frame", "excluded_flip_aug": "excluded (flip aug)"}
+    return pd.DataFrame({"kind": p.kind.map(kind), "pair": p.pair, "class A": p.a.map(tpl), "class B": p.b.map(tpl),
+        "class-specific features": p.n_specific, "AP share: specific (%)": 100 * p.share_specific,
+        "AP share: timing machinery (%)": 100 * p.share_machinery,
+        "VTC within-pair acc A": p.vis_acc_a, "VTC within-pair acc B": p.vis_acc_b, "weaker side": p.vis_acc_min,
+        "train clips A": p.a.map(tpl).map(train), "train clips B": p.b.map(tpl).map(train),
+        "val clips A": p.n_val_a, "val clips B": p.n_val_b})
+
+
+tpl_of = lambda t: t.replace("[", "").replace("]", "")   # train.json template -> labels.json key
 
 
 OVERVIEW = [
@@ -209,7 +233,9 @@ OVERVIEW = [
     ("Verbs (opposite pairs)", ["The contrast has to use the classes (class A vs class B of a pair). The pairs are vision driven: "
         "captions differ only in the class word, and text alone (blank video) is at chance (2 Nov).",
         "Much more impact on the class prediction: 5–61 pp on the features' own class.",
-        "Some classes have critical features: down (−48 pp at L9). Without down, up is assumed."]),
+        "Some classes have critical features: down (−48 pp at L9). Without down, up is assumed.",
+        "Finer same-frame pairs (putting / stuffing, pouring / spilling, pulling / taking out) have no class-specific "
+        "features and perform worse (0.63–0.75 on the weaker class; 2 Nov). See 'Pairs without features'."]),
     ("Layers", ["Different layers focus on different features: camera motion early (L5), nouns mid (L7), verbs late (L9).",
         "Consistent with the view that verb features are harder to build."]),
     ("Method", ["SAE-spliced ablation of each unit's top features (up to 3, as a group) vs mass-matched control features; "
@@ -219,6 +245,23 @@ OVERVIEW = [
         "so a small class effect for nouns is expected; verb features are chosen between classes.",
         "Word-level word-map values rest on 15–60 occurrences; camera down has 31 test clips."]),
 ]
+
+
+WORDMAP_NOTES = [
+    "Test: each word of a caption is hidden in turn, and UMT's masked-word head guesses it from the video and the rest of "
+    "the caption. We then remove the features (SAE splice) and measure how much harder the true word is to guess.",
+    "Damage = drop in log-probability of the true word. 0 = no effect; ~0.7 = the word's probability roughly halved.",
+    "Summary heatmap (first figure): mean damage by kind of word, minus the same with control features (unrelated features "
+    "of the same size). Blank row = no features passed at that layer.",
+    "Caption maps: 30 random test captions, each word coloured by its damage (control not subtracted). Grey number = SSv2 "
+    "clip id; bold = the key word(s).",
+]
+NOUN_NOTES = WORDMAP_NOTES + ["Read: the object's features should hit the object's name and nothing else. "
+    "Caption maps are layer 7, where the object effects are largest."]
+VERB_NOTES = WORDMAP_NOTES + ["Each row is one class's features, e.g. 'Moving something down' features, contrasted with "
+    "its partner class (Moving something up). Captions come from both classes; both key words are bold.",
+    "Read: they should hit their own key word (down) and not the partner's (up) or the object words. "
+    "Caption maps are layer 9. Push / pull at layer 5 are one feature each."]
 
 
 def overview_sheet(ws, index):
@@ -242,7 +285,7 @@ def nouns_sheet(ws, cfg, nouns):
                    NOUN_MEASURES, fm, "Edit − control throughout. Main edit = the object's top features as a group (L5: one feature). "
                    "Headroom = vision's contribution to the noun (baseline − blank-video log p).")
     L = cfg["container_layer"]
-    words = pd.DataFrame({"object": cfg["objects"], "main edit (L7)": [main_edit(nouns[nouns.layer == L].edit, o) for o in cfg["objects"]],
+    words = pd.DataFrame({"object": cfg["objects"], "edit (L7)": "feature group",
                           "words also hit (damage − control)": [similar_words(cfg, o, L) for o in cfg["objects"]],
                           "word map": ["Word maps nouns"] * len(cfg["objects"])})
     r = write_flat(ws, r, f"Nouns are categories: other caption words hit by each object's L{L} features", words,
@@ -260,7 +303,7 @@ def verbs_sheet(ws, cfg, verbs):
     """Verb units by layer (wide), with a link to the verb word maps."""
     fm = {m: ("0" if m.startswith("Features") else "0.0") for m in VERB_MEASURES}
     r = write_wide(ws, 1, "Verbs (vision-driven opposite pairs): effect on the key word (MLM) and on the class (VTC)", verbs,
-                   ["unit", "pair"], VERB_MEASURES, fm, "Edit − control, pp, on the features' own class (Rev rescue: the partner "
+                   ["unit", "against"], VERB_MEASURES, fm, "Edit − control, pp, on the features' own class (Rev rescue: the partner "
                    "class's reversed clips, which look like the own class). '–' = no features passed the 0.7 bar at that layer.")
     cell(ws, r, 1, "Word maps: verbs →", FB).hyperlink = "#'Word maps verbs'!A1"
     widths(ws)
@@ -286,23 +329,78 @@ def cup_sheet(ws, cfg, min_n=5):
     widths(ws); ws.column_dimensions["B"].width = 60
 
 
+def specific_sheet(ws, cfg):
+    """2 Nov: pairs with vs without class-specific features (no-feature pairs shaded), then group means."""
+    d = specific_rows(cfg)
+    fm = {c: ("0.0" if "%" in c else "0.00" if "acc" in c or "weaker" in c else "0") for c in d.columns[4:]}
+    r = write_flat(ws, 1, "Pairs with no class-specific features perform worse (L9, vision-driven pairs, 2 Nov)", d,
+                   "AP = attribution patching (gradient × activation on the MLM pair word), share of the pair's total importance. "
+                   "Accuracy: 174-way VTC, logit A > logit B, all val clips. Train clips: SSv2 train set. Camera left / right "
+                   "excluded (UMT trains with random horizontal flips).", fmts=fm)
+    for i in np.flatnonzero((d["class-specific features"] == 0) & (d.kind != "excluded (flip aug)")):
+        for j in range(1, len(d.columns) + 1):
+            ws.cell(3 + i, j).fill = PatternFill("solid", fgColor="FFF2CC")
+    d["group"] = np.where(d.kind.str.startswith("excluded"), None, np.where(d["class-specific features"] > 0,
+                          d.kind + ", with features", "same frame, none"))
+    g = d.dropna(subset=["group"]).assign(**{"min train clips": d[["train clips A", "train clips B"]].min(axis=1)})
+    g = g.groupby("group", sort=False).agg(pairs=("pair", ", ".join), **{"weaker side (mean)": ("weaker side", "mean"),
+        "min train clips (mean)": ("min train clips", "mean"), "AP timing share % (mean)": ("AP share: timing machinery (%)", "mean")})
+    write_flat(ws, r, "By group", g.reset_index(), "Shaded rows above: no class-specific features.",
+               fmts={"weaker side (mean)": "0.00", "min train clips (mean)": "0", "AP timing share % (mean)": "0.0"})
+    widths(ws); ws.column_dimensions["C"].width = ws.column_dimensions["D"].width = 34
+
+
+F, S = "findings/", "src/stage3_analysis/"
+REFERENCES = [   # sheet, findings, data (outputs/analysis/), script
+    ("Nouns", F + "umt_object_verb_layers_findings_031126.md §3–5, §8", "umt_object_contrast_L{5,7,9}/candidates_*.csv; "
+     "umt_object_ablation_L{5,7,9}_splice/summary_{logp,acc}.csv; umt_object_vtc_L{5,7,9}_splice/summary_acc.csv; "
+     "umt_object_wordmap_L7/per_word.parquet", S + "umt_object_{contrast,ablation,vtc,wordmap}.py"),
+    ("Verbs", F + "umt_object_verb_layers_findings_031126.md §6, §8", "umt_pair_contrast_L{5,7,9}/features.csv; "
+     "umt_pair_ablation_L{5,7,9}_splice/summary_acc.csv; umt_pair_vtc_L{5,7,9}_splice/summary_acc.csv",
+     S + "umt_object_{contrast,ablation,vtc}.py (TASK=pair)"),
+    ("Pairs without features", F + "umt_pair_specific_features_findings_021126.md §3", "umt_pair_table/pair_summary.csv; "
+     "data/ssv2/labels/train.json (train clip counts)", S + "umt_pair_specific_features.py"),
+    ("Layers", F + "umt_object_verb_layers_findings_031126.md §4, §6", "built from the Nouns and Verbs tables", "this notebook"),
+    ("Cup by class", "not in a findings doc (cup / container test, 5 Nov)", "umt_object_vtc_L7_splice/per_clip.parquet",
+     S + "umt_object_vtc.py"),
+    ("Word maps nouns / verbs", F + "umt_object_verb_layers_findings_031126.md §5 (nouns), §8 (verbs)",
+     "umt_{object,pair}_wordmap[_L7, _L9]/*.png", S + "umt_object_wordmap.py (TASK=object / pair)"),
+]
+
+
+def references_sheet(ws):
+    """Where each sheet's numbers come from: findings doc, data files, script."""
+    d = pd.DataFrame(REFERENCES, columns=["sheet", "findings", "data (outputs/analysis/ unless stated)", "script"])
+    write_flat(ws, 1, "References: sources for each sheet", d, "Workbook made by notebooks/object_verb_meeting_tables.py. "
+               "outputs/ is gitignored: data paths are local / Isambard only.")
+    for j, w in zip("ABCD", (22, 55, 90, 50)):
+        ws.column_dimensions[j].width = w
+
+
 def main(cfg):
     nouns, verbs = noun_rows(cfg), verb_rows(cfg)
     wb = Workbook()
     index = [("Nouns", "objects by layer; words also hit; container split"), ("Verbs", "verb pairs by layer"),
+             ("Pairs without features", "2 Nov: pairs with no class-specific features, accuracy, train clips"),
              ("Layers", "peak layer per unit"), ("Cup by class", "the L7 cup exception, class by class"),
-             ("Word maps nouns", "figures"), ("Word maps verbs", "figures")]
+             ("Word maps nouns", "figures"), ("Word maps verbs", "figures"),
+             ("References", "findings docs, data files and scripts behind each sheet")]
     overview_sheet(wb.active, index); wb.active.title = "Overview"
     nouns_sheet(wb.create_sheet("Nouns"), cfg, nouns)
     verbs_sheet(wb.create_sheet("Verbs"), cfg, verbs)
+    specific_sheet(wb.create_sheet("Pairs without features"), cfg)
     layers_sheet(wb.create_sheet("Layers"), layer_rows(nouns, verbs))
     cup_sheet(wb.create_sheet("Cup by class"), cfg)
     figure_sheet(wb, "Word maps nouns", "Word maps: object features (damage to each masked word, edit − control)",
-                 [("Damage by word role, all layers", A / "umt_object_wordmap/roles_by_layer.png")] +
-                 [(f"{o}: L7 captions", A / f"umt_object_wordmap_L7/wordmap_{o}.png") for o in cfg["objects"]])
-    figure_sheet(wb, "Word maps verbs", "Word maps: verb features (group edits; damage to each masked word, edit − control)",
-                 [("Damage by word role, all layers", A / "umt_pair_wordmap/roles_by_layer.png")] +
-                 [(f"{label}: L9 captions", A / f"umt_pair_wordmap_L9/wordmap_{p}_{h}.png") for p, h, label in units(cfg)])
+                 [("Summary: damage by kind of word, every object and layer", A / "umt_object_wordmap/roles_by_layer.png")] +
+                 [(f"'{o}' features removed (layer 7): captions naming a {o}", A / f"umt_object_wordmap_L7/wordmap_{o}.png")
+                  for o in cfg["objects"]], NOUN_NOTES)
+    other = lambda p, label: [x for x in cfg["pairs"][p] if x != label][0]
+    figure_sheet(wb, "Word maps verbs", "Word maps: verb features (damage to each masked word)",
+                 [("Summary: damage by kind of word, every verb and layer", A / "umt_pair_wordmap/roles_by_layer.png")] +
+                 [(f"'{label}' features removed (layer 9), against '{other(p, label)}'", A / f"umt_pair_wordmap_L9/wordmap_{p}_{h}.png")
+                  for p, h, label in units(cfg)], VERB_NOTES)
+    references_sheet(wb.create_sheet("References"))
     cfg["out"].parent.mkdir(parents=True, exist_ok=True)
     wb.save(cfg["out"])
     print(f"saved {cfg['out']}")
