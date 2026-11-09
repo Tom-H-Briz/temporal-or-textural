@@ -54,7 +54,7 @@ if TASK == "pair":                                    # unit = pair_home (45_43_
     NOUNS = {f"{p}_{h}": set(ws) for p, ws in OC["pairs"].items() for h in p.split("_")}
     ROLES = ["own pair word", "other pair word", "object words", "other verb", "template"]
 else:
-    NOUNS = {"box": {"box", "boxes"}, "pen": {"pen", "pens"}, "cup": {"cup", "cups"}}
+    NOUNS = {o: {o, o + "s", o + "es"} for o in OC["objects"]}
     ROLES = ["own noun", "other noun", "other object words", "verb", "template"]
 unit_of = lambda n: "_".join(n.replace("ctrl_", "").split("_")[:3 if TASK == "pair" else 1])
 ROLE_NAMES = {"own pair word": "its own key word (e.g. down)", "other pair word": "the partner's key word (e.g. up)",

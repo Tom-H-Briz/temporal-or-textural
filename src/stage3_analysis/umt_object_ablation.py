@@ -220,7 +220,7 @@ def contrast_cfg(cfg):
     sets = pd.read_csv(ROOT / f"outputs/analysis/umt_{task}_contrast/sets.csv", dtype={"clip_id": str})
     test = sets[sets.role == "test"]
     out = dict(cfg, layer=L, edits=edits, controls=dict(zip(ctrl.latent.astype(int), ctrl.control.astype(int))),
-               test_rows=set(zip(test.clip_id, test.object)), from_contrast=True,
+               test_rows=set(zip(test.clip_id, test.object)), from_contrast=True, objects=tuple(test.object.unique()),
                out_dir=cfg["out_dir"].with_name(f"umt_{task}_ablation_L{L}"))
     if pair:                                          # rows straight from sets (mask + alt word), per class
         out.update(conds=("R", "C", "Rev"), pair_rows=test.astype({"pos": int, "true_id": int, "alt_id": int})

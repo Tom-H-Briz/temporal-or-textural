@@ -19,7 +19,8 @@ L = int(os.environ.get("LAYER", 9))
 A = ROOT / "outputs" / "analysis"
 CFG = {
     "layer": L, "sae_k": 64, "job_label": "7ep", "n_lat": 6144, "n_tok": 2352,
-    "objects": ("box", "pen", "cup"), "n_per_side": 500, "seed": 0,
+    "objects": ("box", "pen", "cup", "paper", "water", "book", "phone", "ball", "toy"), "seed": 0,
+    "n_per_side": {"phone": 250, "ball": 250, "toy": 250},     # default 500; these have only ~500 clips
     "summaries": ("mean", "max", "top"), "top_frac": 0.01,     # top = mean of the top 1% tokens
     "conds": ("R", "C", "Rev"), "max_len": 25,
     "min_within": 0.7, "n_feat": 3,      # stratified (same-class pairs) AUROC bar, up to 3 passers
@@ -35,7 +36,11 @@ CFG = {
     # TASK=pair: class A vs class B of each opposite pair (key word masked), same pipeline
     "task": os.environ.get("TASK", "object"),
     "pairs": {"45_43": ("up", "down"), "168_165": ("upwards", "downwards"), "46_5": ("opening", "closing"),
-              "93_86": ("pushing", "pulling"), "94_87": ("pushing", "pulling")},
+              "93_86": ("pushing", "pulling"), "94_87": ("pushing", "pulling"),
+              "40_42": ("away", "closer"), "36_37": ("away", "closer"), "41_44": ("away", "towards"),
+              "0_32": ("approaching", "away"), "59_62": ("into", "out"), "112_118": ("onto", "underneath"),
+              "6_171": ("covering", "uncover"), "14_172": ("folding", "un"),   # word-pieces: un-words split
+              "8_9": ("behind", "front"), "104_105": ("behind", "front"), "17_18": ("behind", "front")},
     "sel_frac": 0.5,                                           # pair clips to selection, per class
 }
 if CFG["task"] == "pair":                                      # own sets and outputs, never mixed
@@ -54,7 +59,7 @@ def run_sample(cfg):
     val["true_class"] = val.template.map(template_class(cfg))
     for o in cfg["objects"]:
         mention = set(rows[rows.object == o].clip_id) | set(skips[skips.object == o].clip_id)
-        pos = rows[rows.object == o].sample(cfg["n_per_side"], random_state=cfg["seed"])
+        pos = rows[rows.object == o].sample(cfg["n_per_side"].get(o, 500), random_state=cfg["seed"])
         pool = val[~val.id.isin(mention)]
         for c, k in pos.true_class.value_counts().items():
             g = pool[pool.true_class == c]
