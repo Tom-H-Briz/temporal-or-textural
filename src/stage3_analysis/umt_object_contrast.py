@@ -219,8 +219,8 @@ def select_object(cfg, d, Ss, attr):
     rows = [dict(latent=f, summary=k, auroc=a, attr_mean=A[:, f].mean())
             for k in cfg["summaries"] for f, a in enumerate(strat_auroc(Ss["R"][k], y, cls))]
     c = pd.DataFrame(rows).sort_values("auroc", ascending=False).drop_duplicates("latent")
-    c["passed"] = (c.auroc >= cfg["min_within"]) & (c.attr_mean > 0)
-    return c, c[c.passed].head(cfg["n_feat"]), A
+    c["passed"] = (c.auroc >= cfg["min_within"]) & ((c.attr_mean > 0) | (not cfg.get("need_attr", True)))
+    return c, c[c.passed].head(cfg["n_feat"]), A          # need_attr=False: VideoMAE nouns (no noun readout)
 
 
 def check_features(d, Ss, A, chosen, y=None, cls=None):

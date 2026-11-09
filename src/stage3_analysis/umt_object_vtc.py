@@ -14,9 +14,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT / "src" / "stage3_analysis")]
 import umt_object_ablation as oa
 L, TASK = int(os.environ.get("LAYER", 9)), os.environ.get("TASK", "object")   # TASK=pair: verb-pair edits
-CFG = dict(oa.CFG, model="umt", layer=L, splice=True, dose=1.0, edit_batch=16,
+MODEL = os.environ.get("MODEL", "umt")               # videomae: its classifier, picks from vm_object_contrast.py
+CFG = dict(oa.CFG, model=MODEL, layer=L, splice=True, dose=1.0, edit_batch=16,
            num_workers=int(os.environ.get("NUM_WORKERS", 4)),
-           out_dir=ROOT / f"outputs/analysis/umt_{TASK}_vtc_L{L}_splice")
+           out_dir=ROOT / f"outputs/analysis/{MODEL}_{TASK}_vtc_L{L}_splice")
 
 
 def clips_arms(cfg):
@@ -51,7 +52,12 @@ def run_ablate(cfg):
     clips, arms = clips_arms(cfg)
     st, out, done, t0 = vision_pair_phase3.setup(cfg), [], set(), time.time()
     save = lambda: pd.DataFrame(out).to_parquet(cfg["out_dir"] / "per_clip.parquet", index=False)
-    for pv, i in clip_loader(clips, cfg, "R"):
+    if cfg["model"] == "videomae":                    # VM's own sampler + processor
+        from vm_object_contrast import clip_loader as vm_loader
+        loader = vm_loader(clips, cfg, "R", st["processor"])
+    else:
+        loader = clip_loader(clips, cfg, "R")
+    for pv, i in loader:
         if int(i) in done:                            # the dataset's decode-retry skip-to-next
             continue
         done.add(int(i))

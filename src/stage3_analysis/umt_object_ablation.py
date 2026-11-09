@@ -211,7 +211,8 @@ def contrast_cfg(cfg):
     (singles + each object's group), output to umt_object_ablation_L{LAYER}."""
     L, pair = int(os.environ.get("LAYER", 9)), os.environ.get("TASK", "object") == "pair"
     task = "pair" if pair else "object"
-    d = ROOT / f"outputs/analysis/umt_{task}_contrast_L{L}{'_smoke' if cfg['max_clips'] else ''}"
+    model = cfg.get("model", "umt")                   # videomae: picks from videomae_{task}_contrast_L{L}
+    d = ROOT / f"outputs/analysis/{model}_{task}_contrast_L{L}{'_smoke' if cfg['max_clips'] else ''}"
     f = pd.read_csv(d / "features.csv").sort_values(["object", "auroc_R"], ascending=[True, False])
     f["unit"] = f.object + ("_" + f.home.astype(str) if pair else "")   # pairs: one unit per direction
     edits = {f"{u}_{int(x)}": [int(x)] for u, x in zip(f.unit, f.latent)}
