@@ -7,7 +7,7 @@
 
 # UMT object word maps (src/stage3_analysis/umt_object_wordmap.py, 03/11/26): every word of each
 # held-out test caption masked alone, scored under the layer's object-feature edits (singles,
-# groups, mass-matched controls; spliced, R). Needs that layer's umt_object_chain.sh outputs.
+# groups; no controls since 10/11; spliced, R). Needs that layer's umt_object_chain.sh outputs.
 # Outputs -> outputs/analysis/umt_object_wordmap_L{L}/per_word.parquet (plots: MODE=plot locally).
 # All three layers:  for L in 5 7 9; do sbatch --export=ALL,LAYER=$L slurm/umt_object_wordmap.sh; done
 # Verb pairs (group edits only, -> umt_pair_wordmap_L{L}): add TASK=pair to --export

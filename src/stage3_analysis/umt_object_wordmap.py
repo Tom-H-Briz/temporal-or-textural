@@ -1,5 +1,5 @@
 """UMT object word maps (03/11/26): which caption words does ablating a layer's object features
-(umt_object_contrast_L{LAYER} picks, singles + groups + mass-matched controls) damage? Every
+(umt_object_contrast_L{LAYER} picks, singles + groups; controls dropped 10/11) damage? Every
 word-piece of each held-out test caption is masked alone (umt_mlm_class_wordmap convention),
 scored before / after each spliced edit, real video -> per_word.parquet.
 Roles are relative to the ablated object (plot time): own noun, other object noun, other object
@@ -30,10 +30,11 @@ def run(max_clips):
     assert cfg["layer"] == L
     s = dict(setup(cfg), splice=True)
     edits, val, D = oa.edit_list(cfg), load_validation(cfg), s["sae"].get_dictionary()
-    if TASK == "pair":                                # pairs: groups (+ controls) only, ~10 units per layer
+    if TASK == "pair":                                # pairs: groups only, ~10 units per layer
         grouped = {n[:-len("_group")] for n, _ in edits if n.endswith("_group") and not n.startswith("ctrl_")}
         keep = lambda n: n.endswith("_group") or unit_of(n) not in grouped
         edits = [(n, f) for n, f in edits if n == "baseline" or keep(n)]
+    edits = [(n, f) for n, f in edits if not n.startswith("ctrl_")]   # 10/11: controls dropped (raw edit - baseline)
     clips = pd.DataFrame({"clip_id": sorted({c for c, _ in cfg["test_rows"]})})
     clips = clips.head(max_clips) if max_clips else clips
     out, seen, t0 = [], set(), time.time()
@@ -95,31 +96,27 @@ def main_edit(w, o):
 
 
 def role_table(w):
-    """Damage (mean -d log p(true word)) by role for each object's main edit minus its control."""
+    """Damage (mean -d log p(true word)) by role for each object's main edit (raw, no control)."""
     rows = []
     for o in NOUNS:
         e = main_edit(w, o)
         if e is None:
             continue
-        g = w[w.edit.isin([e, f"ctrl_{e}"])]
-        m = g.pivot_table(index="wrole", columns="is_ctrl", values="dce", aggfunc="mean")
-        n = g[~g.is_ctrl].groupby("wrole").size()
-        for r in ROLES:
-            if r in m.index:
-                rows.append(dict(object=o, edit=e, role=r, damage=m.loc[r, False], ctrl=m.loc[r, True],
-                                 minus_ctrl=m.loc[r, False] - m.loc[r, True], n_words=int(n.get(r, 0))))
+        m = w[w.edit == e].groupby("wrole").dce.agg(["mean", "size"])
+        rows += [dict(object=o, edit=e, role=r, damage=m.loc[r, "mean"], n_words=int(m.loc[r, "size"]))
+                 for r in ROLES if r in m.index]
     return pd.DataFrame(rows)
 
 
 def plot_roles(tabs, out):
-    """One panel per layer: object (main edit) x word role, damage minus control, shared scale."""
+    """One panel per layer: object (main edit) x word role, raw damage, shared scale."""
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     from umt_mlm_feature_wordmap import CFG as WM
     cmap = matplotlib.colors.LinearSegmentedColormap.from_list("damage", WM["colours"])
-    vmax = max(t.minus_ctrl.max() for t in tabs.values())
+    vmax = max(t.damage.max() for t in tabs.values())
     fig, axes = plt.subplots(1, len(tabs), figsize=(4.2 * len(tabs), 1.2 + 0.45 * len(NOUNS)), dpi=130, squeeze=False)
     for ax, (layer, t) in zip(axes[0], tabs.items()):
-        M = t.pivot(index="object", columns="role", values="minus_ctrl").reindex(index=list(NOUNS), columns=ROLES)
+        M = t.pivot(index="object", columns="role", values="damage").reindex(index=list(NOUNS), columns=ROLES)
         ax.imshow(M.clip(lower=0).values, cmap=cmap, vmin=0, vmax=vmax, aspect="auto")
         for (i, j), v in np.ndenumerate(M.values):
             ax.text(j, i, "" if np.isnan(v) else f"{v:+.2f}", ha="center", va="center", fontsize=8)
@@ -128,7 +125,7 @@ def plot_roles(tabs, out):
         ax.set_yticks(range(len(NOUNS)), ["\n".join(filter(None, name(o))) if first else "" for o in NOUNS], fontsize=7)
         ax.set_title(f"Layer {layer}", fontsize=10)
     fig.suptitle(f"Removing each {'verb' if TASK == 'pair' else 'object'}'s features: how much harder each kind of caption word "
-                 "becomes to predict (masked, real video; minus control features; 0 = no effect)", x=0.02, y=1.06, ha="left", fontsize=10)
+                 "becomes to predict (masked, real video; raw, no control; 0 = no effect)", x=0.02, y=1.06, ha="left", fontsize=10)
     fig.savefig(out, bbox_inches="tight"); plt.close(fig); print(f"saved {out}")
 
 
