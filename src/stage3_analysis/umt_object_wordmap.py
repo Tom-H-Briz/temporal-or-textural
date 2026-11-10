@@ -61,7 +61,7 @@ unit_of = lambda n: "_".join(n.replace("ctrl_", "").split("_")[:3 if TASK == "pa
 ROLE_NAMES = {"own pair word": "its own key word (e.g. down)", "other pair word": "the partner's key word (e.g. up)",
               "other verb": "'moving' / 'turning'", "own noun": "the object's name", "other noun": "other objects' names",
               "template": "other template words"}   # figure labels only; the tables keep ROLES
-TPL = {int(v): k for k, v in json.load(open(ROOT / "data/ssv2/labels/labels.json")).items()}
+TPL = {int(v): k for k, v in json.load(open(os.environ.get("LABELS_PATH", ROOT / "data/ssv2/labels/labels.json"))).items()}
 
 
 def name(o):
