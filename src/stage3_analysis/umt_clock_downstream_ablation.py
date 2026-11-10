@@ -1,0 +1,188 @@
+"""
+Clock ablation with downstream capture (10/11/26). Ablate (spliced) at LAYER (5 or 7); every arm's forward also
+records, for each later SAE layer, the per-clip x frame profile of all 6,144 latents (encode only, no second splice).
+Clips: every val clip of 5 verb pairs (45/43, 168/165, 93/86, 44/41, 0/32), R + Rev; role = sel / test from the pair
+contrast sets (report test-only alongside). Arms: baseline, batch_base, the selection arms, clock (ramps + near-miss).
+Add-ons: (a) block LAYER+1 attention frame x frame per head, every row; (b) per-token residual norm at LAYER and each
+capture layer, baseline; (c) per-token summed comb-latent activation at LAYER, baseline.
+Usage: LAYER=5 [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py   (GPU)
+"""
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT / "src" / "stage3_analysis")]
+
+L = int(os.environ.get("LAYER", 5))
+CFG = {
+    "layer": L, "capture": [c for c in (7, 9) if c > L], "attn_block": L + 1,
+    "model": "umt", "sae_k": 64, "job_label": "7ep", "splice": True, "dose": 1.0,
+    "classes": [45, 43, 168, 165, 93, 86, 44, 41, 0, 32], "conds": ("R", "Rev"),
+    "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
+    "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2_val_set")),
+    "pair_sets": ROOT / "outputs/analysis/umt_pair_contrast/sets.csv",
+    "sets_csv": ROOT / f"outputs/analysis/umt_layer_positional/sets_L{L}.csv",
+    "extra_sets": ROOT / "src/stage3_analysis/umt_clock_downstream_sets.json",
+    "out_dir": Path(os.environ.get("OUT_DIR", str(ROOT / f"outputs/analysis/umt_clock_downstream_L{L}"))),
+    "max_clips": int(os.environ.get("MAX_CLIPS", 0)), "edit_batch": 16,
+    "num_workers": int(os.environ.get("NUM_WORKERS", 4)), "save_every": 50,
+    "device": "cuda" if torch.cuda.is_available() else "cpu",
+}
+CFG["val_json"] = Path(os.environ.get("VAL_JSON", str(Path(CFG["labels_path"]).parent / "validation.json")))
+
+
+def clip_table(cfg):
+    """Every val clip of the pair classes: clip_id, class_id, role (sel / test / none, from the pair sets)."""
+    norm = lambda s: s.replace("[", "").replace("]", "")
+    ids = {norm(k): int(v) for k, v in json.load(open(cfg["labels_path"])).items()}
+    v = pd.DataFrame([{"clip_id": str(d["id"]), "class_id": ids[norm(d["template"])]}
+                      for d in json.load(open(cfg["val_json"]))])
+    v = v[v.class_id.isin(cfg["classes"])]
+    s = pd.read_csv(cfg["pair_sets"], dtype={"clip_id": str}).drop_duplicates("clip_id").set_index("clip_id")
+    v["role"] = v.clip_id.map(s.role).fillna("none")
+    return v.sort_values("clip_id").head(cfg["max_clips"] or None).reset_index(drop=True)
+
+
+def arm_rows(cfg):
+    """[(arm, feats)]: baseline, batch_base, the positional selection arms, then clock (ramps + near-miss)."""
+    import umt_layer_positional_ablation as pos
+    arms = pos.arm_sets(dict(pos.CFG, layer=cfg["layer"], sets_csv=cfg["sets_csv"]))
+    clock = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]["clock"]
+    return [("baseline", []), ("batch_base", [])] + list(arms.items()) + [("clock", clock)]
+
+
+def setup(cfg):
+    """clock.setup (model, LAYER SAE + splice hook), plus per capture layer its SAE / dim_mean and a
+    store-only output hook, and a store-only input hook on block attn_block's attention."""
+    import umt_vtc_clock_ablation as clock
+    from ToT_utils import MODEL_REGISTRY, load_sae_eval, resolve_sae_checkpoint
+    st, m = clock.setup(cfg), MODEL_REGISTRY[cfg["model"]]
+    st.update(cap={}, down={}, attn_in=None)
+    for c in cfg["capture"]:
+        res = resolve_sae_checkpoint(cfg["model"], c, dataset_name="ssv2", sae_k=cfg["sae_k"], job_label=cfg["job_label"])
+        sae = load_sae_eval(res["sae_path"], m["hidden_dim"], m["num_patch_tokens"], cfg["device"], sae_k=cfg["sae_k"])
+        dm = torch.load(res["dim_mean_path"], weights_only=True).to(cfg["device"]).float()
+        st["down"][c] = (sae, dm)
+        m["layer_getter"](st["model"], c).register_forward_hook(
+            lambda mod, i, o, c=c: st["cap"].__setitem__(c, (o[0] if isinstance(o, tuple) else o).detach()))
+    blk = m["layer_getter"](st["model"], cfg["attn_block"])
+    blk.attn.register_forward_hook(lambda mod, i, o: st.__setitem__("attn_in", i[0].detach()))
+    st["attn_mod"] = blk.attn
+    return st
+
+
+def down_profiles(st, c):
+    """(B, 12, F) fp16 frame profiles of capture layer c's latents for the batch just run (encode only)."""
+    from ToT_utils import gather_by_position
+    sae, dm = st["down"][c]
+    out = []
+    for x in st["cap"][c].float():                               # (N, D) per row
+        _, z = sae.encode(x - dm)
+        out.append(gather_by_position(z, "umt").sum(1).half())
+    return torch.stack(out)
+
+
+def attn_frames(st, n_frames=12):
+    """(B, H, 12, 12) attention mass from query frame to key frame, per head, from the stored LN'd input."""
+    a, x = st["attn_mod"], st["attn_in"].float()
+    W, H = a.qkv.weight.float(), a.num_heads
+    q = (x @ W[:W.shape[1]].T + a.q_bias.float()) * a.scale
+    k = x @ W[W.shape[1]:2 * W.shape[1]].T
+    B, N, _ = x.shape
+    q, k = q.view(B, N, H, -1).transpose(1, 2), k.view(B, N, H, -1).transpose(1, 2)
+    P, out = N // n_frames, torch.zeros(B, H, n_frames, n_frames, device=x.device)
+    for f in range(n_frames):
+        w = (q[:, :, f * P:(f + 1) * P] @ k.transpose(-1, -2)).softmax(-1)      # (B, H, P, N)
+        out[:, :, f] = w.view(B, H, P, n_frames, P).sum((2, 4)) / P
+    return out.half()
+
+
+def one_clip(st, cfg, pv, arms, comb):
+    """Rows in arm_rows order: logits (R, 174), profiles {c: (R, 12, F)}, attention (R, H, 12, 12);
+    baseline extras: norms {layer: (N,)} and comb map (N,)."""
+    import umt_vtc_clock_ablation as clock
+    with torch.no_grad():
+        base, x, z0 = clock.clip_pass(st, pv)
+        prof = {c: [down_profiles(st, c)] for c in cfg["capture"]}
+        att, lg = [attn_frames(st)], [base[None]]
+        norms = {cfg["layer"]: x[0].norm(dim=-1).half()}
+        norms.update({c: st["cap"][c][0].float().norm(dim=-1).half() for c in cfg["capture"]})
+        comb_map = z0[:, comb].sum(1).half()
+        edits = [fs for a, fs in arms if a != "baseline"]
+        for i in range(0, len(edits), cfg["edit_batch"]):
+            new = torch.stack([clock.edited_stream(st, x, z0, st["D"], fs, cfg) for fs in edits[i:i + cfg["edit_batch"]]])
+            lg.append(clock.full_logits(st, pv, new))
+            att.append(attn_frames(st))
+            for c in cfg["capture"]:
+                prof[c].append(down_profiles(st, c))
+    return (torch.cat(lg).half(), {c: torch.cat(p) for c, p in prof.items()}, torch.cat(att), norms, comb_map)
+
+
+def open_store(cfg, cond, n, R, F=6144, H=12, N=2352, T=12):
+    """Memmaps for one condition (reopened in place if they exist -> resume); done flags (n,) bool."""
+    from numpy.lib.format import open_memmap
+    shapes = {"logits": (n, R, 174), "attn": (n, R, H, T, T), "comb": (n, N)}
+    shapes.update({f"prof_L{c}": (n, R, T, F) for c in cfg["capture"]})
+    shapes.update({f"norm_L{l}": (n, N) for l in [cfg["layer"]] + cfg["capture"]})
+    shapes["done"] = (n,)
+    store = {}
+    for k, shp in shapes.items():
+        p = cfg["out_dir"] / f"{k}_{cond}.npy"
+        dt = np.bool_ if k == "done" else np.float16
+        store[k] = open_memmap(p, mode="r+") if p.exists() else open_memmap(p, mode="w+", dtype=dt, shape=shp)
+        assert store[k].shape == shp, f"{p.name}: shape {store[k].shape} != {shp} (clip table changed?)"
+    return store
+
+
+def flush(store):
+    for m in store.values():
+        m.flush()
+
+
+def run_cond(cfg, st, rows, arms, comb, cond):
+    """Every not-yet-done clip under one condition -> the memmaps; done flags flushed every save_every."""
+    from umt_mlm_feature_contrast import clip_loader
+    from umt_vision_pair_contrast import apply_condition
+    S = open_store(cfg, cond, len(rows), len(arms))
+    todo, t0, n = rows[~S["done"][:].astype(bool)], time.time(), 0
+    for pv, i in clip_loader(todo, cfg, "R"):
+        i = int(i)
+        if S["done"][i]:
+            continue                                             # dataset skip-to-next landed on a done clip
+        lg, prof, att, norms, cm = one_clip(st, cfg, apply_condition(pv, cond).to(cfg["device"]), arms, comb)
+        S["logits"][i], S["attn"][i], S["comb"][i] = lg.cpu(), att.cpu(), cm.cpu()
+        for c, p in prof.items():
+            S[f"prof_L{c}"][i] = p.cpu()
+        for l, v in norms.items():
+            S[f"norm_L{l}"][i] = v.cpu()
+        S["done"][i], n = True, n + 1
+        if n % cfg["save_every"] == 0:
+            flush(S)
+            print(f"  {cond}: {n}/{len(todo)} clips, {(time.time() - t0) / n:.2f} s/clip", flush=True)
+    flush(S)
+    print(f"{cond}: {int(S['done'][:].sum())}/{len(rows)} clips done in {(time.time() - t0) / 60:.1f} min", flush=True)
+
+
+def main(cfg):
+    cfg["out_dir"].mkdir(parents=True, exist_ok=True)
+    rows, arms = clip_table(cfg), arm_rows(cfg)
+    comb = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]["comb"]
+    rows.to_csv(cfg["out_dir"] / "clips.csv", index=False)
+    pd.DataFrame([{"row": j, "arm": a, "k": len(f), "features": ",".join(map(str, f))}
+                  for j, (a, f) in enumerate(arms)]).to_csv(cfg["out_dir"] / "arms.csv", index=False)
+    print(f"LAYER {cfg['layer']} capture {cfg['capture']} | {len(rows)} clips "
+          f"({(rows.role != 'sel').sum()} non-selection) | arms {[a for a, _ in arms]}", flush=True)
+    st = setup(cfg)
+    for cond in cfg["conds"]:
+        run_cond(cfg, st, rows, arms, comb, cond)
+
+
+if __name__ == "__main__":
+    main(CFG)
