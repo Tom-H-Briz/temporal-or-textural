@@ -17,7 +17,7 @@ from umt_object_contrast import CFG as OC
 TPL = {int(v): k for k, v in json.load(open(ROOT / "data/ssv2/labels/labels.json")).items()}
 CFG = dict(layers=(5, 7, 9), objects=OC["objects"], pairs=list(OC["pairs"]), wordmap_noun_L=7, wordmap_verb_L=9,
            min_word_n=15, n_similar=4, certainty=A / "noun_verb_scaleup/peak_certainty.csv",
-           out=A / "noun_verb_scaleup/noun_verb_scaleup_101126.xlsx")
+           out=A / "object_verb_meeting/noun_verb_scaleup_101126.xlsx")
 
 NOUN_MEASURES = ["Features chosen (n)", "Best AUROC (any latent)", "MLM: % of vision's log p removed",
                  "MLM: noun top-1 change (pp)", "VTC: 174-way acc change (pp)"]
@@ -172,12 +172,47 @@ def layers_sheet(ws, cfg):
     widths(ws, first=40, rest=18); ws.column_dimensions["B"].width = 8
 
 
+TWO_CLIPS = {"camera ↓": "101394", "object ↓": "180656"}   # findings §3.5: Turning the camera down / Moving something down
+TWO_CLIP_ROWS = ["Clip", "Contrast passers, home side (n)", "Pair margin, unablated (spliced)",
+                 "  … 3 passers zeroed", "  … 10 passers zeroed", "  … 20 passers zeroed (capped at pool)", "  … all passers zeroed",
+                 "Passers' decoder |cos|, median (random ≈ 0.025)", "Top-10 leftover share of attribution after all zeroed (%)",
+                 "Pair margin, raw stream (no SAE)", "  … 1 readout direction removed", "  … 2 directions removed",
+                 "  … 3 directions removed", "Passers' coverage of readout direction 1 (%, sum cos²)",
+                 "Of the 10 atoms best aligned with it: passers (n)"]
+
+
+def two_clip_rows():
+    """Findings §3.5 as one table: dose sweep, decoder geometry, leftover attribution, raw readout directions;
+    columns VM / UMT x camera / object down. Reads the vtc_{dose_sweep,leftover_mass,readout_direction}_L9 outputs."""
+    ds, cs = pd.read_csv(A / "vtc_dose_sweep_L9/dose_sweep.csv", dtype={"clip_id": str}), pd.read_csv(A / "vtc_dose_sweep_L9/cos_summary.csv")
+    ms = pd.read_csv(A / "vtc_leftover_mass_L9/mass.csv", dtype={"clip_id": str})
+    rd = pd.read_csv(A / "vtc_readout_direction_L9/margins.csv", dtype={"clip_id": str})
+    ac = pd.read_csv(A / "vtc_readout_direction_L9/atom_cos.csv", dtype={"clip_id": str})
+    cols = {}
+    for m, short in (("videomae", "VM"), ("umt", "UMT")):
+        for name, c in TWO_CLIPS.items():
+            d, n = ds[(ds.model == m) & (ds.clip_id == c)].set_index("arm"), int(ds[(ds.model == m) & (ds.clip_id == c)].n_pool.iloc[0])
+            one = lambda t: t[(t.model == m) & (t.clip_id == c)].iloc[0]
+            cols[f"{short} {name}"] = [c, n, d.pair_margin["batch_base"]] + [d.pair_margin[f"dose_{min(k, n)}"] for k in (3, 10, 20, n)] + \
+                [cs[(cs.model == m) & (cs.unit == d.unit.iloc[0])].iloc[0]["median"], 100 * one(ms).top10_share_full] + \
+                [rd[(rd.model == m) & (rd.clip_id == c) & (rd.k == k)].margin.iloc[0] for k in (0, 1, 2, 3)] + \
+                [100 * one(ac).pass_sumsq, int(one(ac).top10_in_passers)]
+    return pd.DataFrame(cols, index=TWO_CLIP_ROWS).reset_index(names="measure")
+
+
 def vm_sheet(ws, cfg):
-    """VideoMAE (VTC only, no MLM): nouns then verbs, logit and accuracy in separate tables."""
+    """VideoMAE (VTC only, no MLM): the two-downs redundancy table, then nouns and verbs, logit and accuracy separate."""
     n = vm_noun_rows(cfg)
     v = pd.concat([vm_verb_logit_rows(cfg), verb_rows(cfg, "videomae")])
     note = "Raw edit - baseline (controls pending). VideoMAE's own classifier; 3 features per side at most. '–' = none passed."
-    r = write_wide(ws, 1, "VideoMAE nouns: true-class logit change (clips naming the noun)", n, ["object"],
+    t = two_clip_rows()
+    r = write_flat(ws, 1, "Redundancy, two downs (L9, one clip each): camera motion vs object motion, VideoMAE vs UMT", t,
+                   "Single clips, no controls: leads, not results (findings §3.5). Pair margin = home - partner logit. Dose = home-side passers "
+                   "zeroed (spliced), ranked by mean of AUROC and attribution rank. Readout direction = gradient of the margin wrt the L9 "
+                   "residual, removed around dim_mean, recomputed each step. VM camera: 1-2 shared directions, passers catch part of it "
+                   "(low redundancy). VM object: no shared direction, passers align at chance (high redundancy).",
+                   fmts={c: "0.00" for c in t.columns[1:]})
+    r = write_wide(ws, r, "VideoMAE nouns: true-class logit change (clips naming the noun)", n, ["object"],
                    ["Features chosen (n)", VM_LOGIT], {"Features chosen (n)": "0", VM_LOGIT: "0.00"}, note)
     r = write_wide(ws, r, "VideoMAE nouns: class accuracy change (pp)", n, ["object"], [VM_ACC], {VM_ACC: "0.0"}, note)
     r = write_wide(ws, r, "VideoMAE verbs: true-class logit change (home-class clips)", v, ["unit", "against"],
