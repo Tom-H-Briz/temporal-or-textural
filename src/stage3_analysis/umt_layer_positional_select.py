@@ -21,16 +21,27 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT / "src" / "stage3_analysis")]
 
+MODEL = os.environ.get("MODEL", "umt")                # umt | videomae | timesformer (same rules, 6 Nov)
+TAG = {"umt": "umt", "videomae": "vm", "timesformer": "tf"}[MODEL]
+DFA = {"umt": "dfa_mass_delta_umt/dfa_mass_delta_umt_ssv2_all174_l{L}_job7ep_k64.parquet",
+       "videomae": "dfa_mass_delta_vm_c1/dfa_mass_delta_vm_c1_ssv2_all174_l{L}_job7ep_k64.parquet",
+       "timesformer": "dfa_mass_delta_tf/dfa_mass_delta_tf_ssv2_all174_l{L}_job{L}_k64.parquet"}  # TF SAE job = layer
+
 CFG = {
-    "layer": int(os.environ.get("LAYER", 9)),
+    "layer": int(os.environ.get("LAYER", 9)), "model": MODEL,
     "k_top": 307, "min_classes": 170, "cv_cut": 0.2, "ramp_cut": 0.75,
     "rev_margin_max": 0.0, "r_c_clip_min": 0.65,       # per-clip rule 3 (user, 6 Nov)
-    "dfa": ROOT / "outputs/analysis/dfa_mass_delta_umt/dfa_mass_delta_umt_ssv2_all174_l{L}_job7ep_k64.parquet",
-    "pair_dir": ROOT / "outputs/analysis/umt_pair_contrast_L{L}",
+    "dfa": ROOT / "outputs/analysis" / DFA[MODEL],
+    "pair_dir": ROOT / "outputs/analysis/umt_pair_contrast_L{L}",      # rule 2, UMT only
     "obj_dir": ROOT / "outputs/analysis/umt_object_contrast_L{L}",
-    "profiles": ROOT / "outputs/analysis/umt_layer_positional_ablation_L{L}_splice/profiles_{c}.npz",
-    "out_dir": ROOT / "outputs/analysis/umt_layer_positional",
+    # VM: shuffle = C1, reversal = Rev1 (tubelet-level, in-grammar); stored under the R/C/Rev keys
+    "conds": {"R": "R", "C": "C1", "Rev": "Rev1"} if MODEL == "videomae" else {"R": "R", "C": "C", "Rev": "Rev"},
+    "profiles": ROOT / f"outputs/analysis/{TAG}_layer_positional_ablation_L{{L}}_splice/profiles_{{c}}.npz",
+    "out_dir": ROOT / f"outputs/analysis/{TAG}_layer_positional",
+    "smoke": int(os.environ.get("MAX_CLIPS", 0)) > 0,  # smoke: *_splice_smoke profiles -> sets_L{L}_smoke.csv
 }
+if CFG["smoke"]:
+    CFG["profiles"] = Path(str(CFG["profiles"]).replace("_splice/", "_splice_smoke/"))
 
 EXPECTED = {
     # per-clip rule 3 (6 Nov), checked against an independent scratch computation
@@ -73,7 +84,14 @@ def layer_path(cfg, key):
 
 def fires_mask(cfg):
     """Rule 2: post-fix summ_{R,C}.npz array `max`, pair + object concatenated (3,966 clips);
-    keep features whose max > 0 in every clip under R and under C."""
+    keep features whose max > 0 in every clip under R and under C. VM has no such files:
+    the SL-clip profiles (summed over patches) under R and C1 instead."""
+    if cfg["model"] != "umt":
+        f = [np.load(str(cfg["profiles"]).format(L=cfg["layer"], c=cfg["conds"][k]))["prof"] for k in ("R", "C")]
+        fires = np.logical_and.reduce([(p.max(1) > 0).all(0) for p in f])
+        print(f"rule 2 ({cfg['model']}, SL-clip profiles): {int(fires.sum())} features fire on every clip "
+              f"under R and {cfg['conds']['C']}")
+        return fires
     parts = {}
     for src in ("pair_dir", "obj_dir"):
         for cond in ("R", "C"):
@@ -89,12 +107,12 @@ def clip_profiles(cfg, feats):
     """Rule 3 input: post-fix profiles_{R,C,Rev}.npz -> {cond: (n_clips, k, 12)} for feats,
     rows aligned on R's clip order (each condition is saved in its own loader order), + class ids."""
     P = {}
-    for c in ("R", "C", "Rev"):
-        with np.load(str(cfg["profiles"]).format(L=cfg["layer"], c=c)) as z:
+    for c, name in cfg["conds"].items():
+        with np.load(str(cfg["profiles"]).format(L=cfg["layer"], c=name)) as z:
             P[c] = pd.Series(z["clip_id"]), z["prof"][:, :, feats].astype(np.float64), z["class_id"]
     order = {c: pd.Series(range(len(ids)), index=ids).loc[P["R"][0]].to_numpy() for c, (ids, _, _) in P.items()}
     out = {c: p[order[c]].transpose(0, 2, 1) for c, (_, p, _) in P.items()}
-    print(f"rule 3 input: {len(order['R'])} clips x {len(feats)} features x 12 frames")
+    print(f"rule 3 input: {len(order['R'])} clips x {len(feats)} features x {out['R'].shape[-1]} positions")
     return out, P["R"][2]
 
 
@@ -119,7 +137,7 @@ def cv_split(R, cls, cfg):
     values); CV = std/mean (ddof = 1); ramp_r = r(profile, frames 0..11)."""
     prof = np.stack([R[cls == c].mean(0) for c in np.unique(cls)]).mean(0)
     cv = prof.std(1, ddof=1) / prof.mean(1)
-    return cv, pearson_rows(prof, np.broadcast_to(np.arange(12.0), prof.shape))
+    return cv, pearson_rows(prof, np.broadcast_to(np.arange(prof.shape[-1], dtype=float), prof.shape))
 
 
 def assign_arms(r_c, margin, cv, ramp_r, cfg):
@@ -152,7 +170,7 @@ def build_table(cfg):
 def regression_check(cfg, df):
     """Compare the selected sets (and pool / fires sizes) against the brief's table; exact
     match required, differences printed feature by feature."""
-    exp = EXPECTED.get(cfg["layer"])
+    exp = EXPECTED.get(cfg["layer"]) if cfg["model"] == "umt" else None   # UMT lists only
     if exp is None:
         print(f"no regression table for L{cfg['layer']}; skipping")
         return True
@@ -173,7 +191,7 @@ def main():
     cfg = dict(CFG)
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
     df = build_table(cfg)
-    out = cfg["out_dir"] / f"sets_L{cfg['layer']}.csv"
+    out = cfg["out_dir"] / f"sets_L{cfg['layer']}{'_smoke' if cfg['smoke'] else ''}.csv"
     df.to_csv(out, index=False)
     ok = regression_check(cfg, df)
     print(df[["feature", "arm", "r_C_clip", "rev_margin", "cv", "ramp_r", "vtc_rank"]].to_string(index=False))

@@ -25,19 +25,23 @@ sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT 
 
 import umt_vtc_clock_ablation as clock
 
+MODEL = os.environ.get("MODEL", "umt")                # umt | videomae | timesformer (same test, 6 Nov)
+TAG = {"umt": "umt", "videomae": "vm", "timesformer": "tf"}[MODEL]   # output-dir prefix
+
 CFG = {
     "layer": int(os.environ.get("LAYER", 9)), "sae_k": 64, "job_label": "7ep",
-    "model": "umt", "dose": 1.0,
+    "model": MODEL, "dose": 1.0,
     "splice": os.environ.get("SPLICE", "1") == "1",
     "conds": os.environ.get("CONDS", "R"),
-    "profile_conds": ("R", "C", "Rev"),
-    "sets_csv": ROOT / "outputs/analysis/umt_layer_positional/sets_L{L}.csv",
-    "xlayer_dir": ROOT / "outputs/analysis/umt_layer_positional",
+    # VM: C1 = tubelet-pair shuffle; Rev1 = tubelet order reversed (in-grammar); Rev kept for comparison
+    "profile_conds": ("R", "C1", "Rev", "Rev1") if MODEL == "videomae" else ("R", "C", "Rev"),   # TF: as UMT
+    "sets_csv": ROOT / f"outputs/analysis/{TAG}_layer_positional/sets_L{{L}}.csv",
+    "xlayer_dir": ROOT / f"outputs/analysis/{TAG}_layer_positional",
     "sl_csv": ROOT / "outputs/Laura_SL/Static_Temporal.csv",
     "manifest": ROOT / "outputs/manifests/manifest_ssv2_all174_cap40.json",
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2_val_set")),
-    "out_dir": Path(os.environ.get("OUT_DIR", str(ROOT / "outputs/analysis/umt_layer_positional_ablation_L{L}"))),
+    "out_dir": Path(os.environ.get("OUT_DIR", str(ROOT / f"outputs/analysis/{TAG}_layer_positional_ablation_L{{L}}"))),
     "max_clips": int(os.environ.get("MAX_CLIPS", 0)), "edit_batch": 16,
     "num_workers": int(os.environ.get("NUM_WORKERS", 4)),
     "n_boot": 1000, "seed": 0,
@@ -48,6 +52,27 @@ CFG = {
 def layer_path(cfg, key):
     """CFG path with {L} substituted by the layer index."""
     return Path(str(cfg[key]).format(L=cfg["layer"]))
+
+
+def loader(cfg, st, rows, cond):
+    """Batch-1 (pv, row-index) loader. UMT: umt_mlm_feature_contrast's (R / C). VM / TF:
+    umt_vision_pair_contrast's (R / C1 / C) with row indices as labels, so done-tracking still works."""
+    if cfg["model"] == "umt":
+        from umt_mlm_feature_contrast import clip_loader
+        return clip_loader(rows, cfg, "C" if cond == "C" else "R")
+    from umt_vision_pair_contrast import clip_loader
+    return clip_loader(list(zip(rows.clip_id, rows.index)), cfg, cond if cond in ("C", "C1") else "R",
+                       st["processor"])                # VM C1 / TF C; Rev(1) applied after loading
+
+
+def condition(pv, cond):
+    """Rev = whole time axis flipped (apply_condition). Rev1 (VM) = the 2-frame tubelets in
+    reverse order, frames inside each tubelet kept in order (the C1 analogue)."""
+    if cond == "Rev1":
+        B, T = pv.shape[:2]
+        return pv.reshape(B, T // 2, 2, *pv.shape[2:]).flip(1).reshape(pv.shape)
+    from umt_vision_pair_contrast import apply_condition
+    return apply_condition(pv, cond)
 
 
 def arm_sets(cfg):
@@ -89,9 +114,8 @@ def write_arms(cfg, mass):
 def run_mass(cfg, st):
     """Stage 1 (GPU): mean per-feature SAE activation mass over the SL clips (R), then the
     per-arm mass share. One forward per clip; the loader's skip-to-next is detectable by index."""
-    from umt_mlm_feature_contrast import clip_loader
     rows, total, n, done, t0 = clock.clip_table(cfg), None, 0, set(), time.time()
-    for pv, i in clip_loader(rows, cfg, "R"):
+    for pv, i in loader(cfg, st, rows, "R"):
         if int(i) in done:
             continue
         done.add(int(i))
@@ -114,7 +138,7 @@ def run_ablate(cfg, st):
     D = st["sae"].get_dictionary()
     out = []
     for cond in cfg["conds"].split("+"):
-        clock.ablate_cond(cfg, st, arms, edits, D, cond, out)
+        clock.ablate_cond(cfg, st, arms, edits, D, cond, out, lambda r, c: loader(cfg, st, r, c))
         df = pd.DataFrame(out)
         df[clock.LG] = df[clock.LG].astype(np.float16)
         df.to_parquet(cfg["out_dir"] / "per_clip_logits.parquet", index=False)
@@ -134,18 +158,16 @@ def run_profiles(cfg, st):
     """Part 3 (GPU): per condition, z0 from clip_pass -> gather_by_position(..., 'umt') ->
     (12, 196, 6144) -> sum over patches -> one fp16 (12, 6144) profile per clip, saved as
     profiles_{cond}.npz (clip_id, class_id, prof). C and Rev are encode-pass only."""
-    from umt_mlm_feature_contrast import clip_loader
-    from umt_vision_pair_contrast import apply_condition
     from ToT_utils import gather_by_position
     rows = clock.clip_table(cfg)
     for cond in cfg["profile_conds"]:
         profs, ids, cls, done, t0 = [], [], [], set(), time.time()
-        for pv, i in clip_loader(rows, cfg, "C" if cond == "C" else "R"):
+        for pv, i in loader(cfg, st, rows, cond):
             if int(i) in done:
                 continue
             done.add(int(i))
-            _, _, z0 = clock.clip_pass(st, apply_condition(pv, cond).to(cfg["device"]))
-            prof = gather_by_position(z0, "umt").sum(1)
+            _, _, z0 = clock.clip_pass(st, condition(pv, cond).to(cfg["device"]))
+            prof = gather_by_position(z0, cfg["model"]).sum(1)
             if not profs:
                 check_reshape(z0, prof)
             profs.append(prof.half().cpu().numpy())
@@ -156,8 +178,9 @@ def run_profiles(cfg, st):
                             clip_id=np.array(ids), class_id=np.array(cls, dtype=np.int64),
                             prof=np.stack(profs).astype(np.float16))
         print(f"profiles {cond}: {len(ids)} clips in {(time.time() - t0) / 60:.1f} min", flush=True)
-    run_recheck(cfg)
-    run_nearflat(cfg)
+    if cfg["model"] == "umt":                         # UMT-only, superseded checks
+        run_recheck(cfg)
+        run_nearflat(cfg)
 
 
 def load_profiles(cfg, cond):
@@ -278,7 +301,7 @@ def layer_result(cfg, layer):
     """One finished layer -> rows of the cross-layer table: d logit / d margin / d accuracy
     per arm vs batch_base (no controls), next to the arm's share of the total activation
     mass (arms.csv)."""
-    d = ROOT / "outputs/analysis" / f"umt_layer_positional_ablation_L{layer}_splice"
+    d = ROOT / "outputs/analysis" / f"{TAG}_layer_positional_ablation_L{layer}{'_splice' if cfg['splice'] else ''}"
     if not (d / "per_clip_logits.parquet").exists():
         return []
     cl, L, arms = clock.load_logits({**cfg, "out_dir": d})
@@ -297,7 +320,7 @@ def xlayer_table(cfg):
     (non-smoke) splice dirs of every layer that has run; writes xlayer_summary.csv."""
     rows = [r for layer in (5, 7, 9) for r in layer_result(cfg, layer)]
     tab = pd.DataFrame(rows)
-    out = cfg["xlayer_dir"] / "xlayer_summary.csv"
+    out = cfg["xlayer_dir"] / f"xlayer_summary{'' if cfg['splice'] else '_raw'}.csv"   # raw-stream check: own table
     tab.to_csv(out, index=False)
     print(f"cross-layer table -> {out}")
     if len(tab):
@@ -315,6 +338,7 @@ def main():
         cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name.format(L=cfg["layer"]))
     if cfg["max_clips"]:
         cfg["out_dir"] = cfg["out_dir"].with_name(cfg["out_dir"].name + "_smoke")
+        cfg["sets_csv"] = Path(str(cfg["sets_csv"]).replace(".csv", "_smoke.csv"))   # select's smoke sets
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
     print(f"mode={mode} layer=L{cfg['layer']} device={cfg['device']} out={cfg['out_dir']} "
           f"conds={cfg['conds']} splice={cfg['splice']} max_clips={cfg['max_clips'] or 'all'}")

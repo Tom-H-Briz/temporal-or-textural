@@ -221,13 +221,15 @@ def run_mass(cfg, st):
     print(f"mass stage: {len(done)}/{len(rows)} clips in {(time.time() - t0) / 60:.1f} min")
 
 
-def ablate_cond(cfg, st, arms, edits, D, cond, out):
-    """One condition: every SL clip -> baseline + all arm rows appended to `out`."""
+def ablate_cond(cfg, st, arms, edits, D, cond, out, load=None):
+    """One condition: every SL clip -> baseline + all arm rows appended to `out`. `load`
+    (rows, cond) -> loader overrides the UMT clip_loader (umt_layer_positional_ablation: VM)."""
     from umt_mlm_feature_contrast import clip_loader
     from umt_vision_pair_contrast import apply_condition
     rows, done, t0, off = clip_table(cfg), set(), time.time(), 0.0
     bb = [a for a, _ in arms].index("batch_base") - 1     # edits list: baseline is dropped
-    for pv, i in clip_loader(rows, cfg, "C" if cond == "C" else "R"):
+    load = load or (lambda r, c: clip_loader(r, cfg, "C" if c == "C" else "R"))
+    for pv, i in load(rows, cond):
         if int(i) in done:
             continue                                  # the dataset's skip-to-next: already done
         done.add(int(i))
