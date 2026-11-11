@@ -23,9 +23,10 @@ CFG = dict(qkr.CFG, **{
 })
 
 
-def timing_z(cfg, timing):
-    """seek / sought z, each (H, F, T): every feature vs every timing feature, per head."""
-    q, k, _ = qkr.project(cfg, qkr.load_decoder(cfg), qkr.load_block(cfg))
+def timing_z(cfg, timing, load_block=None):
+    """seek / sought z, each (H, F, T): every feature vs every timing feature, per head.
+    load_block: another model's block loader (VM: vm_qk_resonance.load_block); default UMT."""
+    q, k, _ = qkr.project(cfg, qkr.load_decoder(cfg), (load_block or qkr.load_block)(cfg))
     mu, sd = qkr.null_stats(cfg, q, k)
     t = torch.tensor(timing)
     seek = torch.einsum("fhd,thd->hft", q, k[t])                # feature = query, timing = key

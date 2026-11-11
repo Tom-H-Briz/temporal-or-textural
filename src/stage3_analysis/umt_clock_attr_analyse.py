@@ -3,7 +3,8 @@ What builds the pair key features? Reads the raw clock-downstream run's attribut
 home targets x frame x LAYER latent, activation x gradient, last column = error + dim_mean) and ranks contributors per
 target, flagged clock / comb / L5 pair feature, with their QK resonance with the clock (seek / sought best |z|, as
 umt_qk_content_timing.py), lead (source frame - target frame) and the R -> Rev sign. Linearity check: summed clock
-attribution vs the clock arm's actual drop. Usage: LAYER=5|7 uv run python src/stage3_analysis/umt_clock_attr_analyse.py
+attribution vs the clock arm's actual drop. MODEL=videomae: "clock" = the VM spikes arm throughout (column names kept).
+Usage: [MODEL=videomae] LAYER=5|7 uv run python src/stage3_analysis/umt_clock_attr_analyse.py
 """
 import json
 import os
@@ -18,10 +19,13 @@ os.environ.setdefault("SAE_LAYER", str(L))                      # umt_qk_resonan
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src" / "stage3_analysis"))
 A = ROOT / "outputs/analysis"
+VM = os.environ.get("MODEL", "umt") == "videomae"            # VM run (11/11/26): timing set = spikes, QK vs VM weights
+TAG = "vm" if VM else "umt"
 CFG = {
-    "run_dir": Path(os.environ.get("RUN_DIR", str(A / f"umt_clock_downstream_L{L}_raw"))),
-    "sets": ROOT / "src/stage3_analysis/umt_clock_downstream_sets.json",
-    "pair_feats": A / f"umt_pair_contrast_L{L}/features.csv",
+    "run_dir": Path(os.environ.get("RUN_DIR", str(A / f"{TAG}_clock_downstream_L{L}_raw"))),
+    "sets": ROOT / f"src/stage3_analysis/{TAG}_clock_downstream_sets.json",
+    "pair_feats": A / f"{'videomae' if VM else 'umt'}_pair_contrast_L{L}/features.csv",
+    "timing_key": "spikes" if VM else "clock",              # sets-json list and arms.csv row of the timing arm
     "top_n": 15, "F": 6144,
 }
 
@@ -47,13 +51,18 @@ def flags(cfg):
     """Clock / comb lists (sets json) and the L5|L7 pair-contrast content features with their home pair."""
     s = json.load(open(cfg["sets"]))[str(L)]
     p = pd.read_csv(cfg["pair_feats"]) if cfg["pair_feats"].exists() else pd.DataFrame(columns=["latent", "object"])
-    return set(s["clock"]), set(s["comb"]), p.groupby("latent").object.agg(lambda x: ",".join(sorted(set(x))))
+    return set(s[cfg["timing_key"]]), set(s["comb"]), p.groupby("latent").object.agg(lambda x: ",".join(sorted(set(x))))
 
 
 def resonance(clock):
-    """Per LAYER latent: signed best seek / sought z vs the clock and the |z| percentile over the dictionary."""
+    """Per LAYER latent: signed best seek / sought z vs the timing set (UMT clock / VM spikes) and the |z|
+    percentile over the dictionary. VM: same z (umt_qk_content_timing.timing_z) with VM's SAE and block weights."""
     import umt_qk_content_timing as qct
-    seek, sought = qct.timing_z(qct.CFG, sorted(clock))
+    if VM:
+        import vm_qk_resonance as vqr
+        seek, sought = qct.timing_z(vqr.CFG, sorted(clock), load_block=vqr.load_block)
+    else:
+        seek, sought = qct.timing_z(qct.CFG, sorted(clock))
     out = {}
     for name, z in (("seek", seek), ("sought", sought)):
         mag, signed, _, _ = qct.best(z)
@@ -62,7 +71,7 @@ def resonance(clock):
 
 
 def target_frames(cfg, cond, c, t, idx):
-    """Baseline (row 0) frame profile of target t at layer c over its clips, mean -> (12,)."""
+    """Baseline (row 0) position profile of target t at layer c over its clips, mean -> (T,)."""
     return load(cfg, f"prof_L{c}", cond)[idx, 0, :, t].astype(np.float32).mean(0)
 
 
@@ -70,7 +79,7 @@ def contributors(cfg, key, M, Mrev, tf, fl, res):
     """Top-n LAYER latents by |clip-summed attribution| for one target; share of total |attribution|,
     lead = |attr|-weighted source frame - target-profile mean frame (frames), other-condition attribution + sign flip."""
     clock, comb, pair = fl
-    tot, fr = M[:, :-1].sum(0), np.arange(12)
+    tot, fr = M[:, :-1].sum(0), np.arange(M.shape[0])          # positions: UMT 12 frames, VM 8 tubelets
     tgt_frame = (tf * fr).sum() / max(tf.sum(), 1e-6)
     rows = []
     for f in np.argsort(-np.abs(tot))[:cfg["top_n"]]:
@@ -87,7 +96,7 @@ def linearity(cfg, cond, key, M, idx, clock):
     """Predicted (summed clock attribution) vs actual (batch_base - clock arm) clip-summed drop of the target."""
     arms = pd.read_csv(cfg["run_dir"] / "arms.csv").set_index("arm").row
     p = load(cfg, f"prof_L{key[0]}", cond)
-    act = (p[idx, arms["batch_base"], :, key[1]].astype(np.float32) - p[idx, arms["clock"], :, key[1]]).sum(1).mean()
+    act = (p[idx, arms["batch_base"], :, key[1]].astype(np.float32) - p[idx, arms[cfg["timing_key"]], :, key[1]]).sum(1).mean()
     return {"layer": key[0], "target": key[1], "cond": cond, "pred_drop": float(M[:, sorted(clock)].sum()),
             "actual_drop": float(act), "remainder": float(M[:, -1].sum()), "dict_total": float(M[:, :-1].sum())}
 
