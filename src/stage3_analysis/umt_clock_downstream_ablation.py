@@ -6,7 +6,10 @@ contrast sets (report test-only alongside). Arms: baseline, batch_base, the sele
 Add-ons: (a) block LAYER+1 attention frame x frame per head, every row; (b) per-token residual norm at LAYER and each
 capture layer, baseline; (c) per-token summed comb-latent activation at LAYER, baseline. SPLICE=0 (raw, own dir) adds
 (d) attribution of each clip's home key features (sets json attr_targets) to every LAYER latent per frame.
-Usage: LAYER=5 [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py   (GPU)
+Every run also stores the baseline residual per frame / tubelet (mean over space) at LAYER and each capture layer
+(res_L*, the position-fraction ruler). MODEL=videomae (11/11/26): VM positions = 8 tubelets, arms = spikes / others
+(vm_clock_downstream_sets.json), + pairs 8/9 (report separately), + a baseline-only C1 pass for res_L* only.
+Usage: [MODEL=videomae] LAYER=5 [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py
 """
 import json
 import os
@@ -23,16 +26,20 @@ sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT 
 
 L = int(os.environ.get("LAYER", 5))
 RAW = "" if os.environ.get("SPLICE", "1") == "1" else "_raw"     # SPLICE=0: raw-stream subtraction, own dir
+MODEL = os.environ.get("MODEL", "umt")                           # umt | videomae (VM run, 11/11/26)
+TAG, VM = {"umt": "umt", "videomae": "vm"}[MODEL], MODEL == "videomae"
 CFG = {
     "layer": L, "capture": [c for c in (7, 9) if c > L], "attn_block": L + 1,
-    "model": "umt", "sae_k": 64, "job_label": "7ep", "splice": os.environ.get("SPLICE", "1") == "1", "dose": 1.0,
-    "classes": [45, 43, 168, 165, 93, 86, 44, 41, 0, 32], "conds": ("R", "Rev"),
+    "model": MODEL, "sae_k": 64, "job_label": "7ep", "splice": os.environ.get("SPLICE", "1") == "1", "dose": 1.0,
+    "classes": [45, 43, 168, 165, 93, 86, 44, 41, 0, 32] + ([8, 9] if VM else []),   # VM 8/9: report separately
+    "conds": ("R", "Rev"), "res_conds": ("C1",) if VM else (),   # res_conds: baseline-only pass, residual sums only
+    "n_pos": 8 if VM else 12, "n_tok": 1568 if VM else 2352, "d_model": 768, "n_heads": 12,
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "video_dir": os.environ.get("VIDEO_DIR", str(ROOT / "data/ssv2_val_set")),
     "pair_sets": ROOT / "outputs/analysis/umt_pair_contrast/sets.csv",
     "sets_csv": ROOT / f"outputs/analysis/umt_layer_positional/sets_L{L}.csv",
-    "extra_sets": ROOT / "src/stage3_analysis/umt_clock_downstream_sets.json",
-    "out_dir": Path(os.environ.get("OUT_DIR", str(ROOT / f"outputs/analysis/umt_clock_downstream_L{L}{RAW}"))),
+    "extra_sets": ROOT / f"src/stage3_analysis/{TAG}_clock_downstream_sets.json",
+    "out_dir": Path(os.environ.get("OUT_DIR", str(ROOT / f"outputs/analysis/{TAG}_clock_downstream_L{L}{RAW}"))),
     "max_clips": int(os.environ.get("MAX_CLIPS", 0)), "edit_batch": 16,
     "attr": RAW == "_raw", "attr_batch": int(os.environ.get("ATTR_BATCH", 8)),   # attribution: raw runs only
     "num_workers": int(os.environ.get("NUM_WORKERS", 4)), "save_every": 50,
@@ -54,7 +61,11 @@ def clip_table(cfg):
 
 
 def arm_rows(cfg):
-    """[(arm, feats)]: baseline, batch_base, the positional selection arms, then clock (ramps + near-miss)."""
+    """[(arm, feats)]: baseline, batch_base, the positional selection arms, then clock (ramps + near-miss).
+    VM: baseline, batch_base, spikes, others (sets json; VM has no positional selection sets)."""
+    if cfg["model"] == "videomae":
+        s = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]
+        return [("baseline", []), ("batch_base", []), ("spikes", s["spikes"]), ("others", s["others"])]
     import umt_layer_positional_ablation as pos
     arms = pos.arm_sets(dict(pos.CFG, layer=cfg["layer"], sets_csv=cfg["sets_csv"]))
     clock = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]["clock"]
@@ -77,8 +88,13 @@ def setup(cfg):
             lambda mod, i, o, c=c: st["cap"].__setitem__(
                 c, (o[0] if isinstance(o, tuple) else o) if st["grad"] else (o[0] if isinstance(o, tuple) else o).detach()))
     blk = m["layer_getter"](st["model"], cfg["attn_block"])
-    blk.attn.register_forward_hook(lambda mod, i, o: st.__setitem__("attn_in", i[0].detach()))
-    st["attn_mod"] = blk.attn
+    if cfg["model"] == "videomae":                               # LN'd attention input = layernorm_before output
+        blk.layernorm_before.register_forward_hook(lambda mod, i, o: st.__setitem__("attn_in", o.detach()))
+        st["attn_mod"] = blk.attention.attention
+    else:
+        blk.attn.register_forward_hook(lambda mod, i, o: st.__setitem__("attn_in", i[0].detach()))
+        st["attn_mod"] = blk.attn
+    st["mname"] = cfg["model"]
     return st
 
 
@@ -89,16 +105,25 @@ def down_profiles(st, c):
     out = []
     for x in st["cap"][c].float():                               # (N, D) per row
         _, z = sae.encode(x - dm)
-        out.append(gather_by_position(z, "umt").sum(1).half())
+        out.append(gather_by_position(z, st["mname"]).sum(1).half())
     return torch.stack(out)
 
 
-def attn_frames(st, n_frames=12):
-    """(B, H, 12, 12) attention mass from query frame to key frame, per head, from the stored LN'd input."""
-    a, x = st["attn_mod"], st["attn_in"].float()
-    W, H = a.qkv.weight.float(), a.num_heads
-    q = (x @ W[:W.shape[1]].T + a.q_bias.float()) * a.scale
-    k = x @ W[W.shape[1]:2 * W.shape[1]].T
+def scaled_qk(st, x, H):
+    """Scaled queries and keys (B, N, D) of block attn_block. UMT: fused qkv; VM: separate query / key
+    (both: q bias, no k bias)."""
+    a = st["attn_mod"]
+    if st["mname"] == "videomae":
+        q = (x @ a.query.weight.float().T + a.q_bias.float()) * (x.shape[-1] // H) ** -0.5
+        return q, x @ a.key.weight.float().T
+    W = a.qkv.weight.float()
+    return (x @ W[:W.shape[1]].T + a.q_bias.float()) * a.scale, x @ W[W.shape[1]:2 * W.shape[1]].T
+
+
+def attn_frames(st, n_frames=12, H=12):
+    """(B, H, T, T) attention mass from query position to key position, per head, from the stored LN'd input."""
+    x = st["attn_in"].float()
+    q, k = scaled_qk(st, x, H)
     B, N, _ = x.shape
     q, k = q.view(B, N, H, -1).transpose(1, 2), k.view(B, N, H, -1).transpose(1, 2)
     P, out = N // n_frames, torch.zeros(B, H, n_frames, n_frames, device=x.device)
@@ -126,10 +151,10 @@ def attribute(st, cfg, pv, x, z0, tg):
                 g, = torch.autograd.grad(y, new)
             for gb in g:
                 a = torch.cat([z0 * (gb @ st["D"].T), (rem * gb).sum(-1, keepdim=True)], 1)
-                out.append(gather_by_position(a, "umt").sum(1))
+                out.append(gather_by_position(a, st["mname"]).sum(1))
     finally:
         st["grad"] = False
-    return torch.stack(out) if out else torch.zeros(0, 12, z0.shape[1] + 1, device=x.device)
+    return torch.stack(out) if out else torch.zeros(0, cfg["n_pos"], z0.shape[1] + 1, device=x.device)
 
 
 def home_targets(cfg, cls):
@@ -138,14 +163,24 @@ def home_targets(cfg, cls):
     return [(c, int(t)) for c in cfg["capture"] for t, home in tg[str(c)].items() if cls in home]
 
 
+def tubelet_res(st, cfg, x):
+    """Baseline residual per position (frame / tubelet), mean over spatial tokens, at LAYER and each capture
+    layer -> {layer: (T, D)}. Read before any edit batch overwrites st['cap']. Feeds the position-fraction ruler."""
+    from ToT_utils import gather_by_position
+    src = {cfg["layer"]: x[0], **{c: st["cap"][c][0] for c in cfg["capture"]}}
+    return {l: gather_by_position(v.float(), st["mname"]).mean(1) for l, v in src.items()}
+
+
 def one_clip(st, cfg, pv, arms, comb, cls):
-    """Rows in arm_rows order: logits (R, 174), profiles {c: (R, 12, F)}, attention (R, H, 12, 12);
-    baseline extras: norms {layer: (N,)}, comb map (N,), attribution (K, 12, F+1) for cls's home targets (raw)."""
+    """Rows in arm_rows order: logits (R, 174), profiles {c: (R, T, F)}, attention (R, H, T, T);
+    baseline extras: norms {layer: (N,)}, comb map (N,), attribution (K, T, F+1) for cls's home targets (raw),
+    residual per position {layer: (T, D)}."""
     import umt_vtc_clock_ablation as clock
     with torch.no_grad():
         base, x, z0 = clock.clip_pass(st, pv)
         prof = {c: [down_profiles(st, c)] for c in cfg["capture"]}
-        att, lg = [attn_frames(st)], [base[None]]
+        att, lg = [attn_frames(st, cfg["n_pos"])], [base[None]]
+        res = tubelet_res(st, cfg, x)
         norms = {cfg["layer"]: x[0].norm(dim=-1).half()}
         norms.update({c: st["cap"][c][0].float().norm(dim=-1).half() for c in cfg["capture"]})
         comb_map = z0[:, comb].sum(1).half()
@@ -154,26 +189,31 @@ def one_clip(st, cfg, pv, arms, comb, cls):
         for i in range(0, len(edits), cfg["edit_batch"]):
             new = torch.stack([clock.edited_stream(st, x, z0, st["D"], fs, cfg) for fs in edits[i:i + cfg["edit_batch"]]])
             lg.append(clock.full_logits(st, pv, new))
-            att.append(attn_frames(st))
+            att.append(attn_frames(st, cfg["n_pos"]))
             for c in cfg["capture"]:
                 prof[c].append(down_profiles(st, c))
-    return (torch.cat(lg).half(), {c: torch.cat(p) for c, p in prof.items()}, torch.cat(att), norms, comb_map, attr)
+    return (torch.cat(lg).half(), {c: torch.cat(p) for c, p in prof.items()}, torch.cat(att), norms, comb_map, attr,
+            res)
 
 
-def open_store(cfg, cond, n, R, F=6144, H=12, N=2352, T=12):
-    """Memmaps for one condition (reopened in place if they exist -> resume); done flags (n,) bool."""
+def open_store(cfg, cond, n, R, F=6144, base_only=False):
+    """Memmaps for one condition (reopened in place if they exist -> resume); done flags (n,) bool.
+    base_only (res_conds): residual per position only."""
     from numpy.lib.format import open_memmap
-    shapes = {"logits": (n, R, 174), "attn": (n, R, H, T, T), "comb": (n, N)}
-    shapes.update({f"prof_L{c}": (n, R, T, F) for c in cfg["capture"]})
-    shapes.update({f"norm_L{l}": (n, N) for l in [cfg["layer"]] + cfg["capture"]})
-    if cfg["attr"]:                                              # K = home targets per clip (same for every class)
+    N, T, H, lays = cfg["n_tok"], cfg["n_pos"], cfg["n_heads"], [cfg["layer"]] + cfg["capture"]
+    shapes = {f"res_L{l}": (n, T, cfg["d_model"]) for l in lays}
+    if not base_only:
+        shapes.update({"logits": (n, R, 174), "attn": (n, R, H, T, T), "comb": (n, N)})
+        shapes.update({f"prof_L{c}": (n, R, T, F) for c in cfg["capture"]})
+        shapes.update({f"norm_L{l}": (n, N) for l in lays})
+    if cfg["attr"] and not base_only:                            # K = home targets per clip (same for every class)
         K = len(home_targets(cfg, cfg["classes"][0]))
         shapes.update({"attr": (n, K, T, F + 1), "attr_tg": (n, K, 2)})
     shapes["done"] = (n,)
     store = {}
     for k, shp in shapes.items():
         p = cfg["out_dir"] / f"{k}_{cond}.npy"
-        dt = {"done": np.bool_, "attr_tg": np.int16}.get(k, np.float16)
+        dt = {"done": np.bool_, "attr_tg": np.int16}.get(k, np.float32 if k.startswith("res_") else np.float16)
         store[k] = open_memmap(p, mode="r+") if p.exists() else open_memmap(p, mode="w+", dtype=dt, shape=shp)
         assert store[k].shape == shp, f"{p.name}: shape {store[k].shape} != {shp} (clip table changed?)"
     return store
@@ -184,25 +224,39 @@ def flush(store):
         m.flush()
 
 
-def run_cond(cfg, st, rows, arms, comb, cond):
-    """Every not-yet-done clip under one condition -> the memmaps; done flags flushed every save_every."""
-    from umt_mlm_feature_contrast import clip_loader
-    from umt_vision_pair_contrast import apply_condition
-    S = open_store(cfg, cond, len(rows), len(arms))
+def write_clip(S, cfg, i, cls, out):
+    """One clip's one_clip outputs into the memmaps at row i."""
+    lg, prof, att, norms, cm, attr, _ = out
+    S["logits"][i], S["attn"][i], S["comb"][i] = lg.cpu(), att.cpu(), cm.cpu()
+    if cfg["attr"]:
+        S["attr"][i], S["attr_tg"][i] = attr.cpu(), np.array(home_targets(cfg, cls), dtype=np.int16)
+    for c, p in prof.items():
+        S[f"prof_L{c}"][i] = p.cpu()
+    for l, v in norms.items():
+        S[f"norm_L{l}"][i] = v.cpu()
+
+
+def run_cond(cfg, st, rows, arms, comb, cond, base_only=False):
+    """Every not-yet-done clip under one condition -> the memmaps; done flags flushed every save_every.
+    Loader / condition from umt_layer_positional_ablation (UMT: R + flip; VM: C1 shuffle in the dataset).
+    base_only: one unedited forward per clip, residual per position only."""
+    import umt_layer_positional_ablation as pos
+    import umt_vtc_clock_ablation as clock
+    S = open_store(cfg, cond, len(rows), len(arms), base_only=base_only)
     todo, t0, n = rows[~S["done"][:].astype(bool)], time.time(), 0
-    for pv, i in clip_loader(todo, cfg, "R"):
+    for pv, i in pos.loader(cfg, st, todo, cond):
         i = int(i)
         if S["done"][i]:
             continue                                             # dataset skip-to-next landed on a done clip
-        cls = int(rows.class_id[i])
-        lg, prof, att, norms, cm, attr = one_clip(st, cfg, apply_condition(pv, cond).to(cfg["device"]), arms, comb, cls)
-        S["logits"][i], S["attn"][i], S["comb"][i] = lg.cpu(), att.cpu(), cm.cpu()
-        if cfg["attr"]:
-            S["attr"][i], S["attr_tg"][i] = attr.cpu(), np.array(home_targets(cfg, cls), dtype=np.int16)
-        for c, p in prof.items():
-            S[f"prof_L{c}"][i] = p.cpu()
-        for l, v in norms.items():
-            S[f"norm_L{l}"][i] = v.cpu()
+        cls, pv = int(rows.class_id[i]), pos.condition(pv, cond).to(cfg["device"])
+        if base_only:
+            res = tubelet_res(st, cfg, clock.clip_pass(st, pv)[1])
+        else:
+            out = one_clip(st, cfg, pv, arms, comb, cls)
+            write_clip(S, cfg, i, cls, out)
+            res = out[-1]
+        for l, v in res.items():
+            S[f"res_L{l}"][i] = v.cpu()
         S["done"][i], n = True, n + 1
         if n % cfg["save_every"] == 0:
             flush(S)
@@ -223,6 +277,8 @@ def main(cfg):
     st = setup(cfg)
     for cond in cfg["conds"]:
         run_cond(cfg, st, rows, arms, comb, cond)
+    for cond in cfg["res_conds"]:                                # VM C1: residual per position only
+        run_cond(cfg, st, rows, arms, comb, cond, base_only=True)
 
 
 if __name__ == "__main__":
