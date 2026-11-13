@@ -21,7 +21,8 @@ CFG = {
     "arms": ["batch_base", "clock", "builders", "both"], "n_pos": 12, "out": "analysis",
     "pairs": [(45, 43), (168, 165)],
     "targets": {7: {2983: None, 5806: None},
-                9: {393: 45, 4250: 43, 1375: 43, 1540: None, 5825: None, 3537: None, 65: None, 4903: None}},
+                9: {393: 45, 4250: 43, 1375: 43, 1540: None, 5825: None, 3537: None, 65: None, 4903: None,
+                    1684: 168, 3647: 168, 4144: 168, 2181: 165, 2472: 165, 3884: 165}},   # camera up / down home targets
 }
 
 
