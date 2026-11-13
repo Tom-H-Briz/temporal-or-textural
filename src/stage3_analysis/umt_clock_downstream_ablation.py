@@ -9,7 +9,7 @@ capture layer, baseline; (c) per-token summed comb-latent activation at LAYER, b
 Every run also stores the baseline residual per frame / tubelet (mean over space) at LAYER and each capture layer
 (res_L*, the position-fraction ruler). MODEL=videomae (11/11/26): VM positions = 8 tubelets, arms = spikes / others
 (vm_clock_downstream_sets.json), + pairs 8/9 (report separately), + a baseline-only C1 pass for res_L* only.
-Usage: [MODEL=videomae] LAYER=5 [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py
+Usage: [MODEL=videomae] LAYER=5 [TWOBYTWO=1: arms clock / builders / both, use a CLASSES subset + own OUT_DIR] [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py
 """
 import json
 import os
@@ -32,6 +32,8 @@ CFG = {
     "layer": L, "capture": [c for c in (7, 9) if c > L], "attn_block": L + 1,
     "model": MODEL, "sae_k": 64, "job_label": "7ep", "splice": os.environ.get("SPLICE", "1") == "1", "dose": 1.0,
     "classes": [45, 43, 168, 165, 93, 86, 44, 41, 0, 32] + ([8, 9] if VM else []),   # VM 8/9: report separately
+    "vm_arms": os.environ.get("VM_ARMS", "spikes,others").split(","),   # VM arms from the sets json (early / late too)
+    "twobytwo": os.environ.get("TWOBYTWO", "") == "1",
     "conds": ("R", "Rev"), "res_conds": ("C1",) if VM else (),   # res_conds: baseline-only pass, residual sums only
     "n_pos": 8 if VM else 12, "n_tok": 1568 if VM else 2352, "d_model": 768, "n_heads": 12,
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
@@ -41,10 +43,12 @@ CFG = {
     "extra_sets": ROOT / f"src/stage3_analysis/{TAG}_clock_downstream_sets.json",
     "out_dir": Path(os.environ.get("OUT_DIR", str(ROOT / f"outputs/analysis/{TAG}_clock_downstream_L{L}{RAW}"))),
     "max_clips": int(os.environ.get("MAX_CLIPS", 0)), "edit_batch": 16,
-    "attr": RAW == "_raw", "attr_batch": int(os.environ.get("ATTR_BATCH", 8)),   # attribution: raw runs only
+    "attr": RAW == "_raw" and os.environ.get("ATTR", "1") == "1", "attr_batch": int(os.environ.get("ATTR_BATCH", 8)),   # attribution: raw runs only
     "num_workers": int(os.environ.get("NUM_WORKERS", 4)), "save_every": 50,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
 }
+if os.environ.get("CLASSES"):                                   # subset run, e.g. CLASSES=8,9 (use its own OUT_DIR)
+    CFG["classes"] = [int(c) for c in os.environ["CLASSES"].split(",")]
 CFG["val_json"] = Path(os.environ.get("VAL_JSON", str(Path(CFG["labels_path"]).parent / "validation.json")))
 
 
@@ -65,7 +69,12 @@ def arm_rows(cfg):
     VM: baseline, batch_base, spikes, others (sets json; VM has no positional selection sets)."""
     if cfg["model"] == "videomae":
         s = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]
-        return [("baseline", []), ("batch_base", []), ("spikes", s["spikes"]), ("others", s["others"])]
+        return [("baseline", []), ("batch_base", [])] + [(a, s[a]) for a in cfg["vm_arms"]]
+    if cfg["twobytwo"]:                     # 2x2 (12/11/26): clock x builders vs neither; the interaction is the gate
+        s = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]
+        clock = s["clock"]
+        return [("baseline", []), ("batch_base", []), ("clock", clock),
+                ("builders", s["builders"]), ("both", clock + s["builders"])]
     import umt_layer_positional_ablation as pos
     arms = pos.arm_sets(dict(pos.CFG, layer=cfg["layer"], sets_csv=cfg["sets_csv"]))
     clock = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]["clock"]

@@ -23,7 +23,18 @@
    1550,
    4410
   ],
-  "comb": []
+  "comb": [],
+  "early": [
+   5004,
+   358,
+   2093,
+   3516
+  ],
+  "late": [
+   3938,
+   917,
+   449
+  ]
  },
  "attr_targets": {
   "7": {
@@ -231,5 +242,5 @@
    ]
   }
  },
- "_note": "11/11/26 VM run (MODEL=videomae): spikes = 7 L5 scaffold gate members + t6 group; others = same-tubelet near-misses that resonate (vm_qk_near_miss.py). attr_targets = every videomae_pair_contrast_L{7,9}/features.csv latent of the 6 pairs (UMT rule, no Rev filter); value = home classes. 8/9 VM-only, report separately."
+ "_note": "11/11/26 VM run (MODEL=videomae): spikes = 7 L5 scaffold gate members + t6 group; others = same-tubelet near-misses that resonate (vm_qk_near_miss.py). attr_targets = every videomae_pair_contrast_L{7,9}/features.csv latent of the 6 pairs (UMT rule, no Rev filter); value = home classes. 8/9 VM-only, report separately. early/late (11/11): the 7 members split by tubelet, t0-t3 vs t4/t5/t7 (no t6 member)."
 }
