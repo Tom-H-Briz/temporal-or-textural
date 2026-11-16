@@ -9,7 +9,7 @@ capture layer, baseline; (c) per-token summed comb-latent activation at LAYER, b
 Every run also stores the baseline residual per frame / tubelet (mean over space) at LAYER and each capture layer
 (res_L*, the position-fraction ruler). MODEL=videomae (11/11/26): VM positions = 8 tubelets, arms = spikes / others
 (vm_clock_downstream_sets.json), + pairs 8/9 (report separately), + a baseline-only C1 pass for res_L* only.
-Usage: [MODEL=videomae] LAYER=5 [TWOBYTWO=1: arms clock / builders / both, use a CLASSES subset + own OUT_DIR] [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py
+Usage: [MODEL=videomae] LAYER=5 [TWOBYTWO=1 [ARM_A=clock ARM_B=builders]: arms A / B / both, use a CLASSES subset + own OUT_DIR] [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py
 """
 import json
 import os
@@ -34,6 +34,8 @@ CFG = {
     "classes": [45, 43, 168, 165, 93, 86, 44, 41, 0, 32] + ([8, 9] if VM else []),   # VM 8/9: report separately
     "vm_arms": os.environ.get("VM_ARMS", "spikes,others").split(","),   # VM arms from the sets json (early / late too)
     "twobytwo": os.environ.get("TWOBYTWO", "") == "1",
+    # 2x2 arm keys in the sets json (16/11/26: ARM_A=pe ARM_B=builders4 for the PE-triggered run)
+    "arm_a": os.environ.get("ARM_A", "clock"), "arm_b": os.environ.get("ARM_B", "builders"),
     "conds": ("R", "Rev"), "res_conds": ("C1",) if VM else (),   # res_conds: baseline-only pass, residual sums only
     "n_pos": 8 if VM else 12, "n_tok": 1568 if VM else 2352, "d_model": 768, "n_heads": 12,
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
@@ -70,11 +72,11 @@ def arm_rows(cfg):
     if cfg["model"] == "videomae":
         s = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]
         return [("baseline", []), ("batch_base", [])] + [(a, s[a]) for a in cfg["vm_arms"]]
-    if cfg["twobytwo"]:                     # 2x2 (12/11/26): clock x builders vs neither; the interaction is the gate
+    if cfg["twobytwo"]:                     # 2x2 (12/11/26): A x B vs neither; the interaction is the gate
         s = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]
-        clock = s["clock"]
-        return [("baseline", []), ("batch_base", []), ("clock", clock),
-                ("builders", s["builders"]), ("both", clock + s["builders"])]
+        a, b = cfg["arm_a"], cfg["arm_b"]   # default clock x builders
+        both = list(dict.fromkeys(s[a] + s[b]))   # de-duplicated: a latent in both arms is subtracted once
+        return [("baseline", []), ("batch_base", []), (a, s[a]), (b, s[b]), ("both", both)]
     import umt_layer_positional_ablation as pos
     arms = pos.arm_sets(dict(pos.CFG, layer=cfg["layer"], sets_csv=cfg["sets_csv"]))
     clock = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]["clock"]

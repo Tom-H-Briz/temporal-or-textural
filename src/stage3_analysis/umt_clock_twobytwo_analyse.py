@@ -18,7 +18,9 @@ L = int(os.environ.get("LAYER", 5))
 CFG = {
     "layer": L, "capture": [c for c in (7, 9) if c > L],
     "run_dir": Path(os.environ.get("RUN_DIR", str(A / f"umt_clock_downstream_L{L}_2x2_ud"))),
-    "arms": ["batch_base", "clock", "builders", "both"], "n_pos": 12, "out": "analysis",
+    # arms[1:3] = the run's ARM_A / ARM_B (16/11/26: ARM_A=pe ARM_B=builders4 for the PE-triggered run)
+    "arms": ["batch_base", os.environ.get("ARM_A", "clock"), os.environ.get("ARM_B", "builders"), "both"],
+    "n_pos": 12, "out": "analysis",
     "pairs": [(45, 43), (168, 165)],
     "targets": {7: {2983: None, 5806: None},
                 9: {393: 45, 4250: 43, 1375: 43, 1540: None, 5825: None, 3537: None, 65: None, 4903: None,
@@ -57,10 +59,10 @@ def target_rows(cfg, clips, ridx, cond):
             for a in cfg["arms"][1:]:
                 row[f"drop_{a}"] = bb - prof[m, ridx[a], :, t].sum()
                 row[f"rr_{a}"] = ramp_r(prof[m, ridx[a], :, t].mean(0))
-            row["interaction"] = row["drop_both"] - row["drop_clock"] - row["drop_builders"]
-            row["pct_clock"], row["pct_builders"], row["pct_both"] = (
-                100 * row[f"drop_{a}"] / bb if bb > 1e-3 else float("nan")
-                for a in ("clock", "builders", "both"))
+            A, B = cfg["arms"][1], cfg["arms"][2]
+            row["interaction"] = row["drop_both"] - row[f"drop_{A}"] - row[f"drop_{B}"]
+            for a in (A, B, "both"):
+                row[f"pct_{a}"] = 100 * row[f"drop_{a}"] / bb if bb > 1e-3 else float("nan")
             rows.append(row)
     return rows
 
@@ -79,7 +81,7 @@ def margin_rows(cfg, clips, ridx, lg, cond):
                 row[arm] = float((lg[m, ridx[arm], home] - lg[m, ridx[arm], part]).mean())
             for x in cfg["arms"][1:]:
                 row[f"d_{x}"] = row[x] - row["batch_base"]
-            row["interaction"] = row["d_both"] - row["d_clock"] - row["d_builders"]
+            row["interaction"] = row["d_both"] - row[f"d_{cfg['arms'][1]}"] - row[f"d_{cfg['arms'][2]}"]
             rows.append(row)
     return rows
 
@@ -95,11 +97,12 @@ def main(cfg):
         mm += margin_rows(cfg, clips, ridx, lg, cond)
     pd.DataFrame(tt).round(2).to_csv(out / "twobytwo_targets.csv", index=False)
     pd.DataFrame(mm).round(3).to_csv(out / "twobytwo_margin.csv", index=False)
-    cols = ["cond", "layer", "feature", "home", "n_clips", "pct_clock", "pct_builders", "pct_both",
-            "drop_clock", "drop_builders", "drop_both", "interaction"]
+    ab = cfg["arms"][1:]
+    cols = (["cond", "layer", "feature", "home", "n_clips"] + [f"pct_{a}" for a in ab]
+            + [f"drop_{a}" for a in ab] + ["interaction"])
     print(pd.DataFrame(tt)[cols].round(2).to_string(index=False))
-    print(pd.DataFrame(mm)[["cond", "pair", "side", "n_clips", "d_clock", "d_builders", "d_both",
-                            "interaction"]].round(2).to_string(index=False))
+    print(pd.DataFrame(mm)[["cond", "pair", "side", "n_clips"] + [f"d_{a}" for a in ab]
+                           + ["interaction"]].round(2).to_string(index=False))
     print(f"written: {out / 'twobytwo_targets.csv'}, {out / 'twobytwo_margin.csv'}")
 
 
