@@ -20,6 +20,14 @@ CFG = {
     "imagenet_mean": (0.485, 0.456, 0.406),
     "imagenet_std": (0.229, 0.224, 0.225),
 }
+# Two-object suite (16/11/26, #5216 test): one object static at the centre, the other moves horizontally past it,
+# either behind it (same row, occluded) or side by side (own lane below); controls = mover alone, both static
+PAIR_CFG = dict(CFG, out_dir="outputs/synthetic_motion/pair_clips",
+                pair_travel_px=150.0,    # mover starts / ends clear of the static object (half-widths ~41 px)
+                lane_offset_px=56.0)     # side-by-side lane: no overlap with the static object
+# Same two-object layouts with coloured objects (16/11/26): red ball, blue pyramid (RGB multipliers on the shading)
+COLOR_PAIR_CFG = dict(PAIR_CFG, out_dir="outputs/synthetic_motion/pair_clips_color",
+                      colors={"ball": (1.0, 0.15, 0.15), "pyramid": (0.2, 0.35, 1.0)})
 
 
 def _point_in_triangle_sdf(px: np.ndarray, py: np.ndarray, v0, v1, v2) -> np.ndarray:
@@ -63,19 +71,22 @@ def render_object_frame(
     cy: float,
     vx: float,
     vy: float,
-    bg_val: float = 0.175,
+    bg_val: float | np.ndarray = 0.175,
     shutter_samples: int = 8,
     shutter_fraction: float = 0.5,
     edge_softness: float = 1.5,
+    tint: tuple = (1.0, 1.0, 1.0),
 ) -> np.ndarray:
-    """Renders either a 3D-shaded sphere ('ball') or faceted tetrahedron ('pyramid')."""
+    """Renders either a 3D-shaded sphere ('ball') or faceted tetrahedron ('pyramid') -> (H, W, 3).
+    bg_val: scalar grey or an (H, W, 3) image (for layering); tint: RGB multiplier on the object's shading."""
     light_dir = np.array([-0.45, -0.55, 0.70], dtype=np.float32)
     light_dir /= np.linalg.norm(light_dir)
     half_vec = light_dir + np.array([0.0, 0.0, 1.0], dtype=np.float32)
     half_vec /= np.linalg.norm(half_vec)
 
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-    accum = np.zeros((H, W), dtype=np.float32)
+    accum = np.zeros((H, W, 3), dtype=np.float32)
+    tint_rgb = np.array(tint, dtype=np.float32)
     offsets = np.linspace(-0.5 * shutter_fraction, 0.5 * shutter_fraction, shutter_samples)
 
     ball_r = 16.0
@@ -132,10 +143,10 @@ def render_object_frame(
         else:
             raise ValueError(f"Unknown shape: {shape}")
 
-        accum += bg_val * (1.0 - alpha) + obj_intensity * alpha
+        a = alpha[..., None]
+        accum += bg_val * (1.0 - a) + (obj_intensity * alpha)[..., None] * tint_rgb
 
-    img_gray = accum / shutter_samples
-    return np.repeat(img_gray[..., None], 3, axis=-1)
+    return accum / shutter_samples
 
 
 def render_clip(shape: str, deg, travel: float, idx: np.ndarray, cfg: dict):
@@ -211,5 +222,65 @@ def generate_suite(cfg: dict = CFG):
     return batch, metadata
 
 
+def render_scene(layers, idx: np.ndarray, cfg: dict):
+    """layers back-to-front: [(shape, (x_mid, y_mid), (ux, uy), travel)] -> uint8 (T, H, W, 3) + per-layer xy.
+    Each layer is drawn over the image so far (render_object_frame's bg_val broadcasts), so later layers occlude."""
+    n_full, size = int(cfg["fps"] * cfg["duration_sec"]), cfg["size"]
+    t_mid, span, steps = (n_full - 1) / 2.0, float(idx[-1] - idx[0]), len(idx) - 1
+    frames, coords = [], []
+    for t in range(n_full):
+        img, pos = np.full((size, size, 3), cfg["bg_val"], np.float32), []
+        for shape, (x0, y0), (ux, uy), travel in layers:
+            cx, cy = x0 + (t - t_mid) * ux * travel / span, y0 + (t - t_mid) * uy * travel / span
+            v_step = travel / steps
+            tint = cfg.get("colors", {}).get(shape, (1.0, 1.0, 1.0))      # grey unless the cfg colours it
+            img = render_object_frame(shape, size, size, cx, cy, ux * v_step, uy * v_step, img, tint=tint)
+            pos.append([round(cx, 2), round(cy, 2)])
+        frames.append(np.round(img * 255.0).astype(np.uint8))
+        coords.append(pos)
+    return np.stack(frames), coords
+
+
+def pair_jobs(cfg: dict):
+    """[(name, layers)]: per (mover, static) role and direction (0 = LtR, 180 = RtL): behind, side, mover alone
+    on each path; plus both static side by side per role."""
+    c, lane, T = cfg["size"] / 2.0, cfg["size"] / 2.0 + cfg["lane_offset_px"], cfg["pair_travel_px"]
+    jobs = []
+    for mover, still in (("ball", "pyramid"), ("pyramid", "ball")):
+        for deg, u in ((0, (1.0, 0.0)), (180, (-1.0, 0.0))):
+            jobs += [(f"{mover}_behind_{deg:03d}", [(mover, (c, c), u, T), (still, (c, c), (0, 0), 0.0)]),
+                     (f"{mover}_side_{deg:03d}", [(still, (c, c), (0, 0), 0.0), (mover, (c, lane), u, T)]),
+                     (f"{mover}_alone_center_{deg:03d}", [(mover, (c, c), u, T)]),
+                     (f"{mover}_alone_lane_{deg:03d}", [(mover, (c, lane), u, T)])]
+        jobs.append((f"{mover}_static_side", [(still, (c, c), (0, 0), 0.0), (mover, (c, lane), (0, 0), 0.0)]))
+    return jobs
+
+
+def generate_pair_suite(cfg: dict = PAIR_CFG):
+    """Two-object clips: webm (full rate) + model tensors + stacked batch + metadata, as generate_suite."""
+    out = Path(cfg["out_dir"])
+    (out / "full_rate").mkdir(parents=True, exist_ok=True)
+    (out / "umt_12f").mkdir(parents=True, exist_ok=True)
+    idx = np.linspace(0, int(cfg["fps"] * cfg["duration_sec"]) - 1, cfg["umt_frames"]).round().astype(int)
+    tensors, metadata = [], []
+    for name, layers in pair_jobs(cfg):
+        frames_u8, coords = render_scene(layers, idx, cfg)
+        x = to_model_tensor(frames_u8, idx, cfg)
+        write_webm(frames_u8, out / "full_rate" / f"{name}.webm", cfg["fps"])
+        torch.save(x, out / "umt_12f" / f"{name}.pt")
+        tensors.append(x)
+        metadata.append({"clip_id": len(metadata), "name": name, "layers": [list(map(str, l[:1])) + list(l[1:]) for l in layers],
+                         "umt_sampled_indices": idx.tolist(), "umt_trajectory_xy": [coords[i] for i in idx]})
+    torch.save(torch.stack(tensors), out / "all_umt_clips.pt")
+    (out / "metadata.json").write_text(json.dumps(metadata, indent=2))
+    print(f"Saved {len(tensors)} pair clips -> {out}")
+
+
 if __name__ == "__main__":
-    generate_suite()
+    import sys
+    if "pair_color" in sys.argv:
+        generate_pair_suite(COLOR_PAIR_CFG)
+    elif "pair" in sys.argv:
+        generate_pair_suite()
+    else:
+        generate_suite()

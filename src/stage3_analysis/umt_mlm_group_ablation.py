@@ -261,7 +261,7 @@ def edit_logits(s, h8, add, cap, x9, z0, D, feats, dose):
         x = (s["sae"].decode(z) + s["dim_mean"]).unsqueeze(0).to(x9.dtype)
     else:
         x = apply_edit(x9, z0, D, feats, dose=dose)
-    vis = finish_tower(s["model"], x)[0].unsqueeze(0)
+    vis = finish_tower(s["model"], x, layer=s.get("layer"))[0].unsqueeze(0)   # s['layer'] unset -> L9 (default)
     h = mlm_fusion(h8, add, vis, s["w"])
     sel = h[torch.arange(len(cap["pos"]), device=h.device),
             torch.tensor(cap["pos"], device=h.device)]

@@ -19,7 +19,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT 
 CFG = {
     "model": "umt", "layers": [5, 7, 9], "sae_k": 64, "job_label": "7ep",
     "k_store": 128,  # per-token latents kept (SAE uses a trained threshold, so active count can exceed 64)
-    "clip_dir": ROOT / "outputs/synthetic_motion/directional_clips",
+    "clip_dir": Path(os.environ.get("CLIP_DIR", str(ROOT / "outputs/synthetic_motion/directional_clips"))),
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
     "out_dir": Path(os.environ.get("OUT_DIR", str(ROOT / "outputs/analysis/umt_synthetic_motion_readout"))),
     "device": "cuda" if torch.cuda.is_available() else "cpu",
