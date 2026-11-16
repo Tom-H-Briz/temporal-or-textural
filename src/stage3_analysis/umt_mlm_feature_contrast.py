@@ -37,8 +37,9 @@ from umt_bridge_phase3 import (discriminative, finish_tower, largest, mass_contr
                                tower_to_layer)
 from umt_vision_pair_contrast import apply_condition, to_sparse
 
+L = int(os.environ.get("LAYER", 9))     # 16/11/26: any vision layer (L3: weak SAE, R2 0.75 -> raw-stream use only)
 CFG = {
-    "layer": 9, "sae_k": 64, "job_label": "7ep",      # the vision SAE Phase 3 used
+    "layer": L, "sae_k": 64, "job_label": "7ep",      # L9 = the vision SAE Phase 3 used
     "pairs": {  # (a, b): (word_a, word_b) — §1 table; both must be single word-pieces
         (46, 5): ("opening", "closing"), (168, 165): ("upwards", "downwards"),
         (45, 43): ("up", "down"), (44, 41): ("towards", "away"),
@@ -58,7 +59,8 @@ CFG = {
     "n_sel": 10, "max_other": 1 / 3,                          # Phase 3 selection parameters
     "phase3_dir": ROOT / "outputs/analysis/umt_vision_text_bridge/phase3",
     "refit_dir":   ROOT / "outputs/analysis/umt_mlm_refit",
-    "out_dir":     Path(os.environ.get("OUT_DIR", str(ROOT / "outputs/analysis/umt_mlm_feature_contrast"))),
+    "out_dir":     Path(os.environ.get("OUT_DIR", str(ROOT / ("outputs/analysis/umt_mlm_feature_contrast"
+                                                        + ("" if L == 9 else f"_L{L}"))))),   # L9 keeps its old dir
     "device":      "cuda" if torch.cuda.is_available() else "cpu",
     "num_workers": 4,
 }
@@ -163,14 +165,14 @@ def setup(cfg):
                 dim_mean=torch.load(res["dim_mean_path"], weights_only=True).to(cfg["device"]),
                 head=load_refit_head(cfg["refit_dir"])[0],
                 w={k: v.to(cfg["device"]) for k, v in bert_weights("finetune").items()},
-                tok=get_tokenizer(), pre_text=umt_pre_text())
+                tok=get_tokenizer(), pre_text=umt_pre_text(), layer=cfg["layer"])
 
 
 def t_of_z(s, x9, z0, h8, add, pos, id_a, id_b, z):
     """T_ab through the grad path with codes z: x = x9 + decode(z - z0) -> finish_tower
     (blocks 10-11 + norm) -> mlm_fusion (9-11) -> RefitHead at the masked position."""
     x = x9 + s["sae"].decode(z - z0).unsqueeze(0)
-    vis = finish_tower(s["model"], x, layer=9)[0].unsqueeze(0)   # (1, 2352, 768) for _kv
+    vis = finish_tower(s["model"], x, layer=s.get("layer", 9))[0].unsqueeze(0)   # (1, 2352, 768) for _kv
     logits = s["head"](mlm_fusion(h8, add, vis, s["w"])[0, pos])
     return logits[id_a] - logits[id_b], logits
 
@@ -557,7 +559,7 @@ def main():
         extract(cfg, setup(cfg))
     if mode in ("select", "all"):
         select(cfg)
-    if mode in ("compare", "all"):
+    if mode in ("compare", "all") and cfg["layer"] == 9:   # compare = vs Phase 3's L9 T_vtm; L9 only
         compare(cfg)
 
 
