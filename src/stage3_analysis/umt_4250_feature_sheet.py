@@ -90,6 +90,8 @@ def abl_cols(r):
             out[f"% of {k.split('_')[2]} removed (ablation, R)"] = round(float(v), 2)
         elif k.startswith("dmargin_"):
             out[f"d margin on {k.split('_')[1]} clips (ablation, R)"] = round(float(v), 3)
+        elif k in ("supports", "suppresses"):     # class readout: logit falls / rises most when ablated
+            out[f"Class it {k}"], out[f"{k} d logit"] = v, round(float(r[f"{k}_dlogit"]), 2)
     return out
 
 

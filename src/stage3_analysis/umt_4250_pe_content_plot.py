@@ -20,8 +20,7 @@ def table(cfg):
     r = s["Real act (8 down clips)"]
     s["x"] = np.maximum(s["Blank act (PE alone)"] / r, cfg["x_floor"])
     s["y"] = (s["Best synthetic act"] - s["Blank act (PE alone)"]) / r
-    a = pd.read_csv(cfg["abl"]).query("cond == 'R' and arm.str.startswith('f')")
-    s["abl"] = s["Feature Idx"].map(dict(zip(a.arm.str[1:].astype(int), a.pct_L9_4250)))
+    s["abl"] = s["% of 4250 removed (ablation, R)"]           # sheet holds the latest run's single ablations
     return s
 
 
