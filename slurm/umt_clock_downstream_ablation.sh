@@ -13,6 +13,9 @@
 #   for L in 5 7; do sbatch --export=ALL,LAYER=$L slurm/umt_clock_downstream_ablation.sh; done
 # Smoke (2 clips, own dir): sbatch --time=00:20:00 --export=ALL,LAYER=5,MAX_CLIPS=2,OUT_DIR=outputs/analysis/umt_clock_downstream_smoke slurm/umt_clock_downstream_ablation.sh
 # Raw-stream ablation + attribution (what LAYER latents build the key features): add SPLICE=0 (ATTR_BATCH=8 default).
+# Group + single ablation (18/11/26; sets-json groups, "all", every member alone; CLASSES has a comma so set it outside --export):
+#   CLASSES=45,43 ARM_GROUPS=sheet4250 OUT_DIR=outputs/analysis/umt_group_ablation_L5_ud_splice sbatch --export=ALL,LAYER=5 slurm/umt_clock_downstream_ablation.sh
+#   then: RUN_DIR=outputs/analysis/umt_group_ablation_L5_ud_splice python src/stage3_analysis/umt_group_ablation_analyse.py
 # Resume after a crash: resubmit the same command; finished clips are skipped (done_{R,Rev}.npy).
 # VideoMAE (11/11/26, raw L5 only; + pairs 8/9, + baseline-only C1 residual pass) -> outputs/analysis/vm_clock_downstream_L5_raw/:
 #   sbatch --export=ALL,MODEL=videomae,LAYER=5,SPLICE=0 slurm/umt_clock_downstream_ablation.sh

@@ -9,7 +9,8 @@ capture layer, baseline; (c) per-token summed comb-latent activation at LAYER, b
 Every run also stores the baseline residual per frame / tubelet (mean over space) at LAYER and each capture layer
 (res_L*, the position-fraction ruler). MODEL=videomae (11/11/26): VM positions = 8 tubelets, arms = spikes / others
 (vm_clock_downstream_sets.json), + pairs 8/9 (report separately), + a baseline-only C1 pass for res_L* only.
-Usage: [MODEL=videomae] LAYER=5 [TWOBYTWO=1 [ARM_A=clock ARM_B=builders]: arms A / B / both, use a CLASSES subset + own OUT_DIR] [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py
+ARM_GROUPS=<sets-json key> (18/11/26): arms = each group, "all", and every member alone (f<idx>).
+Usage: [MODEL=videomae] LAYER=5 [ARM_GROUPS=sheet4250 CLASSES=45,43 OUT_DIR=...] [TWOBYTWO=1 [ARM_A=clock ARM_B=builders]: arms A / B / both, use a CLASSES subset + own OUT_DIR] [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py
 """
 import json
 import os
@@ -36,6 +37,7 @@ CFG = {
     "twobytwo": os.environ.get("TWOBYTWO", "") == "1",
     # 2x2 arm keys in the sets json (16/11/26: ARM_A=pe ARM_B=builders4 for the PE-triggered run)
     "arm_a": os.environ.get("ARM_A", "clock"), "arm_b": os.environ.get("ARM_B", "builders"),
+    "arm_groups": os.environ.get("ARM_GROUPS", ""),   # sets-json key of {group: feats}, e.g. sheet4250 (18/11/26)
     "conds": ("R", "Rev"), "res_conds": ("C1",) if VM else (),   # res_conds: baseline-only pass, residual sums only
     "n_pos": 8 if VM else 12, "n_tok": 1568 if VM else 2352, "d_model": 768, "n_heads": 12,
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
@@ -72,6 +74,11 @@ def arm_rows(cfg):
     if cfg["model"] == "videomae":
         s = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]
         return [("baseline", []), ("batch_base", [])] + [(a, s[a]) for a in cfg["vm_arms"]]
+    if cfg["arm_groups"]:                   # 18/11/26: each group, all groups together, then every member alone
+        g = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])][cfg["arm_groups"]]
+        feats = sorted({f for v in g.values() for f in v})
+        return ([("baseline", []), ("batch_base", [])] + list(g.items()) + [("all", feats)]
+                + [(f"f{f}", [f]) for f in feats])
     if cfg["twobytwo"]:                     # 2x2 (12/11/26): A x B vs neither; the interaction is the gate
         s = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]
         a, b = cfg["arm_a"], cfg["arm_b"]   # default clock x builders
