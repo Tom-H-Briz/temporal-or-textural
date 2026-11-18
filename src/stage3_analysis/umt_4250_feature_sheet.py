@@ -1,5 +1,5 @@
-"""Fill UMT_4250_feature_analysis.csv (18/11/26). Rows = top K positive + top K negative L5 latents by linear
-attribution to the target (user rule, 18/11: portable to VideoMAE). Buckets from blank / real / best synthetic;
+"""Fill UMT_4250_feature_analysis.csv (18/11/26). Rows = top K L5 latents by |linear attribution| to the target,
+sign from the data (user rule, 18/11: portable to VideoMAE; the #4250 run used 20 pos + 20 neg, a superset). Buckets from blank / real / best synthetic;
 ablation columns from the group-ablation run(s); logit column = MLM 'down' dCE (single-latent wordmap, spliced).
 WRITE_SETS=1 also writes the bucket x sign groups to the sets json (key sets_key) for the ARM_GROUPS run.
 Usage: [WRITE_SETS=1] uv run python src/stage3_analysis/umt_4250_feature_sheet.py"""
@@ -85,9 +85,8 @@ def write_sets(cfg, out):
 
 
 def main(cfg):
-    at = attribution(cfg)
-    grp = {int(f): "pos" for f in np.argsort(-at)[:cfg["top_k"]]}
-    grp.update({int(f): "neg" for f in np.argsort(at)[:cfg["top_k"]]})
+    at = attribution(cfg)                        # top K by |attribution|, sign from the data (user rule, 18/11)
+    grp = {int(f): "pos" if at[f] > 0 else "neg" for f in np.argsort(-np.abs(at))[:cfg["top_k"]]}
     F, cols = list(grp), ["PE driven", "Mixed (PE + content)", "Content only"]
     lv, rows, ab = levels(cfg, F), [], ablation(cfg)
     nan = pd.Series(dict(pct_L9_4250=np.nan, pct_L9_393=np.nan, dmargin_43=np.nan, dmargin_45=np.nan))
