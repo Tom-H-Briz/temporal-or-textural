@@ -9,7 +9,9 @@ capture layer, baseline; (c) per-token summed comb-latent activation at LAYER, b
 Every run also stores the baseline residual per frame / tubelet (mean over space) at LAYER and each capture layer
 (res_L*, the position-fraction ruler). MODEL=videomae (11/11/26): VM positions = 8 tubelets, arms = spikes / others
 (vm_clock_downstream_sets.json), + pairs 8/9 (report separately), + a baseline-only C1 pass for res_L* only.
-ARM_GROUPS=<sets-json key> (18/11/26): arms = each group, "all", and every member alone (f<idx>).
+ARM_GROUPS=<sets-json key> (18/11/26): arms = each group, "all", and every member alone (f<idx>); ARM_GROUPS=none:
+baseline only. NOUN=<object> (18/11/26): clips = that noun's object-contrast sets; ATTR_TARGETS=9:713,7:4973 (raw runs):
+attribute these targets on every clip. Always give these runs their own OUT_DIR.
 Usage: [MODEL=videomae] LAYER=5 [ARM_GROUPS=sheet4250 CLASSES=45,43 OUT_DIR=...] [TWOBYTWO=1 [ARM_A=clock ARM_B=builders]: arms A / B / both, use a CLASSES subset + own OUT_DIR] [SPLICE=0] [MAX_CLIPS=5] python -u src/stage3_analysis/umt_clock_downstream_ablation.py
 """
 import json
@@ -37,7 +39,10 @@ CFG = {
     "twobytwo": os.environ.get("TWOBYTWO", "") == "1",
     # 2x2 arm keys in the sets json (16/11/26: ARM_A=pe ARM_B=builders4 for the PE-triggered run)
     "arm_a": os.environ.get("ARM_A", "clock"), "arm_b": os.environ.get("ARM_B", "builders"),
-    "arm_groups": os.environ.get("ARM_GROUPS", ""),   # sets-json key of {group: feats}, e.g. sheet4250 (18/11/26)
+    "arm_groups": os.environ.get("ARM_GROUPS", ""),   # sets-json key of {group: feats}, e.g. sheet4250 (18/11/26); none = baseline only
+    "noun": os.environ.get("NOUN", ""),               # 18/11/26: clips = the noun's object-contrast sets (pos / neg / test)
+    "obj_sets": ROOT / "outputs/analysis/umt_object_contrast/sets.csv",
+    "attr_override": [tuple(map(int, t.split(":"))) for t in os.environ.get("ATTR_TARGETS", "").split(",") if t],
     "conds": ("R", "Rev"), "res_conds": ("C1",) if VM else (),   # res_conds: baseline-only pass, residual sums only
     "n_pos": 8 if VM else 12, "n_tok": 1568 if VM else 2352, "d_model": 768, "n_heads": 12,
     "labels_path": os.environ.get("LABELS_PATH", str(ROOT / "data/ssv2/labels/labels.json")),
@@ -57,7 +62,12 @@ CFG["val_json"] = Path(os.environ.get("VAL_JSON", str(Path(CFG["labels_path"]).p
 
 
 def clip_table(cfg):
-    """Every val clip of the pair classes: clip_id, class_id, role (sel / test / none, from the pair sets)."""
+    """Every val clip of the pair classes: clip_id, class_id, role (sel / test / none, from the pair sets).
+    NOUN: the noun's object-contrast clips, role pos / neg / test (class_id = true class)."""
+    if cfg["noun"]:
+        s = pd.read_csv(cfg["obj_sets"], dtype={"clip_id": str}).query(f"object == '{cfg['noun']}'")
+        v = s.rename(columns={"true_class": "class_id"})[["clip_id", "class_id", "role"]].drop_duplicates("clip_id")
+        return v.sort_values("clip_id").head(cfg["max_clips"] or None).reset_index(drop=True)
     norm = lambda s: s.replace("[", "").replace("]", "")
     ids = {norm(k): int(v) for k, v in json.load(open(cfg["labels_path"])).items()}
     v = pd.DataFrame([{"clip_id": str(d["id"]), "class_id": ids[norm(d["template"])]}
@@ -74,6 +84,8 @@ def arm_rows(cfg):
     if cfg["model"] == "videomae":
         s = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])]
         return [("baseline", []), ("batch_base", [])] + [(a, s[a]) for a in cfg["vm_arms"]]
+    if cfg["arm_groups"] == "none":         # attribution-only raw run (nouns, 18/11/26)
+        return [("baseline", []), ("batch_base", [])]
     if cfg["arm_groups"]:                   # 18/11/26: each group, all groups together, then every member alone
         g = json.load(open(cfg["extra_sets"]))[str(cfg["layer"])][cfg["arm_groups"]]
         feats = sorted({f for v in g.values() for f in v})
@@ -177,6 +189,8 @@ def attribute(st, cfg, pv, x, z0, tg):
 
 def home_targets(cfg, cls):
     """[(capture layer, latent)] attribution targets whose home classes include cls (sets json attr_targets)."""
+    if cfg["attr_override"]:                     # ATTR_TARGETS=layer:latent,...: same targets on every clip (nouns)
+        return [t for t in cfg["attr_override"] if t[0] in cfg["capture"]]
     tg = json.load(open(cfg["extra_sets"]))["attr_targets"]
     return [(c, int(t)) for c in cfg["capture"] for t, home in tg[str(c)].items() if cls in home]
 
