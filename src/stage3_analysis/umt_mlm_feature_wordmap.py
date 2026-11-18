@@ -2,6 +2,7 @@
 one SAE latent hit? umt_mlm_class_wordmap's method: every caption word-piece masked alone, dCE = -d log p(true
 word), the feature alone vs one mass-matched control set; spliced by default (SPLICE=0: raw stream).
 Usage: LAYER=5 FEATURE=5216 CLASSES=43,6,41,45 uv run python -u src/stage3_analysis/umt_mlm_feature_wordmap.py
+       LAYER=5 FEATURE=4638 NOUN=ball MAX_CLIPS=30 ... (noun clips, out L5_f4638_ball_splice)
 """
 import os, sys, time
 from pathlib import Path
@@ -17,15 +18,21 @@ CFG = dict(GA_CFG, layer=int(os.environ.get("LAYER", 5)), feature=int(os.environ
            classes=[int(c) for c in os.environ.get("CLASSES", "43,6,41,45").split(",")],
            splice=os.environ.get("SPLICE", "1") == "1", num_workers=0,
            dfa=ROOT / "outputs/analysis/dfa_mass_delta_umt/dfa_mass_delta_umt_ssv2_all174_thrfix_l9_job7ep_k64.parquet")
+CFG["noun"] = os.environ.get("NOUN", "")   # 18/11/26: clips = the noun's object-contrast pos + test clips
+CFG["obj_sets"] = ROOT / "outputs/analysis/umt_object_contrast/sets.csv"
 CFG["out_dir"] = ROOT / (f"outputs/analysis/umt_mlm_feature_wordmap/L{CFG['layer']}_f{CFG['feature']}"
-                         f"{'_splice' if CFG['splice'] else '_raw'}")
+                         f"{'_' + CFG['noun'] if CFG['noun'] else ''}{'_splice' if CFG['splice'] else '_raw'}")
 
 
 def main(cfg):
     t0 = time.time()
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
-    d = pd.read_parquet(cfg["dfa"], columns=["clip_id", "class_id"])
-    d = d[d.class_id.isin(cfg["classes"])].groupby("class_id").head(cfg["max_clips"] or None)   # MAX_CLIPS per class (18/11/26)
+    if cfg["noun"]:                                  # MAX_CLIPS = total object clips
+        s = pd.read_csv(cfg["obj_sets"], dtype={"clip_id": str}).query(f"object == '{cfg['noun']}' and role != 'neg'")
+        d = s.rename(columns={"true_class": "class_id"}).drop_duplicates("clip_id").head(cfg["max_clips"] or None)
+    else:
+        d = pd.read_parquet(cfg["dfa"], columns=["clip_id", "class_id"])
+        d = d[d.class_id.isin(cfg["classes"])].groupby("class_id").head(cfg["max_clips"] or None)   # MAX_CLIPS per class (18/11/26)
     rows = pd.DataFrame(dict(clip_id=d.clip_id.astype(str).values, class_id=d.class_id.values))
     s = dict(contrast_setup(cfg), splice=cfg["splice"], layer=cfg["layer"])   # layer: edit_logits finishes from L
     enc, val, D = encode_clips(cfg, s, rows), load_validation(cfg), s["sae"].get_dictionary()

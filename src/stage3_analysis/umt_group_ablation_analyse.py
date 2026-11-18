@@ -17,6 +17,16 @@ CFG = {
     "labels": Path(__file__).resolve().parents[2] / "data/ssv2/labels/labels.json",
     "out": "analysis",
 }
+if os.environ.get("NOUN"):          # 18/11/26 nouns: TARGETS=9:713[,7:4973]; home "obj" = the noun's pos + test clips
+    CFG.update(pairs=[], readout_cls="obj", targets={})
+    for t in os.environ.get("TARGETS", "").split(","):
+        c, f = map(int, t.split(":"))
+        CFG["targets"].setdefault(c, {})[f] = "obj"
+
+
+def home_mask(clips, home):
+    """Clips a target / readout is measured on: a class id, or 'obj' = object clips (role pos / test)."""
+    return clips.role.isin(["pos", "test"]).to_numpy() if home == "obj" else (clips.class_id == home).to_numpy()
 
 
 def target_pct(cfg, clips, ridx, cond):
@@ -25,7 +35,7 @@ def target_pct(cfg, clips, ridx, cond):
     for c, tg in cfg["targets"].items():
         prof = np.load(cfg["run_dir"] / f"prof_L{c}_{cond}.npy", mmap_mode="r")
         for t, home in tg.items():
-            m = np.where(clips.class_id == home)[0]
+            m = np.where(home_mask(clips, home))[0]
             tot = np.asarray(prof[:, :, :, t], dtype=np.float32)[m].sum((0, 2))          # (rows,)
             bb = tot[ridx["batch_base"]]
             out[f"pct_L{c}_{t}"] = 100 * (bb - tot) / bb
@@ -50,7 +60,7 @@ def class_readout(cfg, clips, ridx, cond):
     lp = os.environ.get("LABELS_PATH", str(cfg["labels"]))
     names = {int(v): k for k, v in json.load(open(lp)).items()}
     lg = np.load(cfg["run_dir"] / f"logits_{cond}.npy").astype(np.float32)
-    m = (clips.class_id == cfg["readout_cls"]).to_numpy()
+    m = home_mask(clips, cfg["readout_cls"])
     d = (lg[m] - lg[m][:, [ridx["batch_base"]]]).mean(0)                                  # (rows, 174)
     lo, hi = d.argmin(1), d.argmax(1)
     return {"supports": [names[c] for c in lo], "supports_dlogit": d[np.arange(len(d)), lo],
