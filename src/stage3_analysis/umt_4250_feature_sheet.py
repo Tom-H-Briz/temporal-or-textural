@@ -17,6 +17,10 @@ PRESETS = {   # per target (TARGET env); attr_roles = clip roles averaged in the
                      attr_run=A / "umt_noun_attr_ball_L5_raw", attr_roles=["pos", "test"], mlm_word="ball", mlm_cls=None, mlm_suffix="_ball",
                      abl=[A / "umt_top20_ball_713_L5_splice/analysis/group_ablation.csv"],
                      out=A / "feature_sheets/UMT_ball_713_feature_analysis.csv"),
+    "push_5083": dict(target=(9, 5083), real=A / "umt_pe_probe/real_93.npz", real_label="8 push L-R clips",
+                      attr_run=A / "umt_clock_downstream_L5_raw", attr_roles=None, mlm_word="pushing", mlm_cls=93,
+                      abl=[A / "umt_top20_push_5083_L5_splice/analysis/group_ablation.csv"],
+                      out=A / "feature_sheets/UMT_push_5083_feature_analysis.csv"),
 }
 TARGET = os.environ.get("TARGET", "4250")
 CFG = {
@@ -56,6 +60,8 @@ def attribution(cfg):
     if cfg["attr_roles"]:                        # nouns: object clips only (no-object clips are the comparison)
         roles = pd.read_csv(cfg["attr_run"] / "clips.csv", dtype={"clip_id": str}).role
         keep = roles.isin(cfg["attr_roles"]).to_numpy()
+    if cfg.get("attr_cls") is not None:          # ATTR_TARGETS runs attribute every target on every clip: own class only
+        keep &= (pd.read_csv(cfg["attr_run"] / "clips.csv").class_id == cfg["attr_cls"]).to_numpy()
     for k in range(tg.shape[1]):
         idx = np.where((tg[:, k] == cfg["target"]).all(1) & keep)[0]
         if len(idx):

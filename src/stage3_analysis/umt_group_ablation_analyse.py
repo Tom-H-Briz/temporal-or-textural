@@ -17,11 +17,13 @@ CFG = {
     "labels": Path(__file__).resolve().parents[2] / "data/ssv2/labels/labels.json",
     "out": "analysis",
 }
-if os.environ.get("NOUN"):          # 18/11/26 nouns: TARGETS=9:713[,7:4973]; home "obj" = the noun's pos + test clips
-    CFG.update(pairs=[], readout_cls="obj", targets={})
-    for t in os.environ.get("TARGETS", "").split(","):
-        c, f = map(int, t.split(":"))
-        CFG["targets"].setdefault(c, {})[f] = "obj"
+if os.environ.get("TARGETS"):       # 18/11/26: TARGETS=layer:latent[:home class],...; nouns (NOUN set): home = "obj"
+    noun = bool(os.environ.get("NOUN"))  # = the noun's pos + test clips; verbs: PAIRS=a,b[;c,d] READOUT=<class>
+    CFG.update(targets={}, readout_cls="obj" if noun else int(os.environ.get("READOUT", 43)),
+               pairs=[tuple(map(int, p.split(","))) for p in os.environ.get("PAIRS", "").split(";") if p])
+    for t in os.environ["TARGETS"].split(","):
+        c, f, *h = t.split(":")
+        CFG["targets"].setdefault(int(c), {})[int(f)] = "obj" if noun else int(h[0])
 
 
 def home_mask(clips, home):
