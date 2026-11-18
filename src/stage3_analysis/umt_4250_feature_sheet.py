@@ -12,11 +12,11 @@ PRESETS = {   # per target (TARGET env); attr_roles = clip roles averaged in the
                  attr_run=A / "umt_clock_downstream_L5_raw", attr_roles=None, mlm_word="down", mlm_cls=43,
                  abl=[A / "umt_top20_4250_L5_ud_splice/analysis/group_ablation.csv",   # first found wins per feature
                       A / "umt_group_ablation_L5_ud_splice/analysis/group_ablation.csv"],
-                 out=A / "umt_clock_downstream_L5_2x2_pe_raw/analysis/UMT_4250_feature_analysis.csv"),
+                 out=A / "feature_sheets/UMT_4250_feature_analysis.csv"),
     "ball_713": dict(target=(9, 713), real=A / "umt_pe_probe/real_ball.npz", real_label="8 ball clips",
                      attr_run=A / "umt_noun_attr_ball_L5_raw", attr_roles=["pos", "test"], mlm_word="ball", mlm_cls=None, mlm_suffix="_ball",
                      abl=[A / "umt_top20_ball_713_L5_splice/analysis/group_ablation.csv"],
-                     out=A / "umt_noun_attr_ball_L5_raw/analysis/UMT_ball_713_feature_analysis.csv"),
+                     out=A / "feature_sheets/UMT_ball_713_feature_analysis.csv"),
 }
 TARGET = os.environ.get("TARGET", "4250")
 CFG = {

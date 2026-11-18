@@ -8,7 +8,7 @@ A = Path("outputs/analysis")
 CFG = {
     "known": {"pure_PE": [3453, 5872, 3718, 5387, 5122, 3829, 1004, 966, 5430, 4183, 892, 5137],
               "mixed": [5422, 5286, 2377], "content": [186, 4638, 5216]},
-    "sheet": A / "umt_clock_downstream_L5_2x2_pe_raw/analysis/UMT_4250_feature_analysis.csv",
+    "sheet": A / "feature_sheets/UMT_4250_feature_analysis.csv",
     "real": A / "umt_pe_probe/real_43.npz", "blank": A / "umt_pe_probe/profiles.npz",
     "shuffle": A / "umt_layer_positional_ablation_L5_splice/profiles_{c}.npz",
     "synth": [A / "umt_synthetic_motion_readout", A / "umt_synthetic_pair_readout", A / "umt_synthetic_pair_color_readout"],

@@ -6,7 +6,7 @@ import numpy as np, pandas as pd, matplotlib.pyplot as plt
 from pathlib import Path
 A = Path("outputs/analysis")
 CFG = {
-    "sheet": A / "umt_clock_downstream_L5_2x2_pe_raw/analysis/UMT_4250_feature_analysis.csv",
+    "sheet": A / "feature_sheets/UMT_4250_feature_analysis.csv",
     "abl": A / "umt_group_ablation_L5_ud_splice/analysis/group_ablation.csv",
     "out": A / "umt_4250_feature_checks/pe_content_map.png",
     "colors": {"PE driven": "#2a78d6", "Mixed (PE + content)": "#eb6834", "Content only": "#1baf7a"},
