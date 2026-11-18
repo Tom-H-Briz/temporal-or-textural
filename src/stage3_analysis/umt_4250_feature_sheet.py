@@ -122,6 +122,7 @@ def main(cfg):
                      f"% of {t} (linear attribution)": round(float(at[f]), 2),
                      f"MLM '{cfg['mlm_word']}' dCE (single ablation)": round(mlm_dce(cfg, f), 4), "group": grp[f]})
     out = pd.DataFrame(rows)                     # features missing from the ablation run get NaN in those columns
+    cfg["out"].parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(cfg["out"], index=False, encoding="utf-8-sig")
     print(out.to_string(index=False))
     if cfg["write_sets"]:
