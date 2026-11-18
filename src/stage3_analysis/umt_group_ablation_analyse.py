@@ -13,6 +13,8 @@ CFG = {
     "run_dir": Path(os.environ.get("RUN_DIR", str(A / "umt_group_ablation_L5_ud_splice"))),
     "targets": {9: {4250: 43, 393: 45}},      # capture layer -> {target latent: home class}
     "pairs": [(45, 43)],                      # (up, down)
+    "readout_cls": 43,                        # class readout on the target's home clips
+    "labels": Path(__file__).resolve().parents[2] / "data/ssv2/labels/labels.json",
     "out": "analysis",
 }
 
@@ -41,13 +43,28 @@ def margin_delta(cfg, clips, ridx, cond):
     return out
 
 
+def class_readout(cfg, clips, ridx, cond):
+    """Per arm, on readout_cls clips: mean logit change of all 174 classes vs batch_base. 'supports' = class whose
+    logit falls most when the arm is ablated; 'suppresses' = class whose logit rises most."""
+    import json
+    lp = os.environ.get("LABELS_PATH", str(cfg["labels"]))
+    names = {int(v): k for k, v in json.load(open(lp)).items()}
+    lg = np.load(cfg["run_dir"] / f"logits_{cond}.npy").astype(np.float32)
+    m = (clips.class_id == cfg["readout_cls"]).to_numpy()
+    d = (lg[m] - lg[m][:, [ridx["batch_base"]]]).mean(0)                                  # (rows, 174)
+    lo, hi = d.argmin(1), d.argmax(1)
+    return {"supports": [names[c] for c in lo], "supports_dlogit": d[np.arange(len(d)), lo],
+            "suppresses": [names[c] for c in hi], "suppresses_dlogit": d[np.arange(len(d)), hi]}
+
+
 def main(cfg):
     clips, ridx = meta(cfg)
     arms = pd.read_csv(cfg["run_dir"] / "arms.csv").sort_values("row")
     out, tabs = cfg["run_dir"] / cfg["out"], []
     out.mkdir(exist_ok=True)
     for cond in ("R", "Rev"):
-        t = arms[["arm", "k"]].assign(cond=cond, **target_pct(cfg, clips, ridx, cond), **margin_delta(cfg, clips, ridx, cond))
+        t = arms[["arm", "k"]].assign(cond=cond, **target_pct(cfg, clips, ridx, cond), **margin_delta(cfg, clips, ridx, cond),
+                                      **class_readout(cfg, clips, ridx, cond))
         tabs.append(t[~t.arm.isin(["baseline", "batch_base"])])
     tab = pd.concat(tabs)
     tab.round(3).to_csv(out / "group_ablation.csv", index=False)

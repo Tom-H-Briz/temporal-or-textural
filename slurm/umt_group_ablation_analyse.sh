@@ -9,6 +9,7 @@
 # Submitted by slurm/submit_umt_group_ablation.sh as a dependent job; RUN_DIR = the ablation job's OUT_DIR.
 [ -z "$RUN_DIR" ] && { echo "RUN_DIR not set"; exit 1; }
 export RUN_DIR
+export LABELS_PATH="$HOME/labels/labels.json"   # class names for the supports / suppresses readout
 echo "RUN_DIR=$RUN_DIR"
 SIF="$SCRATCHDIR/pytorch_25.05-py3.sif"
 apptainer exec --bind $HOME:$HOME --bind $SCRATCHDIR:$SCRATCHDIR $SIF bash -c "

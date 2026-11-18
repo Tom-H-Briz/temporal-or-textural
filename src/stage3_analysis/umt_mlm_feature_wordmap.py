@@ -25,7 +25,7 @@ def main(cfg):
     t0 = time.time()
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
     d = pd.read_parquet(cfg["dfa"], columns=["clip_id", "class_id"])
-    d = d[d.class_id.isin(cfg["classes"])].head(cfg["max_clips"] or None)
+    d = d[d.class_id.isin(cfg["classes"])].groupby("class_id").head(cfg["max_clips"] or None)   # MAX_CLIPS per class (18/11/26)
     rows = pd.DataFrame(dict(clip_id=d.clip_id.astype(str).values, class_id=d.class_id.values))
     s = dict(contrast_setup(cfg), splice=cfg["splice"], layer=cfg["layer"])   # layer: edit_logits finishes from L
     enc, val, D = encode_clips(cfg, s, rows), load_validation(cfg), s["sae"].get_dictionary()
