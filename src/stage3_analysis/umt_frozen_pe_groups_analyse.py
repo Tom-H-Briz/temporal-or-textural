@@ -34,10 +34,27 @@ def arm_row(z, y, a, idx, lat, cfg, rng):
             "dacc_pt": 100 * ((pat.argmax(1) == y).mean() - (base.argmax(1) == y).mean())}
 
 
+def profile_change(z):
+    """Per latent: timing kept = within-clip frame CV (pooled std / pooled mean over clips), frozen / full
+    (1 = kept, < 1 = flattened); shape r = Pearson r over frames of the clip-mean profiles, full vs frozen."""
+    cv = lambda a: a.std(1).sum(0) / a.mean(1).sum(0)
+    F, Z = (z[k].astype(np.float32) for k in ("full_act", "frozen_act"))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        kept = cv(Z) / cv(F)
+        a, b = F.mean(0) - F.mean((0, 1)), Z.mean(0) - Z.mean((0, 1))
+        r = (a * b).sum(0) / np.sqrt((a * a).sum(0) * (b * b).sum(0))
+    return kept, r
+
+
 def layer_table(L, cfg, rng):
     z, sets = dict(np.load(cfg["dir"] / f"L{L}.npz")), json.loads(cfg["groups"].read_text())[str(L)]
     y = pd.read_csv(cfg["dir"] / "clips.csv").class_id.to_numpy()[z["row"]]
-    rows = [arm_row(z, y, a, i, sets.get(a, list(range(6144))), cfg, rng) for i, a in enumerate(z["arms"])]
+    kept, r = profile_change(z)
+    rows = []
+    for i, a in enumerate(z["arms"]):
+        lat = sets.get(a, list(range(6144)))
+        rows.append({**arm_row(z, y, a, i, lat, cfg, rng),
+                     "timing_kept": np.nanmedian(kept[lat]), "shape_r": np.nanmedian(r[lat])})
     return pd.DataFrame(rows).assign(layer=L)
 
 
