@@ -53,7 +53,9 @@ def layer_table(L, cfg, sm):
         rows.append({"layer": L, "grp": g, "mass": {"dfa_mass": "abs"}.get(sign, sign), "n": len(b),
                      "pct_all_mass": 100 * b[sign].sum() / a[sign].sum(),
                      **{f"pct_{c}": 100 * m.get(c, 0) / m.sum() for c in ("pe", "mixed", "content")}})
-    return pd.DataFrame(rows), {g: sorted(map(int, b.latent)) for g, b in a.groupby("grp")}
+    sets = {g: sorted(map(int, b.latent)) for g, b in a.groupby("grp")}
+    cells = a[a.grp != "other"].groupby(["grp", "cls"])                  # group x PE pool, for the patched arms
+    return pd.DataFrame(rows), {**sets, **{f"{g}|{c}": sorted(map(int, b.latent)) for (g, c), b in cells}}
 
 
 if __name__ == "__main__":
