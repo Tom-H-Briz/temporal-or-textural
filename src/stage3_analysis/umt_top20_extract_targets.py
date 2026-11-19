@@ -1,6 +1,7 @@
 """Slice the target latents out of the top-20 group-ablation prof files (19/11/26), for local clip-bootstrap CIs.
 prof_L{c}_{cond}.npy (n, rows, T, F) -> extract/prof_L{c}_{cond}.npy (n, rows, T, k), targets in CFG order.
 Usage: uv run python src/stage3_analysis/umt_top20_extract_targets.py   (Isambard; reads in clip chunks)"""
+import os
 from pathlib import Path
 import numpy as np
 
@@ -13,6 +14,7 @@ CFG = {
              "umt_top20_cup_6011_L5_splice": {9: [6011], 7: [2392]}},
     "conds": ("R", "Rev"),
     "chunk": 32,
+    "suffix": os.environ.get("SUFFIX", ""),   # 19/11/26: SUFFIX=_test -> the held-out test-set runs (verbs only)
 }
 
 
@@ -28,6 +30,10 @@ def extract(src, dst, latents, chunk):
 
 def main(cfg):
     for run, targets in cfg["runs"].items():
+        run += cfg["suffix"]
+        if not (A / run).exists():
+            print(f"skip {run}: no run dir", flush=True)
+            continue
         (A / run / "extract").mkdir(exist_ok=True)
         for c, lat in targets.items():
             for cond in cfg["conds"]:
