@@ -10,7 +10,7 @@ import pandas as pd
 A = Path(__file__).resolve().parents[2] / "outputs/analysis"
 CFG = {
     "dfa": A / "dfa_mass_delta_umt/dfa_mass_delta_umt_ssv2_all174_thrfix_l{}_job7ep_k64.parquet",
-    "layers": (5, 7, 9), "top_k": 20, "mass": 0.5, "n_boot": 500, "seed": 0,
+    "layers": (5, 7, 9), "top_k": 20, "mass": 0.5, "n_split": 100, "seed": 0,
     "targets": {"down_4250": "UMT_4250", "push_5083": "UMT_push_5083", "behind_491": "UMT_behind_491",
                 "front_768": "UMT_front_768", "ball_713": "UMT_ball_713", "paper_4228": "UMT_paper_4228",
                 "cup_6011": "UMT_cup_6011"},
@@ -79,10 +79,16 @@ def summary(Ms, cfg):
     return s
 
 
-def resample(X, cls, rng):
-    """Stratified clip bootstrap: clips redrawn within each class; returns {layer: class-mean matrix}."""
-    idx = np.concatenate([rng.choice(np.where(cls == c)[0], (cls == c).sum()) for c in np.unique(cls)])
-    return {L: class_mean(x[idx], cls[idx]) for L, x in X.items()}
+def halves(X, cls, rng):
+    """Split-half (19/11/26; replaces the bootstrap, whose duplicated clips biased these sparsity measures): each
+    class's clips shuffled and cut in two; classes with < 2 clips dropped so both halves hold the same classes."""
+    keep = [c for c in np.unique(cls) if (cls == c).sum() >= 2]
+    perm = [rng.permutation(np.where(cls == c)[0]) for c in keep]
+    out = []
+    for h in (0, 1):
+        idx = np.concatenate([p[: len(p) // 2] if h == 0 else p[len(p) // 2:] for p in perm])
+        out.append({L: class_mean(x[idx], cls[idx]) for L, x in X.items()})
+    return out
 
 
 def main(cfg):
@@ -90,14 +96,16 @@ def main(cfg):
     rng, cfg["out"] = np.random.default_rng(cfg["seed"]), Path(cfg["out"])
     cfg["out"].mkdir(exist_ok=True)
     point = summary({L: class_mean(x, cls) for L, x in X.items()}, cfg)
-    reps = pd.DataFrame([summary(resample(X, cls, rng), cfg) for _ in range(cfg["n_boot"])])
-    for a, b in ((5, 9), (5, 7), (7, 9)):                                      # layer differences, per resample
+    reps = pd.DataFrame([summary(h, cfg) for _ in range(cfg["n_split"]) for h in halves(X, cls, rng)])
+    for a, b in ((5, 9), (5, 7), (7, 9)):                                      # layer differences, within each half
         for k in ("A_latents_for_half", "B_classes_served", "B_distinct_feats", "C_top5_share", "C_classes_for_half"):
             point[f"L{b}-L{a}_{k}"] = point[f"L{b}_{k}"] - point[f"L{a}_{k}"]
             reps[f"L{b}-L{a}_{k}"] = reps[f"L{b}_{k}"] - reps[f"L{a}_{k}"]
-    t = pd.DataFrame({"point": pd.Series(point), "lo": reps.quantile(0.025), "hi": reps.quantile(0.975)})
-    t.round(4).to_csv(cfg["out"] / "specificity_ci.csv")
-    print(f"{len(cls)} clips common to L5/L7/L9, {cfg['n_boot']} stratified resamples")
+    same = (np.sign(reps) == np.sign(pd.Series(point))).mean()                 # halves agreeing with the full sample
+    t = pd.DataFrame({"point": pd.Series(point), "half_median": reps.median(), "half_lo": reps.quantile(0.025),
+                      "half_hi": reps.quantile(0.975), "half_same_sign": same})
+    t.round(4).to_csv(cfg["out"] / "specificity_split_half.csv")
+    print(f"{len(cls)} clips common to L5/L7/L9; {cfg['n_split']} splits x 2 halves = {len(reps)} half-samples (the 2 halves of a split are disjoint)")
     print(t.round(3).to_string())
 
 
