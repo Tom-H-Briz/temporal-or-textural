@@ -1,6 +1,6 @@
 """Analyse + plot the dictionary-wide PE characterisation (19/11/26; umt_layer_pe_characterise.py). CPU, local.
 Per latent and layer: real level (mean R clip), blank / real, best synthetic, class (sheet rule: content if blank < 1%
-real; PE driven if blank >= real and best synthetic < 2x blank; else mixed), frozen / full on blank (time dependence),
+real; PE driven if blank >= 0.8 x real (pe_cut) and best synthetic < 2x blank; else mixed), frozen / full on blank (time dependence),
 fire rate and order index (Rev profile locked vs flipped) on real clips, fixed-threshold all-174 DFA mass and class breadth (n50).
 Out: outputs/analysis/umt_layer_pe_characterise/{features_L{L}.csv, summary.csv, plots/*.png}.
 Usage: uv run python src/stage3_analysis/umt_layer_pe_characterise_analyse.py"""
@@ -14,7 +14,8 @@ from scipy.stats import spearmanr
 from umt_layer_specificity import CFG as SPEC, class_mean, load
 
 D = Path(__file__).resolve().parents[2] / "outputs/analysis/umt_layer_pe_characterise"
-CFG = {"layers": (5, 7, 9), "content_cut": 0.01, "synth_x": 2.0, "dir": D, "plots": D / "plots",
+# pe_cut 0.8 (20/11/26): pure PE = blank >= 0.8 x real, so VideoMAE's spikes (0.79-0.95 of real) count as pure PE
+CFG = {"layers": (5, 7, 9), "content_cut": 0.01, "pe_cut": 0.8, "synth_x": 2.0, "dir": D, "plots": D / "plots",
        "classes": ("pe", "mixed", "content"), "colors": {"pe": "#2a78d6", "mixed": "#eb6834", "content": "#1baf7a"},
        "active": 0.5, "layer_colors": {5: "#2a78d6", 7: "#eb6834", 9: "#1baf7a"}, "bins": np.linspace(-3, 1, 9)}
 
@@ -43,7 +44,7 @@ def measures(L, cfg):
                           "blank_real": blank / real, "frozen_kept": frozen / blank,
                           "fire_rate": (R.sum(1) > 0).mean(0), "order_index": order_index(R, Rev)})
     d["cls"] = np.where(d.blank < cfg["content_cut"] * d.real, "content",
-                        np.where((d.blank >= d.real) & (d.best_synth < cfg["synth_x"] * d.blank), "pe", "mixed"))
+                        np.where((d.blank >= cfg["pe_cut"] * d.real) & (d.best_synth < cfg["synth_x"] * d.blank), "pe", "mixed"))
     d.loc[(d.real == 0) & (d.blank == 0), "cls"] = "dead"
     return d.assign(layer=L)
 
@@ -147,7 +148,8 @@ def plot_spectrum(tabs, cfg):
     style(axes[0], "Where the DFA mass sits on the PE spectrum", "% of DFA mass")
     style(axes[1], "Class breadth vs PE drive", "median classes for half the mass")
     for ax in axes:
-        ax.set_xlabel("log10 blank / real  (left: content, right: PE driven)", fontsize=8, color="#52514e")
+        ax.invert_xaxis()                                      # 20/11/26: pure PE on the left in every spectrum plot
+        ax.set_xlabel("log10 blank / real  (left: PE driven, right: content)", fontsize=8, color="#52514e")
         ax.legend(frameon=False, fontsize=8)
     fig.tight_layout(); fig.savefig(cfg["plots"] / "pe_spectrum.png", dpi=200); plt.close(fig)
 
