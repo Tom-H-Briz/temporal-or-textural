@@ -41,8 +41,11 @@ def table(L, n=20):
     synth = np.load(PC / f"synth_L{L}.npz")["synth"].astype(float).sum(1).max(0)
     f = np.argsort(-np.abs(at.sum(0)))[:n]
     d = pd.DataFrame({"feature": f, "attr": at.sum(0)[f], "blank": blank[f], "real": real.sum(0)[f], "synth": synth[f]})
-    d["bucket"] = np.where(d.blank < 0.01 * d.real, "content",
-                           np.where((d.blank >= d.real) & (d.synth < 2 * d.blank), "pure PE", "mixed"))
+    # 20/11: bucket and blank / real from the dictionary-wide characterisation (cut 0.8, real over 696 clips), so the
+    # #4250 inputs use the same rule as the layer-wide DFA split; down-clip real level kept in 'real' for the profiles
+    feat = pd.read_csv(PC / f"features_L{L}.csv").set_index("latent")
+    d["bucket"] = feat.cls.reindex(f).map({"pe": "pure PE", "mixed": "mixed", "content": "content"}).values
+    d["blank_real_dict"] = feat.blank_real.reindex(f).values
     return d.assign(layer=L), at, real
 
 
@@ -71,20 +74,20 @@ def layer_figure(L):
 
 def spectrum(tabs):
     """One row per layer: inputs at log10(blank / real) vs linear attribution; L9 row = #4250 itself."""
-    real9 = real_profiles(9)[:, 4250].sum(); blank9 = np.load(PC / "L9.npz")["blank_full"][0, :, 4250].astype(float).sum()
+    x9 = np.log10(max(pd.read_csv(PC / "features_L9.csv").set_index("latent").blank_real[4250], 1e-3))   # dictionary rule
     fig, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
     for ax, d in zip(axes[:2], tabs):
-        x = np.log10(np.maximum(d.blank, 1) / d.real)
+        x = np.log10(np.maximum(d.blank_real_dict, 1e-3))                  # dictionary blank / real, floor = -3
         for xi, yi, f in zip(x, d.attr, d.feature):
             c = POS if yi > 0 else NEG; ax.scatter(xi, yi, s=40, color=c, zorder=3)
             ax.annotate(f"#{f}", (xi, yi), fontsize=7, color=c, xytext=(4, 3), textcoords="offset points")
         ax.set_ylabel(f"L{d.layer.iloc[0]}: % of #4250\n(linear attribution)")
-    axes[2].scatter(np.log10(max(blank9, 1) / real9), 0, s=80, color="k"); axes[2].annotate("#4250 itself", (np.log10(max(blank9, 1) / real9), 0), xytext=(6, 6), textcoords="offset points", fontsize=8)
+    axes[2].scatter(x9, 0, s=80, color="k"); axes[2].annotate("#4250 itself", (x9, 0), xytext=(6, 6), textcoords="offset points", fontsize=8)
     axes[2].set_yticks([]); axes[2].set_ylabel("L9")
     for ax in axes:
-        for v in (np.log10(0.01), 0): ax.axvline(v, color="grey", lw=0.8, ls=":")
+        for v in (np.log10(0.01), np.log10(0.8)): ax.axvline(v, color="grey", lw=0.8, ls=":")
         ax.axhline(0, color="grey", lw=0.5); ax.spines[["top", "right"]].set_visible(False)
-    axes[0].set_title("PE spectrum of #4250's inputs (dotted: blank = 1% real | blank = real)", fontsize=10)
+    axes[0].set_title("PE spectrum of #4250's inputs (dotted: blank = 1% real | blank = 0.8 x real)", fontsize=10)
     axes[2].invert_xaxis()                                     # shared x: flips all three rows; pure PE on the left
     axes[2].set_xlabel("log10(blank / real): pure PE  <-  ->  content"); fig.tight_layout(); fig.savefig(OUT / "spectrum_4250_layers.png", dpi=130)
 

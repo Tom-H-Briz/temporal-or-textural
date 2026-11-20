@@ -29,7 +29,9 @@ def frame_corr(a, b):
 
 def order_index(R, Rev):
     """Median over clips of r(Rev, R) - r(Rev, R reversed): + = profile locked to the PE under a reversed video,
-    - = profile follows the content (19/11/26; clip totals carry no order signal, so shape is used)."""
+    - = profile follows the content (19/11/26; clip totals carry no order signal, so shape is used).
+    20/11/26: a clip-mean version was tried and dropped (> 1 for every class: averaging cancels content timing and
+    leaves the position-locked baseline). Per-clip reads ~0 for shallow noisy profiles (VM pure PE)."""
     return np.nanmedian(frame_corr(Rev, R) - frame_corr(Rev, R[:, ::-1]), 0)
 
 
@@ -83,6 +85,7 @@ def summary_active(tabs, cfg):
             g = a[a.cls == c]
             rows.append({"layer": L, "cls": c, "n_active": len(g), "pct_active": 100 * len(g) / len(a),
                          "pct_dfa_mass_active": 100 * g.dfa_mass.sum() / a.dfa_mass.sum(),
+                         "pct_act_mass_active": 100 * g.real.sum() / a.real.sum(),   # 20/11: activation mass
                          "order_index": g.order_index.median(), "n50": g.n50.median()})
     return pd.DataFrame(rows)
 
