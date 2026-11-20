@@ -13,7 +13,7 @@ sys.path[:0] = [str(ROOT / "src" / "stage3_analysis")]
 A = ROOT / "outputs/analysis"
 CFG = {"layers": (5, 7, 9), "cls": 43, "target": 4250, "active": 0.5, "pc": A / "umt_layer_pe_characterise",
        "dfa": A / "dfa_mass_delta_umt/dfa_mass_delta_umt_ssv2_all174_thrfix_l{}_job7ep_k64.parquet",
-       "out": A / "umt_4250_breakdown", "buckets": ("pure PE", "mixed", "content")}
+       "out": A / "umt_4250_breakdown", "buckets": ("pure PE", "mixed", "content"), "conds": ("R", "C")}   # VM: ("R", "C1")
 NAME = {"pe": "pure PE", "mixed": "mixed", "content": "content", "dead": "dead"}
 
 
@@ -36,7 +36,7 @@ def dfa_table(cfg):
     rows = []
     for L in cfg["layers"]:
         b, _ = buckets(L, cfg)
-        for cond in ("R", "C"):
+        for cond in cfg["conds"]:
             v, n = down_dfa(L, cond, cfg)
             pos, neg = np.clip(v, 0, None), np.clip(v, None, 0)
             for k in cfg["buckets"]:
@@ -104,7 +104,7 @@ def plot_dfa(t, cfg):
     """Share of down DFA for (above 0) and against (below 0) by bucket; L5 / L7 / L9 x R / C."""
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(9, 5)); xs, labels = [], []
-    for i, (L, cond) in enumerate([(L, c) for L in cfg["layers"] for c in ("R", "C")]):
+    for i, (L, cond) in enumerate([(L, c) for L in cfg["layers"] for c in cfg["conds"]]):
         x = i + i // 2 * 0.6; xs.append(x); labels.append(f"L{L} {cond}"); up = dn = 0
         for k in cfg["buckets"]:
             r = t[(t.layer == L) & (t.cond == cond) & (t.bucket == k)].iloc[0]
@@ -115,7 +115,7 @@ def plot_dfa(t, cfg):
             up, dn = up + r.pct_for, dn - r.pct_against
     ax.axhline(0, color="k", lw=0.8); ax.set_xticks(xs, labels); ax.set_ylabel("% of down DFA: for (up) / against (down)")
     ax.spines[["top", "right"]].set_visible(False); ax.legend(frameon=False, fontsize=8, loc="upper right", bbox_to_anchor=(1.18, 1))
-    ax.set_title("Down decision (class 43): where the DFA sits, by bucket and layer (R = real, C = frames shuffled)", fontsize=10)
+    ax.set_title(f"{cfg.get('model', 'UMT')} down decision (class 43): where the DFA sits, by group and layer (R = real, {cfg['conds'][1]} = frames shuffled)", fontsize=10)
     fig.tight_layout(); fig.savefig(cfg["out"] / "down_dfa_by_layer.png", dpi=150); plt.close(fig)
 
 
@@ -197,7 +197,7 @@ def plot_act_vs_use(t, cfg):
         ax.plot(x, m.pct_activation, color=COL[k], lw=1.6, ls="--", marker="o", mfc="white", label=f"{k}: activation")
     ax.set_ylabel("% of layer total, down clips"); ax.spines[["top", "right"]].set_visible(False)
     ax.legend(frameon=False, fontsize=7, ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.1))
-    ax.set_title("Use changes more than activation: share of |DFA| vs share of activation by bucket", fontsize=10)
+    ax.set_title(f"{cfg.get('model', 'UMT')}: share of |DFA| (solid) vs share of activation (dashed) by group, down clips", fontsize=10)
     fig.tight_layout(); fig.savefig(cfg["out"] / "activation_vs_use.png", dpi=150); plt.close(fig)
 
 

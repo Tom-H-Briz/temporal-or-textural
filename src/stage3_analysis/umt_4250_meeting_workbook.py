@@ -61,7 +61,9 @@ story = pd.DataFrame([
     [6, "Across the dictionary, pure PE stays locked to the PE; mixed latents need the PE's time code", "order index pure PE +0.47 / +0.27 / +0.24, mixed ~0; frozen PE keeps 47-81% of pure PE on blank, 0-13% of mixed", "08_perturbation", "medians over active latents"],
     [7, "Verb features lean on mixed features; noun features lean on content and pure PE", "share of top-20 ablation mass in mixed: verbs 56%, nouns 18% (gap +38 pt); pure PE + mixed: 76% vs 51% (+25 pt)", "09_verb_noun_shares", "7 targets: exact permutation p = 0.029 is the floor"],
     [8, "Summed over every latent, mixed builds verb features and works against noun features", "net mixed: down +35%, behind +10%; paper -34%, ball -20%", "10_verb_noun_net", "linear attribution, L5"],
-    [9, "Use moves more than activation: pure PE stays active but is used less with depth; mixed is used more while its activation falls", "down clips L5 -> L9: pure PE activation -6 pt vs use -20 pt; mixed activation -5 pt vs use +5 pt", "11_activation_vs_use", "L5 activation from 8 down clips; DFA from 22-26"]],
+    [9, "Use moves more than activation: pure PE stays active but is used less with depth; mixed is used more while its activation falls", "down clips L5 -> L9: pure PE activation -6 pt vs use -20 pt; mixed activation -5 pt vs use +5 pt", "11_activation_vs_use", "L5 activation from 8 down clips; DFA from 22-26"],
+    [10, "VideoMAE: the down decision rests on content from L5 and the split does not move with depth", "share of DFA for down, pure PE / content: VideoMAE 12 / 53 -> 11 / 61 (L5 -> L9) vs UMT 44 / 25 -> 25 / 40", "12_VM_down_DFA_by_layer, 14_mass_by_layer", "VideoMAE has no single carrier feature like #4250"],
+    [11, "VideoMAE: activation and use both stay flat; content is used more than its activation share", "content: 56-62% of DFA from 45-51% of activation", "13_VM_activation_vs_use", "VideoMAE L5 activation from 4 down clips"]],
     columns=["step", "claim", "key number", "evidence sheet", "caveat"])
 VT = "outputs/analysis/umt_pair_vtc_L9_splice/summary_{}.csv (row 45_43_43_4250; L9 spliced; 155 down clips; other pairs 2,710 clips)"
 acc = pd.DataFrame([["down clips: 174-way top-1", 70.3, -41.9], ["down clips: down vs up pair accuracy", 96.1, -16.8],
@@ -87,6 +89,9 @@ blocks("01_Front", [("#4250 (UMT L9 'down'): what ablating it does - accuracy", 
                     ("#4250 in the down decision", S + "4250_in_decision.csv", dec),
                     ("Definitions", "src/stage3_analysis/umt_layer_pe_characterise_analyse.py", defs),
                     ("Story", "this workbook", story)], widths={0: 34, 1: 75, 2: 55, 3: 26, 4: 40})
+fim = Image(f"{ROOT}/outputs/analysis/umt_verb_noun_breakdown/verb_noun_by_bucket.png")   # verb / noun chart on the front
+fim.width, fim.height = fim.width * 0.45, fim.height * 0.45
+wb["01_Front"].add_image(fim, "G2")
 tab("02_down_DFA_by_layer", S + "down_dfa_by_layer.csv (all-174 trained-threshold DFA, class 43, R-correct clips; dfa = mean per clip)",
     pd.read_csv(f"{BD}/down_dfa_by_layer.csv"), f"{BD}/down_dfa_by_layer.png", 0.55)
 tab("03_4250_in_decision", S + "4250_in_decision.csv (L9, R)", pd.read_csv(f"{BD}/4250_in_decision.csv"))
@@ -117,4 +122,25 @@ tab("10_verb_noun_net", SV + "attr_by_bucket.csv (linear attribution from every 
     pd.concat([net, pd.DataFrame([{}]), t20.rename(columns={"pct_removed": "single_ablation_pct_removed"})], ignore_index=True))
 tab("11_activation_vs_use", S + "activation_vs_use.csv (down clips; share of each layer's total activation vs |DFA| vs DFA for 'down', by bucket)",
     pd.read_csv(f"{BD}/activation_vs_use.csv"), f"{BD}/activation_vs_use.png", 0.6)
+VB, SVB = f"{ROOT}/outputs/analysis/vm_down_breakdown", "src/stage3_analysis/vm_down_breakdown.py -> outputs/analysis/vm_down_breakdown/"
+tab("12_VM_down_DFA_by_layer", SVB + "down_dfa_by_layer.csv (VideoMAE trained-threshold all-174 DFA, class 43; C1 = tubelet-pair shuffle)",
+    pd.read_csv(f"{VB}/down_dfa_by_layer.csv"), f"{VB}/down_dfa_by_layer.png", 0.55)
+tab("13_VM_activation_vs_use", SVB + "activation_vs_use.csv (down clips; L5 activation from 4 clips, L7 / L9 from 311)",
+    pd.read_csv(f"{VB}/activation_vs_use.csv"), f"{VB}/activation_vs_use.png", 0.6)
+PC = f"{ROOT}/outputs/analysis"
+u, v = pd.read_csv(f"{PC}/umt_layer_pe_characterise/summary_active.csv"), pd.read_csv(f"{PC}/vm_layer_pe_characterise/summary_active.csv")
+vd = pd.read_csv(f"{VB}/dict_dfa_mass.csv"); nm = {"pe": "pure PE", "mixed": "mixed", "content": "content"}
+mass = pd.concat([pd.DataFrame({"model": "UMT", "layer": u.layer, "group": u.cls.map(nm), "pct_active_latents": u.pct_active,
+                                "pct_activation_mass": u.pct_act_mass_active, "pct_DFA_mass": u.pct_dfa_mass_active}),
+                  pd.DataFrame({"model": "VideoMAE", "layer": v.layer, "group": v.cls.map(nm), "pct_active_latents": v.pct_active,
+                                "pct_activation_mass": v.pct_act_mass, "pct_DFA_mass": vd.pct_dfa_mass_active.values})])
+tab("14_mass_by_layer", "outputs/analysis/{umt,vm}_layer_pe_characterise/summary_active.csv; vm_down_breakdown/dict_dfa_mass.csv (active latents, all classes)",
+    mass, f"{ROOT}/outputs/meeting/umt_vm_spectrum_mass_by_layer_201126.png", 0.45)
+MT = f"{PC}/meeting_tables_201126"; src = pd.read_csv(f"{MT}/sources.csv").set_index("table").source
+for i, (n, img) in enumerate([("VM_pure_PE_shapes", f"{ROOT}/outputs/meeting/vm_pure_pe_profiles_L5_201126.png"),
+                              ("VM_UMT_down_logit", None), ("VM_UMT_down_acc", None), ("VM_down_groups_logit", None), ("VM_down_groups_acc", None),
+                              ("frozen_PE_logit", None), ("frozen_PE_acc", None), ("frozen_PE_classes", None), ("PE_behaviour", None),
+                              ("specificity_layers", None), ("specificity_parents", None), ("verb_noun_gap_191126", None),
+                              ("verb_noun_test_191126", None), ("L3_MLM", None)], 15):
+    tab(f"{i}_{n}", src[n], pd.read_csv(f"{MT}/{n}.csv"), img, 0.4)   # 19/11-and-earlier tables (meeting_tables_201126)
 wb.save(OUT); print("saved", OUT)
