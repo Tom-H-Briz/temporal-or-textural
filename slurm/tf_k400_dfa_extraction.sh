@@ -31,7 +31,8 @@ apptainer exec --nv \
         pip install --quiet av einops pandas pyarrow matplotlib \"transformers==5.5.0\" huggingface-hub tqdm &&
         cd \$HOME/temporal-or-textural &&
         python src/stage3_analysis/dfa_extraction/dfa_mass_delta_vm.py \
-            --model timesformer --dataset kinetics400 --layer $L --job-label 7ep --sae-k 64 &&
+            --model timesformer --dataset kinetics400 --layer $L --job-label 7ep --sae-k 64 \
+            --out-tag ${OUT_TAG:-thrfix} &&
         python src/stage3_analysis/dfa_extraction/position_lock_extraction.py \
             --model timesformer --dataset kinetics400 --layer $L &&
         DATASET_NAME=kinetics400 SAE_LAYER=$L \
