@@ -151,7 +151,7 @@ def rerank(model, l8_h, add_mask, x_vis, sim, k):
         idx = sim[:, j].topk(min(k, n_v)).indices
         pairs = l8_h[j][None].expand(len(idx), -1, -1)
         mask = add_mask[j][None].expand(len(idx), -1, -1, -1)
-        score = model.vtm_score(pairs, mask, x_vis[idx].to(sim.device))
+        score = model.vtm_score(pairs, mask, x_vis[idx.cpu()].to(sim.device))   # x_vis is offloaded to cpu
         t2i_x[j, idx] = score.float()
     return i2t_x.cpu().numpy(), t2i_x.cpu().numpy()
 
