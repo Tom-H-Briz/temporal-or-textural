@@ -68,22 +68,23 @@ def main(cfg):
             acc[L].setdefault(key, []).append(p)
             acc[L].setdefault(f"{key}_massive", []).append(pm)          # excluded tokens: ordinary + massive = all
             acc[L].setdefault(f"n_massive_{key}", []).append(nm)
-    ins = inputs(cfg)
-    for c in ("full", "frozen"):
+    ins, fr = inputs(cfg), os.environ.get("FROZEN_REAL") == "1"     # 24/11: FROZEN_REAL=1 -> real clips, frozen PE only
+    for c in () if fr else ("full", "frozen"):
         add(f"blank_{c}", run_layers(model, saes, ins["blank"], pe_variant(pe, c), cfg))
-    for n in cfg["clips"]:
+    for n in () if fr else cfg["clips"]:
         add("synth", run_layers(model, saes, ins[n], pe, cfg))
-    rows = clip_rows(cfg)
-    for cond, src in (("R", "R"), ("C", "C"), ("Rev", "R")):          # Rev = the R clip with frame order flipped
+    rows, pe_c = clip_rows(cfg), pe_variant(pe, "frozen") if fr else pe
+    conds = (("R_frozen", "R"), ("Rev_frozen", "R")) if fr else (("R", "R"), ("C", "C"), ("Rev", "R"))
+    for cond, src in conds:                                           # Rev = the R clip with frame order flipped
         for pv, i in clip_loader(rows, dict(LCFG, num_workers=cfg["num_workers"]), src):
-            add(cond, run_layers(model, saes, pv.flip(1) if cond == "Rev" else pv, pe, cfg))
+            add(cond, run_layers(model, saes, pv.flip(1) if cond.startswith("Rev") else pv, pe_c, cfg))
             for L in cfg["layers"]:                                    # row index actually loaded (decode retry
                 acc[L].setdefault(f"row_{cond}", []).append(int(i))   # skips to the next clip on failure)
         print(f"{cond}: {len(rows)} clips done", flush=True)
     cfg["out"].mkdir(parents=True, exist_ok=True)
     for L, d in acc.items():
-        np.savez(cfg["out"] / f"L{L}.npz", **{k: np.stack(v) for k, v in d.items()})
-    rows.to_csv(cfg["out"] / "clips.csv", index=False)
+        np.savez(cfg["out"] / f"{'frozen_' if fr else ''}L{L}.npz", **{k: np.stack(v) for k, v in d.items()})
+    rows.to_csv(cfg["out"] / f"{'frozen_' if fr else ''}clips.csv", index=False)
     print("synth clips:", cfg["clips"], flush=True)
 
 

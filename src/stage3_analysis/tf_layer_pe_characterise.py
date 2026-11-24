@@ -110,19 +110,22 @@ def main(cfg):
         for pv, _ in loader(names, cfg["synth_dir"], "R", proc, cfg):
             add(acc, "synth", run_layers(model, saes, pv, te, cfg))
         return save(acc, cfg, "synth_"), print("synth clips:", names, flush=True)
-    for c in ("full", "frozen"):
+    fr = os.environ.get("FROZEN_REAL") == "1"                          # 24/11: real clips under frozen time table only
+    for c in () if fr else ("full", "frozen"):
         add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg, proc), time_variant(te, c), cfg))
     rows = pd.read_csv(cfg["umt_clips"], dtype={"clip_id": str}).head(cfg["max_clips"] or None)
-    for cond in ("R", "C", "Rev"):                                      # Rev = the R clip, all 8 frames flipped
+    te_c = time_variant(te, "frozen") if fr else te
+    for cond in ("R_frozen", "Rev_frozen") if fr else ("R", "C", "Rev"):    # Rev = the R clip, all 8 frames flipped
         for pv, i in loader(rows.clip_id.tolist(), cfg["video_dir"], cond, proc, cfg):
-            pv = pv.flip(1) if cond == "Rev" else pv
-            add(acc, cond, run_layers(model, saes, pv, te, cfg))
+            pv = pv.flip(1) if cond.startswith("Rev") else pv
+            add(acc, cond, run_layers(model, saes, pv, te_c, cfg))
             acc[cfg["layers"][0]].setdefault(f"row_{cond}", []).append(int(i))
             if cond == "R":                                            # raw TF top-1, to gate on R-correct
                 with torch.no_grad():
                     acc[cfg["layers"][0]].setdefault("pred_R", []).append(int(model(pixel_values=pv.to(cfg["device"])).logits.argmax()))
         print(f"{cond}: {len(rows)} clips done", flush=True)
-    save(acc, cfg, ""), rows.to_csv(cfg["out"] / "clips.csv", index=False)
+    p = "frozen_" if fr else ""
+    save(acc, cfg, p), rows.to_csv(cfg["out"] / f"{p}clips.csv", index=False)
 
 
 if __name__ == "__main__":
