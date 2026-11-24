@@ -32,6 +32,7 @@ CFG = {
     "num_frames": 4, "img_size": 224, "max_txt_l": 32, "k_test": 128,
     "batch_size": 32, "text_bs": 256,   # itm batching handled inside rerank (math identical)
     "limit": int(os.environ.get("LIMIT", 0)),         # >0: smoke on the first LIMIT test videos
+    "antialias": os.environ.get("ANTIALIAS", "1") == "1",   # 0 = official tv 0.13.1 resize (no antialias)
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "gate_ref": 35.2, "gate_margin": 2.0,             # user decision 24/11/26: ±2 pt (~1.3 SE)
 }
@@ -124,7 +125,7 @@ def encode_videos(model, paths):
     proc = UMTProcessor()
     xs, projs = [], []
     for s in range(0, len(paths), CFG["batch_size"]):
-        chunk = [proc(decode_frames(p, CFG["num_frames"]))["pixel_values"][0]
+        chunk = [proc(decode_frames(p, CFG["num_frames"]), antialias=CFG["antialias"])["pixel_values"][0]
                  for p in paths[s:s + CFG["batch_size"]]]
         x_vis, pooled = model.encode_video(torch.stack(chunk).to(CFG["device"]))
         xs.append(x_vis.cpu())
@@ -193,6 +194,8 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     out = CFG["out_dir"]
+    if not CFG["antialias"]:                          # keep the antialiased run's outputs
+        out = out.with_name(out.name + "_noaa")
     if CFG["limit"]:
         out = out.with_name(out.name + "_smoke")
     out.mkdir(parents=True, exist_ok=True)

@@ -47,10 +47,12 @@ class UMTProcessor:
     def from_pretrained(cls, checkpoint=None):
         return cls()
 
-    def __call__(self, frames, return_tensors="pt"):
+    def __call__(self, frames, return_tensors="pt", antialias=True):
+        """antialias=True = torchvision >= 0.17 default (what this pipeline has always used); the official repo's
+        torchvision 0.13.1 did not antialias tensors, i.e. antialias=False (24/11/26, UMT 25M gate)."""
         x = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2)   # (T, C, H, W) uint8
         size = (CFG["img_size"], CFG["img_size"])
-        x = Resize(size, interpolation=InterpolationMode.BICUBIC)(x).float().div(255.0)
+        x = Resize(size, interpolation=InterpolationMode.BICUBIC, antialias=antialias)(x).float().div(255.0)
         mean = torch.tensor(CFG["mean"]).view(1, 3, 1, 1)
         std = torch.tensor(CFG["std"]).view(1, 3, 1, 1)
         return {"pixel_values": ((x - mean) / std).unsqueeze(0)}
