@@ -190,6 +190,16 @@ def ranks_frame(sim_np, i2t_x, t2i_x, txt2img, img2txt):
     return pd.concat(parts, ignore_index=True)
 
 
+@torch.no_grad()
+def global_vtc(model, x_vis, tproj):
+    """VTC with ONE pooled vector per video: pool_norm(mean of all tokens), as vit.py does when keep_temporal=False
+    (what pretraining used: umt.py switches keep_temporal off whenever masking is on). Same vision_proj / get_sim.
+    Diagnostic for the 24/11 gate gap; reuses the stored x_vis, no new forward pass."""
+    pooled = torch.cat([model.vision.pool_norm(x_vis[s:s + 256].to(CFG["device"]).mean(1, keepdim=True))
+                        for s in range(0, len(x_vis), 256)])               # (N, 1, 768)
+    return model.vtc_logits(model.vision_proj(pooled), tproj)
+
+
 def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
@@ -213,6 +223,10 @@ def main():
     m_vtc = metrics(sim_np, sim_np.T, txt2img, img2txt)
     i2t_x, t2i_x = rerank(model, l8_h, add_mask, x_vis, sim, CFG["k_test"])
     m_vtm = metrics(i2t_x, t2i_x, txt2img, img2txt)
+    sim_g = global_vtc(model, x_vis, tproj)                          # pretraining-style pooling (diagnostic)
+    m_vtc_g = metrics(sim_g.float().cpu().numpy(), sim_g.float().cpu().numpy().T, txt2img, img2txt)
+    m_vtm_g = metrics(*rerank(model, l8_h, add_mask, x_vis, sim_g, CFG["k_test"]), txt2img, img2txt)
+    np.savez(out / "vtc_sims.npz", per_frame=sim_np, global_pool=sim_g.float().cpu().numpy())
     ranks = ranks_frame(sim_np, i2t_x, t2i_x, txt2img, img2txt)
     try:
         ranks.to_parquet(out / "ranks.parquet", index=False)
@@ -221,11 +235,12 @@ def main():
     gate_val = m_vtm["t2v_r1"]
     summary = dict(
         cfg={k: str(v) for k, v in CFG.items()}, n_videos=len(vids), n_texts=len(texts),
-        wall_min=round((time.time() - t0) / 60, 1), vtc=m_vtc, vtm=m_vtm,
+        wall_min=round((time.time() - t0) / 60, 1), vtc=m_vtc, vtm=m_vtm, vtc_global=m_vtc_g, vtm_global=m_vtm_g,
         gate=dict(metric="vtm t2v_r1", ref=CFG["gate_ref"], margin=CFG["gate_margin"], value=gate_val,
                   passed=bool(abs(gate_val - CFG["gate_ref"]) <= CFG["gate_margin"])))
     json.dump(summary, open(out / "summary.json", "w"), indent=2)
-    print(pd.DataFrame([dict(protocol="vtc-only", **m_vtc), dict(protocol="vtm-reranked", **m_vtm)]).to_string(index=False))
+    print(pd.DataFrame([dict(protocol="vtc-only", **m_vtc), dict(protocol="vtm-reranked", **m_vtm),
+                        dict(protocol="vtc-global-pool", **m_vtc_g), dict(protocol="vtm-rerank-of-global", **m_vtm_g)]).to_string(index=False))
     print(f"GATE: VTM T2V R@1 {gate_val} vs 35.2 ±2 pt -> {'PASS' if summary['gate']['passed'] else 'FAIL'}")
 
 
