@@ -43,6 +43,16 @@ def inputs(cfg):
     return out
 
 
+def pe_split(p, cond):
+    """(T, 196, D) PE = mean + time term a_t + space term b_p + interaction (exact; 25/11). cond: notime = PE - a,
+    nospace = PE - b, nomix = mean + a + b (interaction removed); suffix _n rescales each token to the full PE's norm."""
+    mu = p.mean((0, 1), keepdim=True)
+    a, b = p.mean(1, keepdim=True) - mu, p.mean(0, keepdim=True) - mu
+    q = {"notime": p - a, "nospace": p - b, "nomix": mu + a + b, "spaceonly": mu + b,   # spaceonly: no frame info at all
+         "timeonly": mu + a}[cond.split("_")[0]].expand_as(p)
+    return q * p.norm(dim=-1, keepdim=True) / q.norm(dim=-1, keepdim=True) if cond.endswith("_n") else q
+
+
 def pe_variant(pe, cond):
     """(1, 2352, 768) PE under one condition; frames are blocks of 196 tokens (frame-major)."""
     p = pe.reshape(12, 196, -1)
@@ -55,6 +65,8 @@ def pe_variant(pe, cond):
     elif cond.startswith("frozen"):                       # 25/11: frozenK = frame K's PE on all 12 frames
         k = int(cond[6:])
         p = p[k:k + 1].expand(12, -1, -1)
+    elif cond.split("_")[0] in ("notime", "nospace", "nomix", "spaceonly", "timeonly"):   # 25/11: exact time / space / interaction split
+        p = pe_split(p, cond)
     return p.reshape(1, 2352, -1)
 
 

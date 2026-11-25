@@ -18,6 +18,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT 
 from umt_pe_probe import CFG as PCFG, inputs, pe_variant
 from umt_l3_pe_lineage import CFG as LCFG
 
+SPLIT = ("full", "notime", "nospace", "nomix", "spaceonly", "timeonly", "notime_n", "nospace_n", "nomix_n", "spaceonly_n", "timeonly_n")   # 25/11 PE split (SPLIT_PE=1)
 CFG = dict(PCFG, layers=(5, 7, 9), n_per_class=int(os.environ.get("N_PER_CLASS", 4)),
            max_clips=int(os.environ.get("MAX_CLIPS", 0)), clip_csv=os.environ.get("CLIP_CSV"),
            out=ROOT / "outputs/analysis" / os.environ.get("OUT_NAME", "umt_layer_pe_characterise"),
@@ -73,6 +74,14 @@ def main(cfg):
             acc[L].setdefault(f"{key}_massive", []).append(pm)          # excluded tokens: ordinary + massive = all
             acc[L].setdefault(f"n_massive_{key}", []).append(nm)
     ins, fr = inputs(cfg), "1" in (os.environ.get("FROZEN_REAL"), os.environ.get("ZERO_REAL"))   # real clips only
+    if os.environ.get("SPLIT_PE") == "1":                          # 25/11: blank + synth under the PE split
+        for c in SPLIT:
+            for n in ("blank",) + tuple(cfg["clips"]):
+                add(f"{'blank' if n == 'blank' else 'synth'}_{c}", run_layers(model, saes, ins[n], pe_variant(pe, c), cfg))
+        cfg["out"].mkdir(parents=True, exist_ok=True)
+        for L, d in acc.items():
+            np.savez(cfg["out"] / f"splitpe_L{L}.npz", **{k: np.stack(v) for k, v in d.items()})
+        return
     if os.environ.get("BLANK_PE") == "1":                          # 25/11: blank under 4 PE variants only
         for c in ("full", "frozen", "reversed", "none") + tuple(f"frozen{k}" for k in range(12)):   # + 25/11 sweep
             add(f"blank_{c}", run_layers(model, saes, ins["blank"], pe_variant(pe, c), cfg))

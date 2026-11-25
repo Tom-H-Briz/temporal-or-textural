@@ -14,6 +14,7 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "notebooks"), str(ROOT / "src"), str(ROOT / "src" / "stage3_analysis")]
+SPLIT = ("full", "notime", "nospace", "nomix", "spaceonly", "timeonly", "notime_n", "nospace_n", "nomix_n", "spaceonly_n", "timeonly_n")   # 25/11 PE split (SPLIT_PE=1)
 CFG = dict(layers=(5, 7, 9), n_pos=8, n_frames=16, bg_val=0.175, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225),
            massive_norm=float(os.environ.get("MASSIVE_NORM", "inf")), synth_only=os.environ.get("SYNTH_ONLY") == "1",
            umt_clips=ROOT / os.environ.get("CLIP_CSV", "outputs/analysis/umt_layer_pe_characterise/clips.csv"),  # 696 ids
@@ -38,6 +39,9 @@ def load_all(cfg):
 def pe_variant(pe, cond, n_pos=8):
     """(1, 1568, 768) PE: full; frozen = tubelet 0's PE on all 8 tubelets (space kept, time removed);
     reversed = tubelet order flipped; none = all zeros, space and time (25/11)."""
+    if cond.split("_")[0] in ("notime", "nospace", "nomix", "spaceonly", "timeonly"):          # 25/11: exact time / space / interaction split
+        from umt_pe_probe import pe_split
+        return pe_split(pe.reshape(n_pos, 196, -1), cond).reshape(1, -1, pe.shape[-1])
     p, k = pe.reshape(n_pos, 196, -1), int(cond[6:] or 0) if cond.startswith("frozen") else 0   # 25/11: frozenK
     p = {"full": p, "frozen": p[k:k + 1].expand(n_pos, -1, -1), "reversed": p.flip(0),
          "none": torch.zeros_like(p)}[cond.rstrip("0123456789")]
@@ -99,6 +103,13 @@ def main(cfg):
         for pv, _ in loader(names, cfg["synth_dir"], "R", proc, cfg):
             add(acc, "synth", run_layers(model, saes, pv, pe, cfg))
         return save(acc, cfg, "synth_"), print("synth clips:", names, flush=True)
+    if os.environ.get("SPLIT_PE") == "1":                              # 25/11: blank + synth under the PE split
+        names = sorted(p.stem for p in cfg["synth_dir"].glob("*.webm"))
+        for c in SPLIT:
+            add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg), pe_variant(pe, c, cfg["n_pos"]), cfg))
+            for pv, _ in loader(names, cfg["synth_dir"], "R", proc, cfg):
+                add(acc, f"synth_{c}", run_layers(model, saes, pv, pe_variant(pe, c, cfg["n_pos"]), cfg))
+        return save(acc, cfg, "splitpe_")
     if os.environ.get("BLANK_PE") == "1":                              # 25/11: blank under 4 PE variants only
         for c in ("full", "frozen", "reversed", "none") + tuple(f"frozen{k}" for k in range(cfg["n_pos"])):  # + sweep
             add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg), pe_variant(pe, c, cfg["n_pos"]), cfg))

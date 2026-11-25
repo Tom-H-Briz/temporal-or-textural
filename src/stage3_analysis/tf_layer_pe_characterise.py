@@ -121,13 +121,13 @@ def main(cfg):
     fk = os.environ.get("FROZEN_K", "")                                # 25/11: frozen at frame K, R only
     tag = f"frozen{fk}" if os.environ.get("FROZEN_REAL") == "1" else f"zero{zr}" if zr else ""
     fr = bool(tag)                                                     # 24/11: FROZEN_REAL=1 -> frozen time table
-    if zr == "space":                                                  # spatial patch rows zeroed in place, CLS row kept
+    if zr in ("space", "both"):                                        # spatial patch rows zeroed in place, CLS row kept
         sp = model.timesformer.embeddings.position_embeddings
         sp.data = torch.cat([sp.data[:, :1], torch.zeros_like(sp.data[:, 1:])], 1)
     for c in () if fr else ("full", "frozen"):
         add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg, proc), time_variant(te, c), cfg))
     rows = pd.read_csv(cfg["umt_clips"], dtype={"clip_id": str}).head(cfg["max_clips"] or None)
-    te_c = time_variant(te, {"zerotime": "none", "zerospace": "full", "": "full"}.get(tag, tag))
+    te_c = time_variant(te, {"zerotime": "none", "zeroboth": "none", "zerospace": "full", "": "full"}.get(tag, tag))
     for cond in ((f"R_{tag}",) if fk else (f"R_{tag}", f"Rev_{tag}")) if fr else ("R", "C", "Rev"):    # Rev = the R clip, all 8 frames flipped
         for pv, i in loader(rows.clip_id.tolist(), cfg["video_dir"], cond, proc, cfg):
             pv = pv.flip(1) if cond.startswith("Rev") else pv
