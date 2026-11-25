@@ -19,7 +19,8 @@ from umt_pe_probe import CFG as PCFG, inputs, pe_variant
 from umt_l3_pe_lineage import CFG as LCFG
 
 CFG = dict(PCFG, layers=(5, 7, 9), n_per_class=int(os.environ.get("N_PER_CLASS", 4)),
-           max_clips=int(os.environ.get("MAX_CLIPS", 0)), out=ROOT / "outputs/analysis/umt_layer_pe_characterise",
+           max_clips=int(os.environ.get("MAX_CLIPS", 0)), clip_csv=os.environ.get("CLIP_CSV"),
+           out=ROOT / "outputs/analysis" / os.environ.get("OUT_NAME", "umt_layer_pe_characterise"),
            clips=sorted(p.stem for p in (PCFG["clip_dir"] / "umt_12f").glob("*.pt")))
 
 
@@ -53,8 +54,11 @@ def run_layers(model, saes, pv, pe, cfg):
 
 
 def clip_rows(cfg):
-    """First n_per_class clips of every class in the R-correct all-174 DFA clip list (MAX_CLIPS caps, for smoke)."""
-    d = pd.read_parquet(LCFG["dfa"], columns=["clip_id", "class_id"]).sort_values(["class_id", "clip_id"])
+    """First n_per_class clips of every class in the R-correct all-174 DFA clip list (MAX_CLIPS caps, for smoke).
+    25/11: CLIP_CSV (repo-relative) replaces the list, e.g. the SL-35 clips."""
+    if cfg["clip_csv"]:
+        return pd.read_csv(ROOT / cfg["clip_csv"], dtype={"clip_id": str}).head(cfg["max_clips"] or None)
+    d =pd.read_parquet(LCFG["dfa"], columns=["clip_id", "class_id"]).sort_values(["class_id", "clip_id"])
     r = d.groupby("class_id").head(cfg["n_per_class"]).head(cfg["max_clips"] or None)
     return pd.DataFrame(dict(clip_id=r.clip_id.astype(str).values, class_id=r.class_id.values))
 
@@ -68,13 +72,21 @@ def main(cfg):
             acc[L].setdefault(key, []).append(p)
             acc[L].setdefault(f"{key}_massive", []).append(pm)          # excluded tokens: ordinary + massive = all
             acc[L].setdefault(f"n_massive_{key}", []).append(nm)
-    ins, fr = inputs(cfg), os.environ.get("FROZEN_REAL") == "1"     # 24/11: FROZEN_REAL=1 -> real clips, frozen PE only
+    ins, fr = inputs(cfg), "1" in (os.environ.get("FROZEN_REAL"), os.environ.get("ZERO_REAL"))   # real clips only
+    if os.environ.get("BLANK_PE") == "1":                          # 25/11: blank under 4 PE variants only
+        for c in ("full", "frozen", "reversed", "none"):
+            add(f"blank_{c}", run_layers(model, saes, ins["blank"], pe_variant(pe, c), cfg))
+        cfg["out"].mkdir(parents=True, exist_ok=True)
+        for L, d in acc.items():
+            np.savez(cfg["out"] / f"blankpe_L{L}.npz", **{k: np.stack(v) for k, v in d.items()})
+        return
     for c in () if fr else ("full", "frozen"):
         add(f"blank_{c}", run_layers(model, saes, ins["blank"], pe_variant(pe, c), cfg))
     for n in () if fr else cfg["clips"]:
         add("synth", run_layers(model, saes, ins[n], pe, cfg))
-    rows, pe_c = clip_rows(cfg), pe_variant(pe, "frozen") if fr else pe
-    conds = (("R_frozen", "R"), ("Rev_frozen", "R")) if fr else (("R", "R"), ("C", "C"), ("Rev", "R"))
+    tag = ("zero" if os.environ.get("ZERO_REAL") == "1" else "frozen") if fr else ""   # 25/11: zeroed PE (space+time)
+    rows, pe_c = clip_rows(cfg), pe_variant(pe, {"frozen": "frozen", "zero": "none"}[tag]) if fr else pe
+    conds = ((f"R_{tag}", "R"), (f"Rev_{tag}", "R")) if fr else (("R", "R"), ("C", "C"), ("Rev", "R"))
     for cond, src in conds:                                           # Rev = the R clip with frame order flipped
         for pv, i in clip_loader(rows, dict(LCFG, num_workers=cfg["num_workers"]), src):
             add(cond, run_layers(model, saes, pv.flip(1) if cond.startswith("Rev") else pv, pe_c, cfg))
@@ -83,8 +95,8 @@ def main(cfg):
         print(f"{cond}: {len(rows)} clips done", flush=True)
     cfg["out"].mkdir(parents=True, exist_ok=True)
     for L, d in acc.items():
-        np.savez(cfg["out"] / f"{'frozen_' if fr else ''}L{L}.npz", **{k: np.stack(v) for k, v in d.items()})
-    rows.to_csv(cfg["out"] / f"{'frozen_' if fr else ''}clips.csv", index=False)
+        np.savez(cfg["out"] / f"{tag + '_' if fr else ''}L{L}.npz", **{k: np.stack(v) for k, v in d.items()})
+    rows.to_csv(cfg["out"] / f"{tag + '_' if fr else ''}clips.csv", index=False)
     print("synth clips:", cfg["clips"], flush=True)
 
 
