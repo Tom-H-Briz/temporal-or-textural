@@ -38,8 +38,9 @@ def load_all(cfg):
 def pe_variant(pe, cond, n_pos=8):
     """(1, 1568, 768) PE: full; frozen = tubelet 0's PE on all 8 tubelets (space kept, time removed);
     reversed = tubelet order flipped; none = all zeros, space and time (25/11)."""
-    p = pe.reshape(n_pos, 196, -1)
-    p = {"full": p, "frozen": p[:1].expand(n_pos, -1, -1), "reversed": p.flip(0), "none": torch.zeros_like(p)}[cond]
+    p, k = pe.reshape(n_pos, 196, -1), int(cond[6:] or 0) if cond.startswith("frozen") else 0   # 25/11: frozenK
+    p = {"full": p, "frozen": p[k:k + 1].expand(n_pos, -1, -1), "reversed": p.flip(0),
+         "none": torch.zeros_like(p)}[cond.rstrip("0123456789")]
     return p.reshape(1, -1, pe.shape[-1])
 
 
@@ -99,16 +100,17 @@ def main(cfg):
             add(acc, "synth", run_layers(model, saes, pv, pe, cfg))
         return save(acc, cfg, "synth_"), print("synth clips:", names, flush=True)
     if os.environ.get("BLANK_PE") == "1":                              # 25/11: blank under 4 PE variants only
-        for c in ("full", "frozen", "reversed", "none"):
+        for c in ("full", "frozen", "reversed", "none") + tuple(f"frozen{k}" for k in range(cfg["n_pos"])):  # + sweep
             add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg), pe_variant(pe, c, cfg["n_pos"]), cfg))
         return save(acc, cfg, "blankpe_")
-    tag = "frozen" if os.environ.get("FROZEN_REAL") == "1" else "zero" if os.environ.get("ZERO_REAL") == "1" else ""
+    fk = os.environ.get("FROZEN_K", "")                                # 25/11: frozen at tubelet K, R only
+    tag = f"frozen{fk}" if os.environ.get("FROZEN_REAL") == "1" else "zero" if os.environ.get("ZERO_REAL") == "1" else ""
     fr = bool(tag)                                                     # 24/11 frozen / 25/11 zeroed PE, real clips only
     for c in () if fr else ("full", "frozen"):
         add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg), pe_variant(pe, c, cfg["n_pos"]), cfg))
     rows = pd.read_csv(cfg["umt_clips"], dtype={"clip_id": str}).head(cfg["max_clips"] or None)
-    pe_c = pe_variant(pe, {"frozen": "frozen", "zero": "none"}.get(tag, "full"), cfg["n_pos"])
-    for cond in (f"R_{tag}", f"Rev_{tag}") if fr else ("R", "C1", "Rev"):   # Rev = the R clip, all 16 frames flipped
+    pe_c = pe_variant(pe, {"zero": "none", "": "full"}.get(tag, tag), cfg["n_pos"])
+    for cond in ((f"R_{tag}",) if fk else (f"R_{tag}", f"Rev_{tag}")) if fr else ("R", "C1", "Rev"):   # Rev = the R clip, all 16 frames flipped
         for pv, i in loader(rows.clip_id.tolist(), cfg["video_dir"], cond, proc, cfg):
             pv = pv.flip(1) if cond.startswith("Rev") else pv
             add(acc, cond, run_layers(model, saes, pv, pe_c, cfg))

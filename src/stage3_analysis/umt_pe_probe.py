@@ -52,6 +52,9 @@ def pe_variant(pe, cond):
         p = p[:1].expand(12, -1, -1)
     elif cond == "reversed":
         p = p.flip(0)
+    elif cond.startswith("frozen"):                       # 25/11: frozenK = frame K's PE on all 12 frames
+        k = int(cond[6:])
+        p = p[k:k + 1].expand(12, -1, -1)
     return p.reshape(1, 2352, -1)
 
 

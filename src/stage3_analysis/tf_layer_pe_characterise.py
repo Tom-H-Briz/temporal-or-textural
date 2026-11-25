@@ -37,7 +37,9 @@ def load_all(cfg):
 def time_variant(te, cond):
     """(1, 8, 768) time table: full; frozen = frame 0's row on all 8 frames; reversed = rows flipped;
     none = zeros (25/11). Spatial PE untouched in every case."""
-    return {"full": te, "frozen": te[:, :1].expand_as(te), "reversed": te.flip(1), "none": torch.zeros_like(te)}[cond]
+    k = int(cond[6:] or 0) if cond.startswith("frozen") else 0         # 25/11: frozenK = frame K's row everywhere
+    return {"full": te, "frozen": te[:, k:k + 1].expand_as(te), "reversed": te.flip(1),
+            "none": torch.zeros_like(te)}[cond.rstrip("0123456789")]
 
 
 def embed(emb, pv, te):
@@ -112,11 +114,12 @@ def main(cfg):
             add(acc, "synth", run_layers(model, saes, pv, te, cfg))
         return save(acc, cfg, "synth_"), print("synth clips:", names, flush=True)
     if os.environ.get("BLANK_PE") == "1":                              # 25/11: blank under 4 time-table variants only
-        for c in ("full", "frozen", "reversed", "none"):
+        for c in ("full", "frozen", "reversed", "none") + tuple(f"frozen{k}" for k in range(te.shape[1])):  # + sweep
             add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg, proc), time_variant(te, c), cfg))
         return save(acc, cfg, "blankpe_")
     zr = os.environ.get("ZERO_REAL", "")                               # 25/11: time | space -> real clips, that PE zeroed
-    tag = "frozen" if os.environ.get("FROZEN_REAL") == "1" else f"zero{zr}" if zr else ""
+    fk = os.environ.get("FROZEN_K", "")                                # 25/11: frozen at frame K, R only
+    tag = f"frozen{fk}" if os.environ.get("FROZEN_REAL") == "1" else f"zero{zr}" if zr else ""
     fr = bool(tag)                                                     # 24/11: FROZEN_REAL=1 -> frozen time table
     if zr == "space":                                                  # spatial patch rows zeroed in place, CLS row kept
         sp = model.timesformer.embeddings.position_embeddings
@@ -124,8 +127,8 @@ def main(cfg):
     for c in () if fr else ("full", "frozen"):
         add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg, proc), time_variant(te, c), cfg))
     rows = pd.read_csv(cfg["umt_clips"], dtype={"clip_id": str}).head(cfg["max_clips"] or None)
-    te_c = time_variant(te, {"frozen": "frozen", "zerotime": "none"}.get(tag, "full"))
-    for cond in (f"R_{tag}", f"Rev_{tag}") if fr else ("R", "C", "Rev"):    # Rev = the R clip, all 8 frames flipped
+    te_c = time_variant(te, {"zerotime": "none", "zerospace": "full", "": "full"}.get(tag, tag))
+    for cond in ((f"R_{tag}",) if fk else (f"R_{tag}", f"Rev_{tag}")) if fr else ("R", "C", "Rev"):    # Rev = the R clip, all 8 frames flipped
         for pv, i in loader(rows.clip_id.tolist(), cfg["video_dir"], cond, proc, cfg):
             pv = pv.flip(1) if cond.startswith("Rev") else pv
             add(acc, cond, run_layers(model, saes, pv, te_c, cfg))

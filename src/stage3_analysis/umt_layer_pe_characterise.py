@@ -74,7 +74,7 @@ def main(cfg):
             acc[L].setdefault(f"n_massive_{key}", []).append(nm)
     ins, fr = inputs(cfg), "1" in (os.environ.get("FROZEN_REAL"), os.environ.get("ZERO_REAL"))   # real clips only
     if os.environ.get("BLANK_PE") == "1":                          # 25/11: blank under 4 PE variants only
-        for c in ("full", "frozen", "reversed", "none"):
+        for c in ("full", "frozen", "reversed", "none") + tuple(f"frozen{k}" for k in range(12)):   # + 25/11 sweep
             add(f"blank_{c}", run_layers(model, saes, ins["blank"], pe_variant(pe, c), cfg))
         cfg["out"].mkdir(parents=True, exist_ok=True)
         for L, d in acc.items():
@@ -84,9 +84,10 @@ def main(cfg):
         add(f"blank_{c}", run_layers(model, saes, ins["blank"], pe_variant(pe, c), cfg))
     for n in () if fr else cfg["clips"]:
         add("synth", run_layers(model, saes, ins[n], pe, cfg))
-    tag = ("zero" if os.environ.get("ZERO_REAL") == "1" else "frozen") if fr else ""   # 25/11: zeroed PE (space+time)
-    rows, pe_c = clip_rows(cfg), pe_variant(pe, {"frozen": "frozen", "zero": "none"}[tag]) if fr else pe
-    conds = ((f"R_{tag}", "R"), (f"Rev_{tag}", "R")) if fr else (("R", "R"), ("C", "C"), ("Rev", "R"))
+    fk = os.environ.get("FROZEN_K", "")                              # 25/11: frozen at frame K, R only
+    tag = ("zero" if os.environ.get("ZERO_REAL") == "1" else f"frozen{fk}") if fr else ""   # zero = space+time
+    rows, pe_c = clip_rows(cfg), pe_variant(pe, "none" if tag == "zero" else tag) if fr else pe
+    conds = ((f"R_{tag}", "R"),) + (() if fk else ((f"Rev_{tag}", "R"),)) if fr else (("R", "R"), ("C", "C"), ("Rev", "R"))
     for cond, src in conds:                                           # Rev = the R clip with frame order flipped
         for pv, i in clip_loader(rows, dict(LCFG, num_workers=cfg["num_workers"]), src):
             add(cond, run_layers(model, saes, pv.flip(1) if cond.startswith("Rev") else pv, pe_c, cfg))
