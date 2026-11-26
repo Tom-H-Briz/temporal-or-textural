@@ -35,7 +35,8 @@ CFG = {
     "conds": os.environ.get("CONDS", "R"),
     # VM: C1 = tubelet-pair shuffle; Rev1 = tubelet order reversed (in-grammar); Rev kept for comparison
     "profile_conds": ("R", "C1", "Rev", "Rev1") if MODEL == "videomae" else ("R", "C", "Rev"),   # TF: as UMT
-    "sets_csv": ROOT / f"outputs/analysis/{TAG}_layer_positional/sets_L{{L}}.csv",
+    "sets_csv": os.environ.get("SETS_CSV", str(ROOT / f"outputs/analysis/{TAG}_layer_positional/sets_L{{L}}.csv")),
+    "gate": os.environ.get("GATE", "none"),           # 26/11 summarise only: ref (spliced-correct) | base (raw-correct) | none
     "xlayer_dir": ROOT / f"outputs/analysis/{TAG}_layer_positional",
     "sl_csv": ROOT / "outputs/Laura_SL/Static_Temporal.csv",
     "manifest": ROOT / "outputs/manifests/manifest_ssv2_all174_cap40.json",
@@ -81,7 +82,9 @@ def arm_sets(cfg):
     (every selected feature) unions. Nothing hardcoded per layer."""
     sel = pd.read_csv(str(layer_path(cfg, "sets_csv")))
     sel = sel[sel.arm.notna() & (sel.arm.astype(str) != "")]
-    f = {a: sorted(g.feature.astype(int).tolist()) for a, g in sel.groupby("arm")}
+    f = {a: sorted(g.feature.astype(int).tolist()) for a, g in sel.groupby("arm", sort=False)}
+    if os.environ.get("SETS_CSV"):                    # 26/11: any arm names (e.g. spectrum segments), file order
+        return f
     g = {a: f.get(a, []) for a in ("ramp", "nonramp", "near_flat", "content_timed")}
     return {"ramp": g["ramp"], "nonramp": g["nonramp"], "positional": g["ramp"] + g["nonramp"],
             "near_flat": g["near_flat"], "content_timed": g["content_timed"], "all": sum(g.values(), [])}
@@ -283,6 +286,14 @@ def run_summarise(cfg):
     and d margin + CIs, a separate accuracy table, temporal-vs-static gaps, lean, then the
     cross-layer table across whatever layers have finished."""
     cl, L, arms = clock.load_logits(cfg)
+    if cfg["gate"] != "none":                         # 26/11: R-gate whole clips; kept / all per class reported
+        keep = (cl[f"{cfg['gate']}_correct"] == 1).to_numpy()
+        cfg = dict(cfg, out_dir=cfg["out_dir"] / f"gate_{cfg['gate']}")
+        cfg["out_dir"].mkdir(exist_ok=True)
+        cl.assign(kept=keep).groupby(["class_id", "sl_label"]).kept.agg(n_all="size", n_kept="sum").to_csv(
+            cfg["out_dir"] / "gate_counts.csv")
+        print(f"gate {cfg['gate']}_correct: {keep.sum()}/{len(keep)} clips kept")
+        cl, L = cl[keep].reset_index(drop=True), L[keep]
     y = cl.class_id.to_numpy()
     meas = clock.measures(L, y, arms.index("batch_base"))
     ct = clock.class_table(meas, y, arms, cl, cfg)
@@ -355,7 +366,8 @@ def main():
         run_profiles(cfg, st)
     if mode == "summarise":
         run_summarise(cfg)
-        xlayer_table(cfg)
+        if not os.environ.get("SETS_CSV"):            # positional-brief arms and dirs only
+            xlayer_table(cfg)
 
 
 if __name__ == "__main__":
