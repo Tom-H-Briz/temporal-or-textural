@@ -32,6 +32,7 @@ CFG = {
     "layer": int(os.environ.get("LAYER", 9)), "sae_k": 64, "job_label": "7ep",
     "model": MODEL, "dose": 1.0,
     "splice": os.environ.get("SPLICE", "1") == "1",
+    "raw_op": os.environ.get("RAW_OP", "minus"),      # 27/11, SPLICE=0 only: minus (z·d subtraction) | meanproj
     "conds": os.environ.get("CONDS", "R"),
     # VM: C1 = tubelet-pair shuffle; Rev1 = tubelet order reversed (in-grammar); Rev kept for comparison
     "profile_conds": ("R", "C1", "Rev", "Rev1") if MODEL == "videomae" else ("R", "C", "Rev"),   # TF: as UMT

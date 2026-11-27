@@ -140,8 +140,19 @@ def edited_stream(st, x9, z0, D, fs, cfg):
         z = z0.clone()
         z[:, list(fs)] = 0.0
         return st["sae"].decode(z) + st["dm"]
+    if cfg.get("raw_op", "minus") == "meanproj" and len(fs):
+        return mean_project(x9[0], D[list(fs)], st["dm"])
     from umt_bridge_phase3 import apply_edit
     return apply_edit(x9, z0, D, fs, dose=cfg["dose"])[0]
+
+
+def mean_project(x, Dk, m):
+    """27/11 raw-stream mean projection (raw_stream_feature_ablation.py, 24/09): the component of the raw tokens x (N, D)
+    along span(Dk) (k decoder rows) is set to the dataset mean's (dim_mean m): x - P(x - m). Removes the whole direction,
+    including what overlapping atoms re-supply. Gram solve in float64."""
+    Dk64 = Dk.double()
+    coef = torch.linalg.solve(Dk64 @ Dk64.T, ((x.double() - m.double()) @ Dk64.T).T).T
+    return (x.double() - coef @ Dk64).to(x.dtype)
 
 
 def arm_logits(st, pv, x9, z0, D, edits, cfg):
