@@ -11,7 +11,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 CFG = {"model": os.environ.get("MODEL", "umt"), "xs": (0.05, 0.10),
        "spectrum": ROOT / "outputs/analysis/pe_spectrum/spectrum.parquet",
-       "out": ROOT / "outputs/analysis/{m}_spectrum_ablation"}
+       "out": ROOT / "outputs/analysis/{m}_spectrum_ablation",
+       "order_sens": ROOT / "outputs/analysis/frozen_pe_real/latents_tf_L{L}.csv"}   # frame lock lost under frozen PE
 
 
 def pick(h, tot, x):
@@ -30,6 +31,9 @@ def main(model, xs):
             h = g[g.seg == s].sort_values("ap", ascending=False)
             for x in xs:
                 rows += [dict(feature=int(f), arm=f"{s}_{round(x * 100)}") for f in pick(h, g.ap.sum(), x).latent]
+        if model == "tf":                         # 27/11 user: TF all-time-sensitive arm = 24/11 order-sensitive latents
+            o = pd.read_csv(str(CFG["order_sens"]).format(L=L))
+            rows += [dict(feature=int(f), arm="time_all") for f in o.latent[o.order_sensitive.astype(bool)]]
         t = pd.DataFrame(rows)
         for name in (f"sets_L{L}.csv", f"sets_L{L}_smoke.csv"):
             t.to_csv(out / name, index=False)
