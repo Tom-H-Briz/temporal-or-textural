@@ -59,6 +59,8 @@ def layer_path(cfg, key):
 def loader(cfg, st, rows, cond):
     """Batch-1 (pv, row-index) loader. UMT: umt_mlm_feature_contrast's (R / C). VM / TF:
     umt_vision_pair_contrast's (R / C1 / C) with row indices as labels, so done-tracking still works."""
+    known = ("R", "C", "C1", "Rev", "Rev1", "Dup0", "Dup1")   # 27/11: unknown conds used to run silently as R
+    assert cond in known, f"unknown condition {cond!r}; expected one of {known}"
     if cfg["model"] == "umt":
         from umt_mlm_feature_contrast import clip_loader
         return clip_loader(rows, cfg, "C" if cond == "C" else "R")
