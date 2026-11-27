@@ -11,14 +11,15 @@ from scipy.stats import spearmanr
 
 ROOT = Path(__file__).resolve().parents[2]
 CFG = {"run_dir": ROOT / os.environ.get("RUN_DIR", "outputs/analysis/umt_spectrum_ablation_L5_splice/gate_ref"),
-       "ap": ROOT / "outputs/analysis/dfa_mass_delta_umt/dfa_mass_delta_umt_ssv2_all174_thrfix_l9_job7ep_k64.parquet",
+       "ap": ROOT / os.environ.get("AP", "outputs/analysis/dfa_mass_delta_umt/dfa_mass_delta_umt_ssv2_all174_thrfix_l9_job7ep_k64.parquet"),
+       "shuf_col": os.environ.get("SHUF_COL", "correct_C"),   # 27/11: VM uses correct_C1 (tubelet-respecting shuffle)
        "n_boot": 2000, "seed": 0, "skip_arms": ("baseline", "batch_base")}
 
 
 def shuffle_drop(cfg):
-    """class_id -> % of R-correct clips the model gets wrong once frames are shuffled."""
-    d = pd.read_parquet(cfg["ap"], columns=["class_id", "correct_C"])
-    return 100 * (1 - d.groupby("class_id").correct_C.mean())
+    """class_id -> % of R-correct clips the model gets wrong once frames are shuffled (the model's own AP file)."""
+    d = pd.read_parquet(cfg["ap"], columns=["class_id", cfg["shuf_col"]])
+    return 100 * (1 - d.groupby("class_id")[cfg["shuf_col"]].mean())
 
 
 def arm_rows(arm, dmg, shuf, sl, cfg):

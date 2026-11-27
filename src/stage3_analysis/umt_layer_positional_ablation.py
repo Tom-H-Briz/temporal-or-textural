@@ -63,8 +63,13 @@ def loader(cfg, st, rows, cond):
         from umt_mlm_feature_contrast import clip_loader
         return clip_loader(rows, cfg, "C" if cond == "C" else "R")
     from umt_vision_pair_contrast import clip_loader
-    return clip_loader(list(zip(rows.clip_id, rows.index)), cfg, cond if cond in ("C", "C1") else "R",
-                       st["processor"])                # VM C1 / TF C; Rev(1) applied after loading
+    it = clip_loader(list(zip(rows.clip_id, rows.index)), cfg, cond if cond in ("C", "C1") else "R",
+                     st["processor"])                  # VM C1 / TF C; Rev(1) applied after loading
+    if cond in ("Dup0", "Dup1"):                      # 27/11 VM: R clip with one frame per tubelet copied onto the other
+        assert cfg["model"] == "videomae", "Dup conditions are VM-only (2-frame tubelets)"
+        from vm_layer_pe_characterise import dup_frames
+        return ((dup_frames(pv, cond.lower()), i) for pv, i in it)
+    return it
 
 
 def condition(pv, cond):
