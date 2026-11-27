@@ -82,6 +82,16 @@ def loader(ids, video_dir, cond, processor, cfg):
                        "C1" if cond == "C1" else "R", processor)
 
 
+def dup_frames(pv, cond):
+    """27/11: copy one frame of each 2-frame tubelet onto the other (dup0: 2k -> 2k+1, dup1: 2k+1 -> 2k); pv (B, T, C, H, W)."""
+    pv = pv.clone()
+    if cond.endswith("dup0"):
+        pv[:, 1::2] = pv[:, 0::2]
+    elif cond.endswith("dup1"):
+        pv[:, 0::2] = pv[:, 1::2]
+    return pv
+
+
 def add(acc, key, out):
     """Append one input's per-layer outputs under key (same key names as the UMT npz)."""
     for L, (p, pm, nm, ns) in out.items():
@@ -116,19 +126,22 @@ def main(cfg):
         return save(acc, cfg, "blankpe_")
     fk = os.environ.get("FROZEN_K", "")                                # 25/11: frozen at tubelet K, R only
     tag = f"frozen{fk}" if os.environ.get("FROZEN_REAL") == "1" else "zero" if os.environ.get("ZERO_REAL") == "1" else ""
+    tag = "dup" if os.environ.get("DUP_REAL") == "1" else tag          # 27/11: duplicate inside tubelets, normal PE
     fr = bool(tag)                                                     # 24/11 frozen / 25/11 zeroed PE, real clips only
     for c in () if fr else ("full", "frozen"):
         add(acc, f"blank_{c}", run_layers(model, saes, blank(cfg), pe_variant(pe, c, cfg["n_pos"]), cfg))
     rows = pd.read_csv(cfg["umt_clips"], dtype={"clip_id": str}).head(cfg["max_clips"] or None)
-    pe_c = pe_variant(pe, {"zero": "none", "": "full"}.get(tag, tag), cfg["n_pos"])
-    for cond in ((f"R_{tag}",) if fk else (f"R_{tag}", f"Rev_{tag}")) if fr else ("R", "C1", "Rev"):   # Rev = the R clip, all 16 frames flipped
+    pe_c = pe_variant(pe, {"zero": "none", "": "full", "dup": "full"}.get(tag, tag), cfg["n_pos"])
+    conds = ((f"R_{tag}",) if fk else (f"R_{tag}", f"Rev_{tag}")) if fr else ("R", "C1", "Rev")
+    conds = ("R_dup0", "R_dup1") if tag == "dup" else conds
+    for cond in conds:                                                 # Rev = the R clip, all 16 frames flipped
         for pv, i in loader(rows.clip_id.tolist(), cfg["video_dir"], cond, proc, cfg):
-            pv = pv.flip(1) if cond.startswith("Rev") else pv
+            pv = dup_frames(pv.flip(1) if cond.startswith("Rev") else pv, cond)
             add(acc, cond, run_layers(model, saes, pv, pe_c, cfg))
             acc[cfg["layers"][0]].setdefault(f"row_{cond}", []).append(int(i))
-            if cond == "R":                                            # raw VM top-1, to gate on R-correct
+            if cond in ("R", "R_dup0", "R_dup1"):                      # raw VM top-1 (R: gate on R-correct; dup: accuracy cost)
                 with torch.no_grad():
-                    acc[cfg["layers"][0]].setdefault("pred_R", []).append(int(model(pixel_values=pv.to(cfg["device"])).logits.argmax()))
+                    acc[cfg["layers"][0]].setdefault(f"pred_{cond}", []).append(int(model(pixel_values=pv.to(cfg["device"])).logits.argmax()))
         print(f"{cond}: {len(rows)} clips done", flush=True)
     p = f"{tag}_" if fr else ""
     save(acc, cfg, p), rows.to_csv(cfg["out"] / f"{p}clips.csv", index=False)
